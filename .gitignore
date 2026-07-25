@@ -66,6 +66,7 @@ skills-lock.json
 
 # Internal / proposal / local-only product notes (not public monorepo surface)
 # Kept on disk for the team; removed from GitHub tracking.
+/docs/
 /AGENTS.MD
 /AGENTS.md
 /CONTEXT.md

@@ -20,7 +20,7 @@ Built for **AI First Hackathon · IIT Jammu · Round 2 (Showcase Max)**.
 | Staff | `staff@shiftproof.demo` | `DemoStaff123!` |
 | Manager | `manager@shiftproof.demo` | `DemoManager123!` |
 
-Hackathon demo only — rotate before any real production use. Details: [`docs/SEED.md`](docs/SEED.md).
+Hackathon demo only — rotate before any real production use.
 
 **Golden shifts (no live AI):** open as manager  
 `/manager/shifts/golden_gap_open` or `/manager/shifts/golden_pass_open`.
@@ -55,7 +55,6 @@ Never put `GOOGLE_AI_API_KEY` or Appwrite server keys in `web/` or Vercel fronte
 |------|----------|
 | [`web/`](web/) | React + Vite client (staff + manager) |
 | [`functions/runShiftScore/`](functions/runShiftScore/) | Appwrite Function — **Gemini Flash** vision scoring |
-| [`docs/`](docs/) | API, Appwrite IDs, schema, Round 2 plan, test cases |
 | [`demo/photos/`](demo/photos/) | Pass / gap / unclear photo kits |
 | [`demo/Cafe_Food_Safety_Opening_SOP_v1.pdf`](demo/Cafe_Food_Safety_Opening_SOP_v1.pdf) | Opening SOP (FS-01…) |
 | [`types/shiftproof.ts`](types/shiftproof.ts) | Shared types |
@@ -73,8 +72,7 @@ Staff photos → Appwrite Storage (evidence)
 ```
 
 - **Scoreboard only** — no free chat.  
-- **Failure policy:** Gemini errors → job `failed` (no silent stub). Optional `ALLOW_DEMO_STUB_SCORES=1` on the Function only.  
-- **ADRs:** [`docs/adr/`](docs/adr/)
+- **Failure policy:** Gemini errors → job `failed` (no silent stub). Optional `ALLOW_DEMO_STUB_SCORES=1` on the Function only.
 
 ### Deploy Function (maintainers)
 
@@ -107,8 +105,6 @@ node scripts/playwright-c3-loop.mjs http://localhost:5173
 node scripts/playwright-boosts.mjs http://localhost:5173
 ```
 
-Plan & cases: [`docs/ROUND2-PLAN.md`](docs/ROUND2-PLAN.md) · [`docs/TEST-CASES.md`](docs/TEST-CASES.md).
-
 ---
 
 ## Stack
@@ -131,8 +127,6 @@ Region endpoint: **Singapore** (`https://sgp.cloud.appwrite.io/v1`).
 | GitHub | https://github.com/Anikesh-Paul/ShiftProof |
 | Live demo | _TBD — deploy `web/` to Vercel with `VITE_APPWRITE_*` only_ |
 | Demo video | _TBD (Session 5)_ |
-| Product plan | [`docs/ROUND2-PLAN.md`](docs/ROUND2-PLAN.md) |
-| API / Appwrite | [`docs/API.md`](docs/API.md) · [`docs/APPWRITE.md`](docs/APPWRITE.md) |
 
 ### Vercel deploy (`web/` only)
 
@@ -146,5 +140,3 @@ vercel --prod
 ```
 
 Then in **Appwrite Console → Auth → Settings → Platforms**, add the Vercel HTTPS origin (Web platform) so browser login is not CORS-blocked.
-
-Internal ideation notes (not the product): [`docs/INTERNAL-HACKATHON-FACTORY.md`](docs/INTERNAL-HACKATHON-FACTORY.md).
