@@ -36,20 +36,21 @@ web/playwright-shots/
 **/test-results/
 
 # Internal agent / proposal factory (not the product monorepo surface)
-agents/
-output/
-scripts/
-workflows/
-config/
+# Root-level only — do not use bare "scripts/" (would hide web/scripts).
+/agents/
+/output/
+/scripts/
+/workflows/
+/config/
 .claude/
 .agents/
 .impeccable/
-plans/
-unpacked/
-tpl_s5/
-replit_upload/
-proposal_assets/
-proposal_slides/
+/plans/
+/unpacked/
+/tpl_s5/
+/replit_upload/
+/proposal_assets/
+/proposal_slides/
 
 # Scratch / debug dumps / session image dumps
 images/
