@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Env & secrets (never commit)
+.env
+.env.*
+!.env.example
+**/.env
+!**/.env.example
+
+# Build / tooling output
+dist/
+build/
+.turbo/
+.vercel/
+*.tsbuildinfo
+web/dist/
+
+# Function deploy artifacts
+functions/runShiftScore/code.tar.gz
+functions/**/code.tar.gz
+
+# Local / IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+
+# Playwright / local screenshots
+playwright-shots/
+web/playwright-shots/
+**/playwright-report/
+**/test-results/
+
+# Internal agent / proposal factory (not the product monorepo surface)
+agents/
+output/
+scripts/
+workflows/
+config/
+.claude/
+.agents/
+.impeccable/
+plans/
+unpacked/
+tpl_s5/
+replit_upload/
+proposal_assets/
+proposal_slides/
+
+# Scratch / debug dumps / session image dumps
+images/
+inspect_out.txt
+overlap*.txt
+shapes*.txt
+slide*_list.txt
+prompt.txt
+skills-lock.json
+
+# Large binary scratch (keep product PDF under docs/demo if intentional)
+# ShiftProofPDFproposal.pdf is optional; ignore local proposal render dumps if huge
+*.local.pdf

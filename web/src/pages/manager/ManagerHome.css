@@ -1,0 +1,401 @@
+/* Manager inbox — gap-first ops desk (product register) */
+
+.manager-home {
+  gap: var(--space-6);
+}
+
+/* —— Header —— */
+
+.manager-home-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.manager-home-kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.manager-site {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--label-tertiary);
+}
+
+.manager-live-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  border: 1px solid var(--separator);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--label-secondary);
+}
+
+.manager-live-pill.is-sample {
+  background: var(--warning-soft);
+  border-color: transparent;
+  color: var(--warning-ink);
+}
+
+.manager-home-header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  max-width: 18ch;
+  line-height: 1.12;
+}
+
+.manager-lede {
+  margin: 0;
+  max-width: 36ch;
+}
+
+/* —— Pulse strip (labeled counts, not hero-metric cliché) —— */
+
+.manager-pulse {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+}
+
+.manager-pulse-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+}
+
+.manager-pulse-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--label);
+}
+
+.manager-pulse-value.is-gap {
+  color: var(--danger);
+}
+
+.manager-pulse-value.is-wait {
+  color: var(--warning-ink);
+}
+
+.manager-pulse-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--label-tertiary);
+  line-height: 1.25;
+}
+
+@media (max-width: 360px) {
+  .manager-pulse {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* —— Section chrome —— */
+
+.manager-inbox,
+.manager-side-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.manager-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 2.25rem;
+}
+
+.manager-section-head h2,
+.manager-side-block > h2 {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label);
+}
+
+.manager-filter-btn {
+  flex-shrink: 0;
+}
+
+/* —— Shift list —— */
+
+.manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.manager-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: inherit;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    border-color var(--dur-ui) var(--ease-out),
+    background-color var(--dur-ui) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .manager-row:hover {
+    border-color: var(--separator-strong);
+    background: var(--bg-elevated);
+  }
+
+  .manager-row:hover .manager-row-go {
+    color: var(--accent);
+  }
+}
+
+.manager-row:active {
+  transform: scale(0.985);
+}
+
+.manager-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manager-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.manager-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.manager-row-when {
+  flex-shrink: 0;
+}
+
+.manager-row-staff {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+}
+
+.manager-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.manager-meta-wait {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--label-secondary);
+  letter-spacing: -0.01em;
+}
+
+.manager-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.4rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  background: var(--fill);
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.manager-pill.is-gap {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.manager-pill.is-unclear {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.manager-pill.is-pass {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.manager-row-go {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--label-tertiary);
+  letter-spacing: -0.01em;
+  transition: color var(--dur-ui) var(--ease-out);
+}
+
+/* —— Empty —— */
+
+.manager-empty {
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px dashed var(--separator-strong);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.manager-empty h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* —— Repeat gaps —— */
+
+.repeat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  overflow: hidden;
+}
+
+.repeat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.875rem;
+  border-bottom: 1px solid var(--separator);
+}
+
+.repeat-row:last-child {
+  border-bottom: none;
+}
+
+.repeat-label {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.repeat-count {
+  font-weight: 600;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+}
+
+/* —— SOP (utility, not hero) —— */
+
+.manager-sop {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--separator);
+}
+
+.manager-sop-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.4rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.manager-sop-badge.is-ready {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.manager-sop-badge.is-missing {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.manager-sop-status {
+  margin: 0;
+  font-size: 0.875rem;
+  max-width: 40ch;
+}
+
+.manager-sop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.manager-sop-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.manager-sop-toast {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--success);
+}
+
+@media (min-width: 768px) {
+  .manager-home-header h1 {
+    font-size: 2rem;
+  }
+
+  .manager-pulse-value {
+    font-size: 1.375rem;
+  }
+
+  .manager-row {
+    padding: var(--space-4) var(--space-5);
+  }
+}

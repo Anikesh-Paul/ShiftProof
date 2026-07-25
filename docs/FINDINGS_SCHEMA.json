@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shiftproof.local/schemas/findings-payload.json",
+  "title": "ShiftProofFindingsPayload",
+  "description": "Frozen AI output for runShiftScore. Field names must not change mid-hackathon.",
+  "type": "object",
+  "required": ["items"],
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "clause_id",
+          "quote",
+          "confidence",
+          "evidence_note"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Checklist item id, e.g. gloves_worn"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "gap", "unclear"]
+          },
+          "clause_id": {
+            "type": "string",
+            "description": "SOP clause id, e.g. FS-04"
+          },
+          "quote": {
+            "type": "string",
+            "description": "Short quote from the SOP clause"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_note": {
+            "type": "string",
+            "description": "What the model thinks it saw"
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "items": [
+        {
+          "id": "gloves_worn",
+          "status": "gap",
+          "clause_id": "FS-01",
+          "quote": "Food handlers must wear clean disposable gloves at the prep station.",
+          "confidence": 0.86,
+          "evidence_note": "Bare hands visible while handling utensils; no gloves in frame."
+        },
+        {
+          "id": "counter_clean",
+          "status": "unclear",
+          "clause_id": "FS-04",
+          "quote": "Food-prep surfaces must be clean and free of debris before service.",
+          "confidence": 0.41,
+          "evidence_note": "Heavy glare on stainless counter; surface condition not reliable."
+        }
+      ]
+    }
+  ]
+}

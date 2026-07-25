@@ -1,0 +1,260 @@
+.export-shell {
+  min-height: 100dvh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-inline: var(--space-4);
+  padding-bottom: var(--space-8);
+  box-sizing: border-box;
+}
+
+.export-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: var(--space-4) 0;
+  box-sizing: border-box;
+}
+
+.export-page {
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: var(--space-6);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  color: var(--label);
+  box-sizing: border-box;
+}
+
+.export-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 2px solid var(--label);
+}
+
+.export-brand {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  letter-spacing: -0.02em;
+}
+
+.export-page h1 {
+  font-size: 1.5rem;
+  margin: 0;
+}
+
+.export-meta {
+  text-align: right;
+}
+
+.export-meta p {
+  margin: 0;
+}
+
+.export-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  font-size: 0.8125rem;
+}
+
+@media (min-width: 640px) {
+  .export-summary {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.export-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--label-tertiary);
+  margin-bottom: 0.15rem;
+}
+
+.export-summary p {
+  margin: 0;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.export-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--separator);
+  border-bottom: 1px solid var(--separator);
+  font-size: 0.875rem;
+  color: var(--label-secondary);
+}
+
+.export-tally strong {
+  color: var(--label);
+  margin-right: 0.25rem;
+}
+
+.export-section {
+  margin-bottom: var(--space-5);
+}
+
+.export-section h2 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-transform: none;
+  color: var(--label-secondary);
+  margin-bottom: var(--space-3);
+  font-family: var(--font);
+}
+
+.export-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.export-table th,
+.export-table td {
+  text-align: left;
+  padding: 0.4rem 0.35rem;
+  border-bottom: 1px solid var(--separator);
+  vertical-align: top;
+}
+
+.export-table th {
+  font-weight: 600;
+  color: var(--label-secondary);
+}
+
+.export-note {
+  max-width: 14rem;
+  color: var(--label-secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.export-override {
+  font-size: 0.65rem;
+  color: var(--label-tertiary);
+}
+
+.export-gaps {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8125rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.export-events {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  color: var(--label-secondary);
+}
+
+.export-footer {
+  margin-top: var(--space-6);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--separator);
+  text-align: center;
+}
+
+@media print {
+  /* Flatten app chrome so the pack is the only printed surface, centered */
+  html,
+  body,
+  #root,
+  .shell,
+  .shell-main,
+  .export-shell {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    transform: none !important;
+  }
+
+  .no-print,
+  .shell-chrome,
+  .shell-nav,
+  .manager-sticky,
+  .shell-logout {
+    display: none !important;
+  }
+
+  .export-shell {
+    align-items: stretch;
+    padding-inline: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  .export-page {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    /* Equal inset so print isn’t flush-left / right-heavy */
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-sizing: border-box !important;
+  }
+
+  .export-table {
+    width: 100% !important;
+    table-layout: fixed;
+  }
+
+  .export-table th,
+  .export-table td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .export-note {
+    max-width: none;
+  }
+
+  .export-header,
+  .export-summary,
+  .export-tally,
+  .export-section,
+  .export-footer {
+    box-sizing: border-box;
+  }
+
+  @page {
+    size: A4;
+    /* Symmetric page margins — avoid asymmetric browser default + zero body pad */
+    margin: 14mm;
+  }
+}

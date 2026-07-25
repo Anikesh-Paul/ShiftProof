@@ -1,0 +1,240 @@
+.photos-page {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+.shift-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.photo-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.photo-progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+
+.photo-progress-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform var(--dur-ui) var(--ease-out);
+}
+
+.photo-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.photo-tile {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: 1px solid var(--separator);
+}
+
+.photo-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.photo-tile-enter[data-enter="true"] {
+  animation: photo-in var(--dur-enter) var(--ease-out);
+}
+
+@keyframes photo-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .photo-tile-enter[data-enter="true"] {
+    animation: none;
+  }
+}
+
+.photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: oklch(0 0 0 / 0.55);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.65rem;
+}
+
+.photo-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  border-style: dashed;
+  background: var(--bg-elevated);
+  color: var(--label-secondary);
+  cursor: pointer;
+  font: inherit;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    border-color var(--dur-ui) var(--ease-out),
+    color var(--dur-ui) var(--ease-out);
+}
+
+.photo-add:active {
+  transform: scale(0.97);
+}
+
+.photo-add-plus {
+  font-size: 1.75rem;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--label-tertiary);
+}
+
+.photo-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: oklch(0 0 0 / 0.4);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: var(--space-2);
+  text-align: center;
+}
+
+.photo-overlay .spinner {
+  border-color: oklch(1 0 0 / 0.35);
+  border-top-color: #fff;
+}
+
+.photo-error {
+  background: oklch(0.45 0.18 28 / 0.82);
+}
+
+.photo-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  /* Visual circle ~28px via ::before; full control is 44px for touch */
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  transition: transform var(--dur-press) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.photo-remove::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 999px;
+  background: oklch(0 0 0 / 0.55);
+  z-index: -1;
+}
+
+.photo-remove:active {
+  transform: scale(0.97);
+}
+
+.photo-formats {
+  text-align: center;
+  margin: 0;
+}
+
+.photo-submit-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  padding: var(--space-3) var(--space-4)
+    calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--separator);
+  box-shadow: var(--shadow-sticky);
+}
+
+.photo-submit-bar .btn {
+  width: min(100%, var(--content-max));
+  margin: 0 auto;
+  display: flex;
+}
+
+.success-icon {
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+}

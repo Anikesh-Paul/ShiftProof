@@ -1,0 +1,26 @@
+.finding-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.4rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.finding-pass {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.finding-gap {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.finding-unclear {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}

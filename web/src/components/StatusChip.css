@@ -1,0 +1,35 @@
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.4rem;
+  padding: 0 0.55rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  background: var(--fill);
+  color: var(--label-secondary);
+}
+
+.status-draft {
+  background: var(--fill);
+  color: var(--label-secondary);
+}
+
+.status-submitted,
+.status-scoring {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+
+.status-scored {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-closed {
+  background: var(--fill-strong);
+  color: var(--label-secondary);
+}

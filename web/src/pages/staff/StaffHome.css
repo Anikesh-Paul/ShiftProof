@@ -1,0 +1,418 @@
+/* Staff Opening — calm pre-service desk (habit, not hero) */
+
+.staff-home {
+  min-height: 100%;
+}
+
+.staff-home-page {
+  position: relative;
+  /* Room for sticky CTA + hint so last checklist rows stay readable */
+  padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
+  gap: var(--space-5);
+}
+
+/* —— Full-bleed hero photo (edge-to-edge under shell) —— */
+
+.staff-atmosphere {
+  position: relative;
+  isolation: isolate;
+  min-height: 10.5rem;
+  height: clamp(10.5rem, 28vw, 14rem);
+  margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-4)) 0;
+  width: calc(100% + 2 * var(--space-4));
+  max-width: none;
+  overflow: hidden;
+  background: oklch(0.28 0.04 40);
+  border: none;
+  border-radius: 0;
+}
+
+.staff-atmosphere-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+  opacity: 0;
+  transition: opacity var(--dur-enter) var(--ease-out);
+}
+
+.staff-atmosphere-photo.is-loaded {
+  opacity: 1;
+}
+
+.staff-atmosphere-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    oklch(0.18 0.02 40 / 0.12) 0%,
+    oklch(0.18 0.02 40 / 0.05) 40%,
+    oklch(0.975 0.003 85 / 0.35) 72%,
+    var(--bg) 100%
+  );
+}
+
+/* —— Typographic head on paper —— */
+
+.staff-head {
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.staff-site {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--label-secondary);
+}
+
+.staff-head h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--label);
+  text-wrap: balance;
+}
+
+.staff-lede {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.014em;
+  line-height: 1.45;
+  color: var(--label-secondary);
+  text-wrap: pretty;
+}
+
+.staff-meta {
+  margin: var(--space-1) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.35rem;
+  color: var(--label-tertiary);
+  font-weight: 500;
+}
+
+.staff-meta-dot {
+  color: var(--label-tertiary);
+  opacity: 0.7;
+}
+
+.staff-meta-checklist {
+  color: var(--label-secondary);
+}
+
+/* —— Fix needed (only when tasks exist) —— */
+
+.staff-fixes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-sm);
+  /* Soft attention without alarmist red */
+  background-image: linear-gradient(
+    to bottom,
+    var(--warning-soft) 0%,
+    var(--bg-elevated) 2.5rem
+  );
+}
+
+.staff-fixes-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.staff-fixes-head h2 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.staff-fixes-count {
+  margin: 0;
+  color: var(--warning-ink);
+  font-weight: 500;
+}
+
+.staff-fixes-skeleton {
+  min-height: 3.25rem;
+}
+
+.staff-fix-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.staff-fix-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--separator);
+}
+
+.staff-fix-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.staff-fix-row:last-child {
+  padding-bottom: 0;
+}
+
+.staff-fix-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.staff-fix-title {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  font-size: 0.9375rem;
+  line-height: 1.3;
+}
+
+.staff-fix-status {
+  color: var(--label-secondary);
+}
+
+.staff-fix-shift-link {
+  font-size: 0.8125rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 0.15rem;
+}
+
+.staff-recheck-upload {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--touch);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background var(--dur-press) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.staff-recheck-upload:hover {
+  background: var(--accent-pressed);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .staff-recheck-upload:active {
+    transform: scale(0.98);
+  }
+}
+
+.staff-recheck-upload:focus-within {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.staff-recheck-upload:has(input:disabled) {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.staff-fix-done-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.success-banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+  border: 1px solid var(--separator);
+}
+
+/* —— Checklist panel (one calm surface) —— */
+
+.staff-checklist-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-sm);
+}
+
+.staff-checklist-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.staff-checklist-head h2 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.staff-checklist-lede {
+  margin: 0;
+  max-width: 36ch;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.staff-list-skeleton {
+  min-height: 10rem;
+}
+
+.staff-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  counter-reset: none;
+}
+
+.staff-checklist li {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--separator);
+  min-height: 2.75rem;
+}
+
+.staff-checklist li:first-child {
+  padding-top: 0;
+}
+
+.staff-checklist li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* Quiet tabular index — no ember pill on every row */
+.staff-checklist .checklist-index {
+  flex-shrink: 0;
+  min-width: 1.5rem;
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--label-tertiary);
+  line-height: 1;
+}
+
+.staff-checklist .checklist-label {
+  font-weight: 600;
+  letter-spacing: -0.016em;
+  font-size: 0.9375rem;
+  line-height: 1.3;
+  color: var(--label);
+}
+
+/* —— Sticky start —— */
+
+.staff-cta-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  padding: var(--space-3) var(--space-4)
+    calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--separator);
+  box-shadow: var(--shadow-sticky);
+}
+
+.staff-cta-inner {
+  width: min(100%, var(--content-max));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.staff-cta-hint {
+  margin: 0;
+  text-align: center;
+  color: var(--label-tertiary);
+  font-weight: 500;
+}
+
+@media (min-width: 768px) {
+  .staff-atmosphere {
+    min-height: 13rem;
+    height: clamp(13rem, 22vw, 16rem);
+    /* Stay full-bleed within shell main, not inset card */
+    margin-left: calc(-1 * var(--space-4));
+    margin-right: calc(-1 * var(--space-4));
+    width: calc(100% + 2 * var(--space-4));
+    border-radius: 0;
+    border: none;
+  }
+
+  .staff-head h1 {
+    font-size: 1.875rem;
+  }
+
+  .staff-lede {
+    max-width: 40ch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staff-atmosphere-photo {
+    opacity: 1;
+    transition: none;
+  }
+
+  .staff-recheck-upload:active {
+    transform: none;
+  }
+}

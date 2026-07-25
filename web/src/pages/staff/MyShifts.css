@@ -1,0 +1,67 @@
+.shift-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Non-interactive baseline */
+.shift-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+}
+
+/* Interactive draft row (the Link itself) */
+.shift-row-link {
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    border-color var(--dur-ui) var(--ease-out),
+    box-shadow var(--dur-ui) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .shift-row-link:hover {
+    border-color: var(--separator-strong);
+    box-shadow: var(--shadow-card);
+  }
+}
+
+.shift-row-link:active {
+  transform: scale(0.985);
+}
+
+.shift-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.shift-when {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-size: 1.02rem;
+}
+
+.shift-link {
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: -0.01em;
+  color: var(--label-secondary);
+}
+
+/* Only the latest draft keeps accent — restraint on repeated CTAs */
+.shift-link.is-primary {
+  color: var(--accent);
+}
+
+
