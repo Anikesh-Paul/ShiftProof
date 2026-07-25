@@ -7,9 +7,9 @@ Built for **AI First Hackathon · IIT Jammu · Round 2 (Showcase Max)**.
 
 | | |
 |--|--|
-| **Live app** | _Deployed URL after Session 3 — see below_ |
-| **Video** | _3–5 min demo — link TBD_ |
-| **Repo** | This monorepo |
+| **Live app** | _Vercel URL — set after deploy (see Links)_ |
+| **Video** | _3–5 min demo — link TBD (Session 5)_ |
+| **Repo** | [github.com/Anikesh-Paul/ShiftProof](https://github.com/Anikesh-Paul/ShiftProof) |
 
 ---
 
@@ -129,9 +129,23 @@ Region endpoint: **Singapore** (`https://sgp.cloud.appwrite.io/v1`).
 
 | Resource | URL |
 |----------|-----|
-| Live demo | _TBD after Vercel deploy_ |
+| GitHub | https://github.com/Anikesh-Paul/ShiftProof |
+| Live demo | _TBD — deploy `web/` to Vercel with `VITE_APPWRITE_*` only_ |
 | Demo video | _TBD (Session 5)_ |
 | Spec | [`PROJECT.md`](PROJECT.md) |
 | Domain language | [`CONTEXT.md`](CONTEXT.md) |
+
+### Vercel deploy (`web/` only)
+
+```powershell
+cd web
+# once: vercel login
+vercel --prod
+# Project settings → Environment Variables (Production):
+#   VITE_APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
+#   VITE_APPWRITE_PROJECT_ID=6a5b0ce3002605c7a776
+```
+
+Then in **Appwrite Console → Auth → Settings → Platforms**, add the Vercel HTTPS origin (Web platform) so browser login is not CORS-blocked.
 
 Internal ideation notes (not the product): [`docs/INTERNAL-HACKATHON-FACTORY.md`](docs/INTERNAL-HACKATHON-FACTORY.md).
