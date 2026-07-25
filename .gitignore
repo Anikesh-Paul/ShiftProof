@@ -61,6 +61,19 @@ slide*_list.txt
 prompt.txt
 skills-lock.json
 
-# Large binary scratch (keep product PDF under docs/demo if intentional)
-# ShiftProofPDFproposal.pdf is optional; ignore local proposal render dumps if huge
+# Large binary scratch
 *.local.pdf
+
+# Internal / proposal / local-only product notes (not public monorepo surface)
+# Kept on disk for the team; removed from GitHub tracking.
+/AGENTS.MD
+/AGENTS.md
+/CONTEXT.md
+/DESIGN.md
+/PRODUCT.md
+/PROJECT.md
+/PROPOSAL-FILL-PROMPT.md
+/ShiftProofPDFproposal.pdf
+/explanation.md
+/explanation.pdf
+/proposal_verification_report.md

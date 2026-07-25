@@ -59,7 +59,6 @@ Never put `GOOGLE_AI_API_KEY` or Appwrite server keys in `web/` or Vercel fronte
 | [`demo/photos/`](demo/photos/) | Pass / gap / unclear photo kits |
 | [`demo/Cafe_Food_Safety_Opening_SOP_v1.pdf`](demo/Cafe_Food_Safety_Opening_SOP_v1.pdf) | Opening SOP (FS-01…) |
 | [`types/shiftproof.ts`](types/shiftproof.ts) | Shared types |
-| [`PROJECT.md`](PROJECT.md) | Full product specification |
 
 ---
 
@@ -132,8 +131,8 @@ Region endpoint: **Singapore** (`https://sgp.cloud.appwrite.io/v1`).
 | GitHub | https://github.com/Anikesh-Paul/ShiftProof |
 | Live demo | _TBD — deploy `web/` to Vercel with `VITE_APPWRITE_*` only_ |
 | Demo video | _TBD (Session 5)_ |
-| Spec | [`PROJECT.md`](PROJECT.md) |
-| Domain language | [`CONTEXT.md`](CONTEXT.md) |
+| Product plan | [`docs/ROUND2-PLAN.md`](docs/ROUND2-PLAN.md) |
+| API / Appwrite | [`docs/API.md`](docs/API.md) · [`docs/APPWRITE.md`](docs/APPWRITE.md) |
 
 ### Vercel deploy (`web/` only)
 
