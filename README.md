@@ -3,12 +3,11 @@
 **Photo-proof SOP compliance for a single café.**  
 Staff upload opening-shift photos → AI scores checklist items (Pass / Gap / Unclear) with SOP clause quotes → managers override, assign fixes, and export a one-page compliance pack.
 
-Built for **AI First Hackathon · IIT Jammu · Round 2 (Showcase Max)**.
+Built for **AI First Hackathon**.
 
 | | |
 |--|--|
-| **Live app** | _Vercel URL — set after deploy (see Links)_ |
-| **Video** | _3–5 min demo — link TBD (Session 5)_ |
+| **Live app** | _Vercel URL — [link](https://shift-proof-phi.vercel.app/) |
 | **Repo** | [github.com/Anikesh-Paul/ShiftProof](https://github.com/Anikesh-Paul/ShiftProof) |
 
 ---
@@ -22,8 +21,6 @@ Built for **AI First Hackathon · IIT Jammu · Round 2 (Showcase Max)**.
 
 Hackathon demo only — rotate before any real production use.
 
-**Golden shifts (no live AI):** open as manager  
-`/manager/shifts/golden_gap_open` or `/manager/shifts/golden_pass_open`.
 
 ---
 
@@ -94,19 +91,6 @@ node demo/live-score-kit.mjs gap
 
 ---
 
-## Smoke the product
-
-```powershell
-cd web
-npm run dev
-# other terminal:
-node scripts/playwright-smoke.mjs http://localhost:5173
-node scripts/playwright-c3-loop.mjs http://localhost:5173
-node scripts/playwright-boosts.mjs http://localhost:5173
-```
-
----
-
 ## Stack
 
 | Layer | Choice |
@@ -120,13 +104,6 @@ Region endpoint: **Singapore** (`https://sgp.cloud.appwrite.io/v1`).
 
 ---
 
-## Links
-
-| Resource | URL |
-|----------|-----|
-| GitHub | https://github.com/Anikesh-Paul/ShiftProof |
-| Live demo | _TBD — deploy `web/` to Vercel with `VITE_APPWRITE_*` only_ |
-| Demo video | _TBD (Session 5)_ |
 
 ### Vercel deploy (`web/` only)
 
