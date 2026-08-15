@@ -5,7 +5,7 @@ import {
   type AnimationEvent,
   type FormEvent,
 } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { Button } from "../components/Button";
 import { useAuth } from "../lib/auth";
 import { getErrorMessage } from "../lib/errors";
@@ -24,15 +24,12 @@ const DEMO_ACCOUNTS = [
   },
 ] as const;
 
-const RESUME_COPY = "Sign in to continue where you left off.";
-
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export function LoginPage() {
   const { user, role, loading, login, error, clearError } = useAuth();
-  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -42,13 +39,9 @@ export function LoginPage() {
   const brandPhotoRef = useRef<HTMLImageElement>(null);
 
   const message = localError || error;
-  const from = (location.state as { from?: string } | null)?.from;
-  const showResume = Boolean(from);
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
-  const [resumeShown, setResumeShown] = useState(showResume);
-  const [resumeExiting, setResumeExiting] = useState(false);
 
   useEffect(() => {
     const img = brandPhotoRef.current;
@@ -73,34 +66,11 @@ export function LoginPage() {
     }
   }, [message, errorShown, errorExiting]);
 
-  useEffect(() => {
-    if (showResume) {
-      setResumeShown(true);
-      setResumeExiting(false);
-      return;
-    }
-    if (resumeShown && !resumeExiting) {
-      if (prefersReducedMotion()) {
-        setResumeShown(false);
-        setResumeExiting(false);
-      } else {
-        setResumeExiting(true);
-      }
-    }
-  }, [showResume, resumeShown, resumeExiting]);
-
   function onErrorExitEnd(e: AnimationEvent<HTMLDivElement>) {
     if (!errorExiting) return;
     if (e.animationName && e.animationName !== "toast-out") return;
     setErrorShown(null);
     setErrorExiting(false);
-  }
-
-  function onResumeExitEnd(e: AnimationEvent<HTMLParagraphElement>) {
-    if (!resumeExiting) return;
-    if (e.animationName && e.animationName !== "toast-out") return;
-    setResumeShown(false);
-    setResumeExiting(false);
   }
 
   if (!loading && user) {
@@ -155,12 +125,9 @@ export function LoginPage() {
         </div>
         <div className="login-brand-copy">
           <h1 className="login-brand-name">ShiftProof</h1>
+          <span className="login-brand-rule" aria-hidden="true" />
           <p className="login-brand-title">
             Prove the café opened ready.
-          </p>
-          <p className="login-brand-sub">
-            Staff snap a few photos at open. Managers see what still needs
-            fixing — clearly, not buried in chat.
           </p>
         </div>
       </aside>
@@ -169,9 +136,6 @@ export function LoginPage() {
         <div className="login-panel-inner">
           <header className="login-header">
             <h2 className="login-heading">Sign in</h2>
-            <p className="login-lede muted">
-              Staff and managers for your café.
-            </p>
           </header>
 
           {errorShown ? (
@@ -184,17 +148,6 @@ export function LoginPage() {
             >
               {errorShown}
             </div>
-          ) : null}
-
-          {resumeShown ? (
-            <p
-              className="login-resume"
-              data-enter={!resumeExiting ? "true" : undefined}
-              data-exit={resumeExiting ? "true" : undefined}
-              onAnimationEnd={onResumeExitEnd}
-            >
-              {RESUME_COPY}
-            </p>
           ) : null}
 
           <form className="login-form" onSubmit={onSubmit}>
@@ -213,7 +166,6 @@ export function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={formLocked}
-                placeholder="you@cafe.com"
               />
             </div>
             <div className="field">
@@ -227,7 +179,6 @@ export function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={formLocked}
-                placeholder="••••••••"
                 enterKeyHint="go"
               />
             </div>
@@ -248,19 +199,26 @@ export function LoginPage() {
               role="group"
               aria-label="Demo accounts"
             >
-              {DEMO_ACCOUNTS.map((account) => (
-                <button
-                  key={account.email}
-                  type="button"
-                  className="login-demo-chip"
-                  onClick={() => fillDemo(account)}
-                  disabled={formLocked}
-                  title={`${account.email}`}
-                >
-                  <span className="login-demo-role">{account.role}</span>
-                  <span className="login-demo-email">{account.email}</span>
-                </button>
-              ))}
+              {DEMO_ACCOUNTS.map((account) => {
+                const selected = email === account.email;
+                return (
+                  <button
+                    key={account.email}
+                    type="button"
+                    className={
+                      selected
+                        ? "login-demo-chip is-selected"
+                        : "login-demo-chip"
+                    }
+                    onClick={() => fillDemo(account)}
+                    disabled={formLocked}
+                    aria-pressed={selected}
+                    title={account.email}
+                  >
+                    <span className="login-demo-role">{account.role}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

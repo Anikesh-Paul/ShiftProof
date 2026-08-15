@@ -5,7 +5,7 @@
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: minmax(11.5rem, 32vh) 1fr;
+  grid-template-rows: minmax(13rem, 36vh) 1fr;
   background: var(--bg);
   color: var(--label);
 }
@@ -19,7 +19,7 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  min-height: 11.5rem;
+  min-height: 13rem;
   padding: var(--space-6) var(--space-5);
   padding-top: calc(var(--space-6) + env(safe-area-inset-top));
   color: oklch(0.98 0.01 80);
@@ -38,11 +38,15 @@
   object-fit: cover;
   object-position: center 40%;
   opacity: 0;
-  transition: opacity var(--dur-enter) var(--ease-out);
+  transform: scale(1.04);
+  transition:
+    opacity 520ms var(--ease-out),
+    transform 720ms var(--ease-out);
 }
 
 .login-brand-photo.is-loaded {
   opacity: 1;
+  transform: scale(1);
 }
 
 .login-brand-scrim {
@@ -51,9 +55,9 @@
   background:
     linear-gradient(
       to top,
-      oklch(0.14 0.03 40 / 0.82) 0%,
-      oklch(0.18 0.025 35 / 0.42) 42%,
-      oklch(0.25 0.02 40 / 0.12) 100%
+      oklch(0.14 0.04 28 / 0.86) 0%,
+      oklch(0.16 0.03 32 / 0.5) 44%,
+      oklch(0.22 0.02 40 / 0.1) 100%
     );
   pointer-events: none;
 }
@@ -63,46 +67,43 @@
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  align-items: flex-start;
+  gap: var(--space-3);
   max-width: 28rem;
 }
 
 .login-brand-name {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 1.625rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
+  line-height: 1.05;
+  letter-spacing: -0.028em;
   font-optical-sizing: auto;
   color: oklch(0.99 0.005 80);
   text-wrap: balance;
-  /* Vibrancy over photo — same craft as staff hero */
   text-shadow: 0 1px 3px oklch(0.1 0.02 40 / 0.4);
+}
+
+.login-brand-rule {
+  display: block;
+  width: 1.75rem;
+  height: 1px;
+  background: oklch(0.98 0.01 80 / 0.48);
 }
 
 .login-brand-title {
   margin: 0;
-  font-family: var(--font);
-  font-size: 0.9375rem;
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
   font-weight: 500;
-  line-height: 1.35;
-  letter-spacing: -0.015em;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  font-optical-sizing: auto;
   color: oklch(0.96 0.01 80 / 0.92);
-  max-width: 28ch;
+  max-width: 16ch;
   text-wrap: balance;
   text-shadow: 0 1px 2px oklch(0.1 0.02 40 / 0.35);
-}
-
-.login-brand-sub {
-  display: none;
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 400;
-  line-height: 1.45;
-  color: oklch(0.92 0.015 80 / 0.78);
-  max-width: 34ch;
-  text-shadow: 0 1px 2px oklch(0.1 0.02 40 / 0.3);
 }
 
 /* —— Sign-in panel —— */
@@ -131,35 +132,23 @@
 
 .login-heading {
   margin: 0;
-  font-family: var(--font);
-  font-size: 1.25rem;
-  font-weight: 650;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  font-optical-sizing: auto;
   color: var(--label);
-}
-
-.login-lede {
-  margin: 0;
-  font-size: 0.9375rem;
-  max-width: 32ch;
-}
-
-.login-resume {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--label-secondary);
-  padding: var(--space-3) var(--space-4);
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--separator);
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.login-form .field input {
+  background: var(--bg-elevated);
 }
 
 .login-demo {
@@ -180,16 +169,16 @@
 
 .login-demo-row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: var(--space-2);
 }
 
 .login-demo-chip {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
   min-height: var(--touch);
   text-align: left;
   padding: var(--space-3) var(--space-4);
@@ -213,7 +202,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .login-demo-chip:hover:not(:disabled) {
+  .login-demo-chip:hover:not(:disabled):not(.is-selected) {
     border-color: var(--separator-strong);
     background: var(--fill);
   }
@@ -231,6 +220,15 @@
   outline-offset: 2px;
 }
 
+.login-demo-chip.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.login-demo-chip.is-selected .login-demo-role {
+  color: var(--accent);
+}
+
 .login-demo-role {
   font-size: 0.875rem;
   font-weight: 600;
@@ -239,23 +237,11 @@
   flex-shrink: 0;
 }
 
-.login-demo-email {
-  font-size: 0.75rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--label-secondary);
-  text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
 /* —— Desktop: split brand / form —— */
 
 @media (min-width: 860px) {
   .login-page {
-    grid-template-columns: minmax(20rem, 1.05fr) minmax(22rem, 0.95fr);
+    grid-template-columns: minmax(22rem, 1.2fr) minmax(22rem, 0.8fr);
     grid-template-rows: 1fr;
   }
 
@@ -274,38 +260,35 @@
     background:
       linear-gradient(
         to top,
-        oklch(0.12 0.03 40 / 0.88) 0%,
-        oklch(0.16 0.025 40 / 0.55) 28%,
-        oklch(0.2 0.02 40 / 0.18) 55%,
-        oklch(0.22 0.015 40 / 0.08) 100%
+        oklch(0.12 0.045 28 / 0.9) 0%,
+        oklch(0.15 0.03 32 / 0.58) 30%,
+        oklch(0.2 0.02 40 / 0.16) 58%,
+        oklch(0.22 0.015 40 / 0.06) 100%
       );
   }
 
   .login-brand-copy {
-    gap: var(--space-3);
+    gap: var(--space-4);
     max-width: 22rem;
   }
 
   .login-brand-name {
-    font-size: 2.75rem;
-    letter-spacing: -0.025em;
-    line-height: 1.05;
+    font-size: 3rem;
+    letter-spacing: -0.03em;
+    line-height: 1.02;
+  }
+
+  .login-brand-rule {
+    width: 2.25rem;
   }
 
   .login-brand-title {
-    font-family: var(--font-display);
-    font-size: 1.375rem;
+    font-size: 1.5rem;
     font-weight: 500;
-    line-height: 1.3;
-    letter-spacing: -0.02em;
-    font-optical-sizing: auto;
-    max-width: 18ch;
+    line-height: 1.25;
+    letter-spacing: -0.022em;
+    max-width: 12ch;
     color: oklch(0.97 0.01 80);
-  }
-
-  .login-brand-sub {
-    display: block;
-    margin-top: var(--space-1);
   }
 
   .login-panel {
@@ -321,7 +304,11 @@
   }
 
   .login-heading {
-    font-size: 1.375rem;
+    font-size: 2rem;
+  }
+
+  .login-form .field input {
+    background: var(--bg);
   }
 }
 
@@ -331,8 +318,8 @@
   }
 
   .login-brand-name {
-    font-size: 3.25rem;
-    letter-spacing: -0.03em;
+    font-size: 3.5rem;
+    letter-spacing: -0.032em;
   }
 
   .login-panel {
@@ -354,6 +341,7 @@
 
   .login-brand-photo {
     opacity: 1;
+    transform: none;
     transition: none;
   }
 }
@@ -364,8 +352,7 @@
   }
 
   .login-brand-name,
-  .login-brand-title,
-  .login-brand-sub {
+  .login-brand-title {
     text-shadow: none;
   }
 }
@@ -379,9 +366,5 @@
   .login-brand-name,
   .login-brand-title {
     color: oklch(1 0 0);
-  }
-
-  .login-brand-sub {
-    color: oklch(0.96 0.01 80);
   }
 }

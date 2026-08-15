@@ -180,13 +180,11 @@ img {
 }
 
 .error-banner[data-enter="true"],
-.login-resume[data-enter="true"],
 .manager-toast[data-enter="true"] {
   animation: toast-in var(--dur-enter) var(--ease-out);
 }
 
 .error-banner[data-exit="true"],
-.login-resume[data-exit="true"],
 .manager-toast[data-exit="true"] {
   animation: toast-out var(--dur-exit) var(--ease-out) forwards;
   pointer-events: none;
@@ -237,13 +235,11 @@ img {
 @media (prefers-reduced-motion: reduce) {
   .error-banner[data-enter="true"],
   .success-panel[data-enter="true"],
-  .login-resume[data-enter="true"],
   .manager-toast[data-enter="true"] {
     animation: none;
   }
 
   .error-banner[data-exit="true"],
-  .login-resume[data-exit="true"],
   .manager-toast[data-exit="true"] {
     animation: none;
     opacity: 0;
