@@ -102,7 +102,9 @@ export async function runShiftScoreLocal(
     let photoCount = 0;
     try {
       const ids = JSON.parse(shift.photoFileIds || "[]") as unknown;
-      photoCount = Array.isArray(ids) ? ids.length : 0;
+      photoCount = Array.isArray(ids)
+        ? ids.filter((id) => typeof id === "string" && id.length > 0).length
+        : 0;
     } catch {
       photoCount = 0;
     }

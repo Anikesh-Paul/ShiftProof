@@ -11,7 +11,13 @@ import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
-import { listMyShifts, parsePhotoFileIds } from "../../lib/shifts";
+import {
+  deleteDraftShift,
+  isEmptyDraft,
+  listMyShifts,
+  parsePhotoFileIds,
+  pickResumableDraft,
+} from "../../lib/shifts";
 import type { Shift } from "../../types/shiftproof";
 import "./MyShifts.css";
 
@@ -27,6 +33,8 @@ export function MyShifts() {
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [filter, setFilter] = useState<"needs" | "done" | "all">("needs");
   const loadingSlow = useSlowLoading(loading);
 
   useEffect(() => {
@@ -70,15 +78,76 @@ export function MyShifts() {
     setErrorExiting(false);
   }
 
-  // Latest draft only keeps accent CTA — restraint on repeated ember links
-  const primaryDraftId =
-    shifts.find((s) => s.status === "draft")?.$id ?? null;
+  const resumeDraft = pickResumableDraft(shifts);
+  const leftoverEmpty = shifts.filter(
+    (s) => isEmptyDraft(s) && s.$id !== resumeDraft?.$id,
+  );
+  const visibleShifts = shifts.filter((s) => {
+    if (leftoverEmpty.some((d) => d.$id === s.$id)) return false;
+    if (filter === "all") return true;
+    if (filter === "needs") {
+      return (
+        s.status === "draft" ||
+        s.status === "submitted" ||
+        s.status === "scoring"
+      );
+    }
+    return s.status === "scored" || s.status === "closed";
+  });
+  const needsCount = shifts.filter(
+    (s) =>
+      !leftoverEmpty.some((d) => d.$id === s.$id) &&
+      (s.status === "draft" ||
+        s.status === "submitted" ||
+        s.status === "scoring"),
+  ).length;
+  const doneCount = shifts.filter(
+    (s) => s.status === "scored" || s.status === "closed",
+  ).length;
+  // Latest resumable draft only keeps accent CTA — restraint on repeated ember links
+  const primaryDraftId = resumeDraft?.$id ?? null;
+
+  async function discardLeftoverEmpty() {
+    if (!leftoverEmpty.length) return;
+    setDiscarding(true);
+    setError(null);
+    try {
+      await Promise.all(leftoverEmpty.map((s) => deleteDraftShift(s.$id)));
+      setShifts((prev) =>
+        prev.filter((s) => !leftoverEmpty.some((d) => d.$id === s.$id)),
+      );
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not discard empty drafts"));
+    } finally {
+      setDiscarding(false);
+    }
+  }
 
   return (
     <div className="app-page stack">
       <header className="stack-sm">
         <h1>History</h1>
         <p className="muted">Your opening checks at this site.</p>
+        <div className="history-filters" role="tablist" aria-label="Filter history">
+          {(
+            [
+              ["needs", `Needs me (${needsCount})`],
+              ["done", `Done (${doneCount})`],
+              ["all", "All"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={filter === id}
+              className={`history-filter${filter === id ? " is-active" : ""}`}
+              onClick={() => setFilter(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
       {errorShown ? (
@@ -110,19 +179,42 @@ export function MyShifts() {
             </p>
           ) : null}
         </div>
-      ) : shifts.length === 0 ? (
+      ) : visibleShifts.length === 0 && leftoverEmpty.length === 0 ? (
         <div className="card stack-sm staff-settle-in">
-          <h2>No shifts yet</h2>
+          <h2>
+            {filter === "needs"
+              ? "Nothing needs you"
+              : filter === "done"
+                ? "No scored checks yet"
+                : "No shifts yet"}
+          </h2>
           <p className="muted">
-            Start an opening check, upload 3–8 photos, and submit proof.
+            {filter === "needs"
+              ? "Drafts and in-progress scores show here. Scored checks are under Done."
+              : "Start an opening check, upload 3–8 photos, and submit proof."}
           </p>
           <Link to="/staff" className="text-btn is-accent">
             Go to opening
           </Link>
         </div>
       ) : (
+        <div className="stack">
+        {leftoverEmpty.length > 0 ? (
+          <p className="caption history-clutter">
+            {leftoverEmpty.length} leftover empty draft
+            {leftoverEmpty.length === 1 ? "" : "s"}
+            <button
+              type="button"
+              className="text-btn"
+              disabled={discarding}
+              onClick={() => void discardLeftoverEmpty()}
+            >
+              {discarding ? "Discarding…" : "Discard"}
+            </button>
+          </p>
+        ) : null}
         <ul className="list-plain shift-list stagger-in">
-          {shifts.map((shift) => {
+          {visibleShifts.map((shift) => {
             const count = parsePhotoFileIds(shift.photoFileIds).length;
             const when = formatWhen(shift.startedAt);
             const isDraft = shift.status === "draft";
@@ -131,16 +223,20 @@ export function MyShifts() {
               shift.status === "draft"
                 ? "Draft — continue photos"
                 : shift.status === "submitted" || shift.status === "scoring"
-                  ? "Submitted · scoring job waiting"
+                  ? isStuckScoring(shift)
+                    ? "Scoring stuck — open to retry"
+                    : "Submitted · scoring in progress"
                   : shift.status === "scored"
-                    ? "Scored — manager can review"
+                    ? "Scored — view Pass, Gap, Unclear"
                     : shift.status;
-            // Staff can always open: draft to edit, submitted+ to review photos
+            // Staff can always open: draft to edit, submitted+ to review scores
             const actionLabel = isDraft
               ? "Continue draft"
-              : count > 0
-                ? "View photos"
-                : "View shift";
+              : shift.status === "scored"
+                ? "View scores"
+                : count > 0
+                  ? "View photos"
+                  : "View shift";
 
             return (
               <li key={shift.$id}>
@@ -172,6 +268,7 @@ export function MyShifts() {
             );
           })}
         </ul>
+        </div>
       )}
     </div>
   );
@@ -186,4 +283,12 @@ function formatWhen(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function isStuckScoring(shift: Shift): boolean {
+  if (shift.status !== "submitted" && shift.status !== "scoring") return false;
+  const raw = shift.submittedAt || shift.startedAt;
+  const then = Date.parse(raw);
+  if (!Number.isFinite(then)) return false;
+  return Date.now() - then > 90_000;
 }

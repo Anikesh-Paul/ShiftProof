@@ -222,13 +222,20 @@ export function ManagerHome() {
             </span>
           ) : source === "demo" && !loading ? (
             <span className="manager-live-pill is-sample" role="status">
-              Sample data
+              Sample
             </span>
           ) : null}
         </div>
         <h1>{headline}</h1>
         <p className="muted manager-lede">{lede}</p>
       </header>
+
+      {source === "demo" && !loading ? (
+        <div className="manager-sample-banner" role="status">
+          Sample inbox — not today’s café. Live shifts appear here when staff
+          submit proof.
+        </div>
+      ) : null}
 
       {!loading ? (
         <div className="manager-pulse" aria-label="Inbox summary">

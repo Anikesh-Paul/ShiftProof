@@ -36,6 +36,7 @@ import {
   type ManagerShiftSummary,
 } from "../../lib/manager";
 import {
+  getEvidenceFileUrl,
   getEvidencePreviewUrl,
   parsePhotoFileIds,
   uploadEvidence,
@@ -556,7 +557,7 @@ export function ManagerShiftDetail() {
   const openCount = item.gapCount + item.unclearCount;
   const evidenceIds = parsePhotoFileIds(item.shift.photoFileIds);
   const evidenceSlides: EvidenceSlide[] = evidenceIds.map((fid, j) => ({
-    src: getEvidencePreviewUrl(fid),
+    src: getEvidenceFileUrl(fid),
     label: `Evidence ${j + 1}`,
   }));
 

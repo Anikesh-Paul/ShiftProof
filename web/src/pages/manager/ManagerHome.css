@@ -47,6 +47,17 @@
   color: var(--warning-ink);
 }
 
+.manager-sample-banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .manager-home-header h1 {
   margin: 0;
   font-size: 1.75rem;

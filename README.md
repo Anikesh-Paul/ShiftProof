@@ -65,11 +65,12 @@ Staff photos → Appwrite Storage (evidence)
             → Function runShiftScore
                  → Gemini Flash (GOOGLE_AI_API_KEY on Function only)
                  → findings: pass | gap | unclear + clause + quote + confidence
-            → Manager scoreboard → override / tasks → re-check → export PDF
+            → Staff scores (read-only) + manager scoreboard → override / tasks → re-check → export PDF
 ```
 
 - **Scoreboard only** — no free chat.  
-- **Failure policy:** Gemini errors → job `failed` (no silent stub). Optional `ALLOW_DEMO_STUB_SCORES=1` on the Function only.
+- **One staff draft at a time** — Opening resumes the latest draft instead of creating another.  
+- **Failure policy:** Gemini errors → job `failed` (no silent stub). Optional `ALLOW_DEMO_STUB_SCORES=1` on the Function only. Staff can retry a stuck score from the shift page.
 
 ### Deploy Function (maintainers)
 

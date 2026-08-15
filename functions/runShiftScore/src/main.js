@@ -87,7 +87,16 @@ function scoreItemsStub(items, photoCount) {
 function parsePhotoIds(shift) {
   try {
     const ids = JSON.parse(shift.photoFileIds || "[]");
-    return Array.isArray(ids) ? ids.filter((x) => typeof x === "string" && x) : [];
+    if (!Array.isArray(ids)) return [];
+    return ids
+      .map((x) => {
+        if (typeof x === "string") return x;
+        if (x && typeof x === "object" && typeof x.fileId === "string") {
+          return x.fileId;
+        }
+        return "";
+      })
+      .filter((x) => x);
   } catch {
     return [];
   }

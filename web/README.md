@@ -9,7 +9,7 @@ Source of truth: `docs/APP.md`, `docs/API.md`, `docs/APPWRITE.md`, `docs/PERMISS
 | Slice | Status |
 |-------|--------|
 | **C1** Auth + role shells | Done |
-| **C2** Staff shift + photos + `agent_jobs` / `events` | Done |
+| **C2** Staff shift + photos + `agent_jobs` / `events` | Done — resume draft, per-item slots, staff scores, discard empties |
 | **C3** `runShiftScore` | Done — **Gemini Flash** on Function (default); no silent client stub |
 | **C4** Scoreboard UI (Pass / Gap / Unclear) | Done |
 | **C5** Manager inbox + Realtime | Done (subscribe + reload) |
@@ -67,12 +67,20 @@ tablesdb.shiftproof.tables.tasks.rows
 
 Subscribed in `src/lib/manager.ts` → `subscribeManagerTables`. Manager home reloads inbox on events.
 
+## Staff journey (current)
+
+1. Login as **staff**. Opening CTA is **Continue opening check** if a draft exists (never a second empty draft).
+2. **Fix needed** paints from the assigned-task query first (skeleton while that loads). Default list is capped; older rows sit behind Show more. A failed load shows an error + Try again — not a silent empty page.
+3. Evidence is **one Add photo per checklist item** (3–8 total). Legacy unmapped shots stay under Other photos. Remove deletes the Storage file. Discard draft is allowed on drafts.
+4. After submit, staff see **Your scores** (Pass / Gap / Unclear). Assigned gaps can take a re-check photo here. Stuck `submitted`/`scoring` jobs show **Try scoring again**.
+5. History filters: **Needs me** (draft + in-progress) / **Done** / **All**. Extra empty drafts can be discarded in one action.
+
 ## Smoke path
 
-1. Login as **staff** → Start opening check  
-2. Upload 3–8 photos → Submit proof  
-3. Login as **manager** → inbox (live or sample if no submitted shifts)  
-4. Open scoreboard → select finding → Override / Assign fix (live when findings exist)  
+1. Login as **staff** → Continue or Start opening check (same draft if one exists)
+2. Photograph checklist items (3–8) → Submit proof → read scores
+3. Login as **manager** → inbox (live, or sample banner if no submitted shifts)
+4. Open scoreboard → select finding → Override / Assign fix (live when findings exist)
 5. Export pack → Print / Save PDF
 
 ## Round 2 verification
@@ -85,6 +93,8 @@ node scripts/playwright-smoke.mjs http://localhost:5173
 node scripts/playwright-c3-loop.mjs http://localhost:5173
 node scripts/playwright-fix-loop.mjs http://localhost:5173
 node scripts/playwright-boosts.mjs http://localhost:5173
+node scripts/verify-usability.mjs http://localhost:5173
+node scripts/verify-fixes-timing.mjs http://localhost:5173
 ```
 
 ## Scripts

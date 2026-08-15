@@ -285,16 +285,8 @@ export async function getFinding(findingId: string): Promise<Finding> {
   return row as unknown as Finding;
 }
 
-/**
- * Phase 3 — open fix tasks for a staff user:
- * assigned to them, or on shifts they created (legacy tasks without assignedTo).
- */
-export async function listOpenFixTasksForStaff(
-  userId: string,
-): Promise<Task[]> {
-  const byId = new Map<string, Task>();
-
-  // Prefer assignedTo+status; fall back to open-status scan if compound index missing
+/** Fast path — one query. Paint these before scanning own shifts. */
+export async function listAssignedOpenTasks(userId: string): Promise<Task[]> {
   try {
     const assigned = await tables.listRows({
       databaseId: DB,
@@ -305,9 +297,7 @@ export async function listOpenFixTasksForStaff(
         Query.limit(50),
       ],
     });
-    for (const row of assigned.rows) {
-      byId.set(row.$id, row as unknown as Task);
-    }
+    return assigned.rows as unknown as Task[];
   } catch {
     try {
       const open = await tables.listRows({
@@ -315,46 +305,80 @@ export async function listOpenFixTasksForStaff(
         tableId: T.tasks,
         queries: [Query.equal("status", "open"), Query.limit(100)],
       });
-      for (const row of open.rows) {
-        const t = row as unknown as Task;
-        if (t.assignedTo === userId) byId.set(t.$id, t);
-      }
+      return (open.rows as unknown as Task[]).filter(
+        (t) => t.assignedTo === userId,
+      );
     } catch {
-      /* continue to shift-owned path */
+      return [];
     }
+  }
+}
+
+/**
+ * Phase 3 — open fix tasks for a staff user:
+ * assigned to them, or on shifts they created (legacy tasks without assignedTo).
+ * Call `onPartial` as soon as the assigned query returns so Opening can paint.
+ */
+export async function listOpenFixTasksForStaff(
+  userId: string,
+  onPartial?: (tasks: Task[]) => void,
+): Promise<Task[]> {
+  const byId = new Map<string, Task>();
+
+  const [assigned, shiftRows] = await Promise.all([
+    listAssignedOpenTasks(userId),
+    tables
+      .listRows({
+        databaseId: DB,
+        tableId: T.shifts,
+        queries: [
+          Query.equal("createdBy", userId),
+          Query.orderDesc("startedAt"),
+          Query.limit(50),
+        ],
+      })
+      .then((r) => r.rows)
+      .catch(() => [] as { $id: string }[]),
+  ]);
+
+  for (const t of assigned) byId.set(t.$id, t);
+  onPartial?.([...byId.values()]);
+
+  const mine = new Set(shiftRows.map((s) => s.$id));
+  if (mine.size === 0) {
+    return [...byId.values()].sort(byTaskRecency);
   }
 
   try {
-    const shifts = await tables.listRows({
+    const open = await tables.listRows({
       databaseId: DB,
-      tableId: T.shifts,
-      queries: [
-        Query.equal("createdBy", userId),
-        Query.orderDesc("startedAt"),
-        Query.limit(50),
-      ],
+      tableId: T.tasks,
+      queries: [Query.equal("status", "open"), Query.limit(100)],
     });
-    for (const shift of shifts.rows) {
-      try {
-        const tasks = await listTasks(shift.$id);
-        for (const t of tasks) {
-          if (t.status !== "open") continue;
-          // Own shift tasks, or explicitly assigned to this user
-          if (!t.assignedTo || t.assignedTo === userId) {
-            byId.set(t.$id, t);
-          }
-        }
-      } catch {
-        /* skip shift */
+    for (const row of open.rows) {
+      const t = row as unknown as Task;
+      if (t.status !== "open") continue;
+      if (t.assignedTo === userId || (mine.has(t.shiftId) && !t.assignedTo)) {
+        byId.set(t.$id, t);
       }
     }
   } catch {
-    /* ignore */
+    const batches = await Promise.all(
+      [...mine].map((id) => listTasks(id).catch(() => [] as Task[])),
+    );
+    for (const tasks of batches) {
+      for (const t of tasks) {
+        if (t.status !== "open") continue;
+        if (!t.assignedTo || t.assignedTo === userId) byId.set(t.$id, t);
+      }
+    }
   }
 
-  return [...byId.values()].sort((a, b) =>
-    (b.createdAt || b.$createdAt).localeCompare(a.createdAt || a.$createdAt),
-  );
+  return [...byId.values()].sort(byTaskRecency);
+}
+
+function byTaskRecency(a: Task, b: Task) {
+  return (b.createdAt || b.$createdAt).localeCompare(a.createdAt || a.$createdAt);
 }
 
 /**

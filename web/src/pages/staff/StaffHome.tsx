@@ -21,13 +21,20 @@ import {
   createDraftShift,
   getChecklist,
   getSite,
+  listMyShifts,
   parseChecklistItems,
+  getEvidencePreviewUrl,
+  getShift,
+  parsePhotoFileIds,
+  pickResumableDraft,
   PHOTO_ACCEPT,
   uploadEvidence,
   validatePhotoFile,
 } from "../../lib/shifts";
-import type { ChecklistItem, Site, Task } from "../../types/shiftproof";
+import type { ChecklistItem, Shift, Site, Task } from "../../types/shiftproof";
 import "./StaffHome.css";
+
+const FIX_VISIBLE = 4;
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -47,25 +54,40 @@ export function StaffHome() {
   const [fixLoading, setFixLoading] = useState(true);
   const [recheckTaskId, setRecheckTaskId] = useState<string | null>(null);
   const [fixToast, setFixToast] = useState<string | null>(null);
+  const [resumeDraft, setResumeDraft] = useState<Shift | null>(null);
+  const [fixError, setFixError] = useState<string | null>(null);
+  const [fixesExpanded, setFixesExpanded] = useState(false);
+  const [fixThumbs, setFixThumbs] = useState<Record<string, string>>({});
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
   const loadingSlow = useSlowLoading(loading);
 
-  const pendingRecheck = fixTasks.filter((t) => !t.recheckFileId).length;
-  const awaitingManager = fixTasks.filter((t) => t.recheckFileId).length;
-
-  const loadFixTasks = useCallback(async (userId: string) => {
-    setFixLoading(true);
-    try {
-      const tasks = await listOpenFixTasksForStaff(userId);
-      setFixTasks(tasks);
-    } catch {
-      setFixTasks([]);
-    } finally {
-      setFixLoading(false);
-    }
-  }, []);
+  const loadFixTasks = useCallback(
+    async (userId: string, opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setFixLoading(true);
+      try {
+        const tasks = await listOpenFixTasksForStaff(userId, (partial) => {
+          setFixTasks(partial);
+          setFixLoading(false);
+          setFixError(null);
+        });
+        setFixTasks(tasks);
+        setFixError(null);
+      } catch (err) {
+        if (!opts?.silent) setFixTasks([]);
+        setFixError(
+          getErrorMessage(
+            err,
+            "Could not load fix tasks. Try again.",
+          ),
+        );
+      } finally {
+        setFixLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +114,22 @@ export function StaffHome() {
     if (!user) return;
     void loadFixTasks(user.$id);
   }, [user, loadFixTasks]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listMyShifts(user.$id);
+        if (!cancelled) setResumeDraft(pickResumableDraft(rows));
+      } catch {
+        if (!cancelled) setResumeDraft(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (error) {
@@ -121,6 +159,10 @@ export function StaffHome() {
     setError(null);
     setStarting(true);
     try {
+      if (resumeDraft) {
+        navigate(`/staff/shifts/${resumeDraft.$id}`);
+        return;
+      }
       const shift = await createDraftShift(user.$id);
       navigate(`/staff/shifts/${shift.$id}`);
     } catch (err) {
@@ -158,7 +200,7 @@ export function StaffHome() {
       setFixToast(
         "Re-check uploaded. AI re-scored this item — manager will close the task.",
       );
-      await loadFixTasks(user.$id);
+      await loadFixTasks(user.$id, { silent: true });
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
     } finally {
@@ -166,8 +208,56 @@ export function StaffHome() {
     }
   }
 
-  // Only mount after load when tasks exist — no empty/skeleton “Fix needed” flash
-  const showFixes = !fixLoading && fixTasks.length > 0;
+  const uniqueFixes = uniqueFixTasks(fixTasks);
+  const pendingUnique = uniqueFixes.filter((t) => !t.recheckFileId);
+  const waitingUnique = uniqueFixes.filter((t) => t.recheckFileId);
+  const hiddenFixCount = Math.max(0, uniqueFixes.length - FIX_VISIBLE);
+  const visibleFixes = (fixesExpanded ? uniqueFixes : uniqueFixes.slice(0, FIX_VISIBLE));
+
+  const showFixes = uniqueFixes.length > 0;
+  const showFixSkeleton = fixLoading && uniqueFixes.length === 0;
+  const resumePhotoCount = resumeDraft
+    ? parsePhotoFileIds(resumeDraft.photoFileIds).length
+    : 0;
+
+  const visibleFixKey = visibleFixes.map((t) => `${t.$id}:${t.shiftId}`).join(",");
+
+  useEffect(() => {
+    if (!visibleFixKey) return;
+    let cancelled = false;
+    const rows = visibleFixKey.split(",").map((pair) => {
+      const [id, shiftId] = pair.split(":");
+      return { id, shiftId };
+    });
+    void Promise.all(
+      rows.map(async ({ id, shiftId }) => {
+        if (!id || !shiftId) return null;
+        try {
+          const row = await getShift(shiftId);
+          const first = parsePhotoFileIds(row.photoFileIds)[0];
+          return first ? ([id, getEvidencePreviewUrl(first)] as const) : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((pairs) => {
+      if (cancelled) return;
+      setFixThumbs((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const pair of pairs) {
+          if (pair && next[pair[0]] !== pair[1]) {
+            next[pair[0]] = pair[1];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleFixKey]);
 
   return (
     <div className="staff-home" data-testid="staff-opening">
@@ -202,7 +292,7 @@ export function StaffHome() {
           <p className="staff-lede">
             {loading
               ? "Loading checklist…"
-              : "Photograph the list, submit once. Manager sees Pass, Gap, or Unclear — not a chat dump."}
+              : "Photograph each item — about a minute. Submit once when you have 3–8 clear shots."}
           </p>
           {!loading && items.length > 0 ? (
             <p className="staff-meta caption" aria-label="Check summary">
@@ -239,13 +329,35 @@ export function StaffHome() {
           </div>
         ) : null}
 
+        {fixError ? (
+          <div className="error-banner" role="alert">
+            {fixError}
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => user && void loadFixTasks(user.$id)}
+            >
+              Try again
+            </button>
+          </div>
+        ) : null}
+
         {fixToast ? (
           <p className="success-banner" role="status" data-testid="fix-toast">
             {fixToast}
           </p>
         ) : null}
 
-        {/* Only surface when loading or real tasks — empty state stays quiet */}
+        {showFixSkeleton ? (
+          <div
+            className="staff-fixes staff-fixes-skeleton-block"
+            aria-busy
+            aria-label="Loading fixes"
+          >
+            <div className="skeleton-card staff-fixes-skeleton" />
+          </div>
+        ) : null}
+
         {showFixes ? (
           <section
             className="staff-fixes"
@@ -254,39 +366,51 @@ export function StaffHome() {
           >
             <div className="staff-fixes-head">
               <h2 id="open-fixes-title">Fix needed</h2>
-              {!fixLoading && fixTasks.length > 0 ? (
+              {!fixLoading && uniqueFixes.length > 0 ? (
                 <p className="staff-fixes-count caption">
-                  {pendingRecheck > 0
-                    ? `${pendingRecheck} need${pendingRecheck === 1 ? "s" : ""} a re-check photo`
+                  {pendingUnique.length > 0
+                    ? `${pendingUnique.length} need${pendingUnique.length === 1 ? "s" : ""} a re-check photo`
                     : null}
-                  {pendingRecheck > 0 && awaitingManager > 0 ? " · " : null}
-                  {awaitingManager > 0
-                    ? `${awaitingManager} waiting on manager`
+                  {pendingUnique.length > 0 && waitingUnique.length > 0
+                    ? " · "
+                    : null}
+                  {waitingUnique.length > 0
+                    ? `${waitingUnique.length} waiting on manager`
                     : null}
                 </p>
               ) : null}
             </div>
 
             <ul className="list-plain staff-fix-list">
-              {fixTasks.map((t) => (
+              {visibleFixes.map((t) => (
                 <li
                   key={t.$id}
                   className="staff-fix-row"
                   data-testid="staff-fix-row"
                   data-state={t.recheckFileId ? "sent" : "needs-photo"}
                 >
+                  {fixThumbs[t.$id] ? (
+                    <img
+                      className="staff-fix-thumb"
+                      src={fixThumbs[t.$id]}
+                      alt=""
+                      width={56}
+                      height={56}
+                    />
+                  ) : null}
                   <div className="staff-fix-body">
                     <p className="staff-fix-title">{t.title}</p>
                     <p className="caption staff-fix-status">
+                      {formatFixWhen(t.createdAt || t.$createdAt)}
                       {t.recheckFileId
-                        ? "Re-check on file · waiting for manager"
-                        : "Upload one clear photo after you fix it"}
+                        ? " · re-check on file, waiting for manager"
+                        : " · upload one clear photo after you fix it"}
                     </p>
                     <Link
                       to={`/staff/shifts/${t.shiftId}`}
                       className="text-btn staff-fix-shift-link"
                     >
-                      View shift
+                      View scores
                     </Link>
                   </div>
                   {!t.recheckFileId ? (
@@ -319,6 +443,17 @@ export function StaffHome() {
                 </li>
               ))}
             </ul>
+            {hiddenFixCount > 0 ? (
+              <button
+                type="button"
+                className="text-btn staff-fixes-more"
+                onClick={() => setFixesExpanded((v) => !v)}
+              >
+                {fixesExpanded
+                  ? "Show fewer"
+                  : `Show ${hiddenFixCount} more`}
+              </button>
+            ) : null}
           </section>
         ) : null}
 
@@ -367,13 +502,22 @@ export function StaffHome() {
       <div
         className="staff-cta-bar"
         role="region"
-        aria-label="Start opening check"
+        aria-label={
+          resumeDraft ? "Continue opening check" : "Start opening check"
+        }
       >
         <div className="staff-cta-inner">
-          {pendingRecheck > 0 ? (
+          {pendingUnique.length > 0 ? (
             <p className="staff-cta-hint caption">
-              {pendingRecheck} open fix
-              {pendingRecheck === 1 ? "" : "es"} above — or start a new check
+              {pendingUnique.length} open fix
+              {pendingUnique.length === 1 ? "" : "es"} above
+              {resumeDraft ? " — or continue your draft" : " — or start a new check"}
+            </p>
+          ) : resumeDraft ? (
+            <p className="staff-cta-hint caption">
+              {resumePhotoCount === 0
+                ? "Draft waiting — add photos to finish"
+                : `${resumePhotoCount} photo${resumePhotoCount === 1 ? "" : "s"} saved · finish and submit`}
             </p>
           ) : (
             <p className="staff-cta-hint caption">
@@ -383,14 +527,37 @@ export function StaffHome() {
           <Button
             fullWidth
             loading={starting}
-            disabled={loading || items.length === 0}
+            disabled={loading || (!resumeDraft && items.length === 0)}
             data-testid="start-opening-check"
             onClick={() => void startShift()}
           >
-            Start opening check
+            {resumeDraft ? "Continue opening check" : "Start opening check"}
           </Button>
         </div>
       </div>
     </div>
   );
+}
+
+function uniqueFixTasks(tasks: Task[]): Task[] {
+  const seen = new Set<string>();
+  const out: Task[] = [];
+  for (const t of tasks) {
+    const key = t.findingId || t.$id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+function formatFixWhen(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
 }

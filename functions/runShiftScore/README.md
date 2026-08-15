@@ -11,7 +11,7 @@ Appwrite Function for ShiftProof vision scoring. Contract: `docs/API.md`, schema
 ## Default path (Gemini Flash)
 
 1. Job → `running`; shift → `scoring`
-2. Load checklist items + evidence photos from Storage bucket `evidence`
+2. Load checklist items + evidence photos from Storage bucket `evidence` (`photoFileIds` is a JSON string array; empty slots are skipped)
 3. Call **Gemini Flash** via Google AI Studio (`GOOGLE_AI_API_KEY`)
 4. Parse JSON → normalize to FINDINGS_SCHEMA (low confidence → `unclear`)
 5. Write ≥5 `findings` (`source: "ai"`)

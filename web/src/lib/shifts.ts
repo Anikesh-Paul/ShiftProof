@@ -17,6 +17,7 @@ import {
   type Shift,
   type AgentJob,
   type AuditEvent,
+  type Finding,
 } from "../types/shiftproof";
 
 const T = APPWRITE_IDS.tables;
@@ -118,10 +119,61 @@ export function parsePhotoFileIds(photoFileIds?: string): string[] {
   try {
     const parsed = JSON.parse(photoFileIds) as unknown;
     return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === "string")
+      ? parsed.filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        )
       : [];
   } catch {
     return [];
+  }
+}
+
+/** Slotted layout: empty strings mark unused checklist rows. Compact arrays are extras. */
+export function parsePhotoSlots(
+  photoFileIds: string | undefined,
+  items: ChecklistItem[],
+): { slots: Record<string, string>; extras: string[] } {
+  const empty = { slots: {} as Record<string, string>, extras: [] as string[] };
+  if (!photoFileIds) return empty;
+  try {
+    const parsed = JSON.parse(photoFileIds) as unknown;
+    if (!Array.isArray(parsed)) return empty;
+    const strings = parsed.filter((id): id is string => typeof id === "string");
+    const hasBlank = strings.some((id) => id.length === 0);
+    const filled = strings.filter((id) => id.length > 0);
+    if (!hasBlank || items.length === 0) {
+      return { slots: {}, extras: filled };
+    }
+    const slots: Record<string, string> = {};
+    const extras: string[] = [];
+    strings.forEach((id, i) => {
+      if (!id) return;
+      if (i < items.length) slots[items[i].id] = id;
+      else extras.push(id);
+    });
+    return { slots, extras };
+  } catch {
+    return empty;
+  }
+}
+
+export function serializePhotoSlots(
+  items: ChecklistItem[],
+  slots: Record<string, string>,
+  extras: string[],
+): string[] {
+  return [...items.map((item) => slots[item.id] ?? ""), ...extras];
+}
+
+/** API.md §5b — delete one evidence file (best-effort). */
+export async function deleteEvidenceFile(fileId: string): Promise<void> {
+  try {
+    await storage.deleteFile({
+      bucketId: APPWRITE_IDS.buckets.evidence,
+      fileId,
+    });
+  } catch {
+    /* orphan file — ignore */
   }
 }
 
@@ -218,12 +270,20 @@ export async function uploadEvidence(file: File): Promise<string> {
   return result.$id;
 }
 
-/** Preview URL for an evidence file (bucket `evidence`). */
-export function getEvidencePreviewUrl(fileId: string): string {
+/** Full-size view URL for lightbox / download. */
+export function getEvidenceFileUrl(fileId: string): string {
   return storage.getFileView({
     bucketId: APPWRITE_IDS.buckets.evidence,
     fileId,
   });
+}
+
+/**
+ * Grid thumb. Uses file view — Appwrite image preview returns a pink
+ * placeholder on this project, so resized preview is not safe.
+ */
+export function getEvidencePreviewUrl(fileId: string): string {
+  return getEvidenceFileUrl(fileId);
 }
 
 /** List agent_jobs for a shift (API.md staff §7). */
@@ -369,6 +429,59 @@ export async function submitShift(
   };
 }
 
+/** API.md §4 retry — new waiting job + runShiftScore. Leaves the old job in place. */
+export async function retryShiftScore(
+  shiftId: string,
+  userId: string,
+): Promise<{
+  shift: Shift;
+  job: AgentJob;
+  scoreTrigger: { triggered: boolean; error?: string };
+}> {
+  const jobRow = await tables.createRow({
+    databaseId: DB,
+    tableId: T.agent_jobs,
+    rowId: ID.unique(),
+    data: {
+      shiftId,
+      status: "waiting",
+      startedAt: null,
+      errorMessage: null,
+      finishedAt: null,
+      traceJson: null,
+    } as RowData,
+  });
+
+  try {
+    await tables.createRow({
+      databaseId: DB,
+      tableId: T.events,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        type: "job.retry",
+        actorUserId: userId,
+        payloadJson: JSON.stringify({ jobId: jobRow.$id }),
+        createdAt: new Date().toISOString(),
+      } as RowData,
+    });
+  } catch {
+    /* event is best-effort */
+  }
+
+  const job = jobRow as unknown as AgentJob;
+  const scoreTrigger = await triggerRunShiftScore(shiftId, job.$id);
+  let shift = await getShift(shiftId);
+  return {
+    shift,
+    job,
+    scoreTrigger: {
+      triggered: scoreTrigger.triggered,
+      error: scoreTrigger.triggered ? undefined : scoreTrigger.error,
+    },
+  };
+}
+
 /** Poll latest agent_job for a shift (API.md §7). */
 export async function getLatestJob(shiftId: string): Promise<AgentJob | null> {
   const jobs = await listJobsForShift(shiftId);
@@ -399,9 +512,64 @@ export async function listMyShifts(userId: string): Promise<Shift[]> {
   const result = await tables.listRows({
     databaseId: DB,
     tableId: T.shifts,
-    queries: [Query.equal("createdBy", userId), Query.orderDesc("startedAt")],
+    queries: [
+      Query.equal("createdBy", userId),
+      Query.orderDesc("startedAt"),
+      Query.limit(100),
+    ],
   });
   return result.rows as unknown as Shift[];
+}
+
+export function isEmptyDraft(shift: Shift): boolean {
+  return (
+    shift.status === "draft" && parsePhotoFileIds(shift.photoFileIds).length === 0
+  );
+}
+
+/** Prefer a draft that already has photos; otherwise the newest empty draft. */
+export function pickResumableDraft(shifts: Shift[]): Shift | null {
+  const drafts = shifts.filter((s) => s.status === "draft");
+  if (!drafts.length) return null;
+  return (
+    drafts.find((s) => parsePhotoFileIds(s.photoFileIds).length > 0) ??
+    drafts[0] ??
+    null
+  );
+}
+
+/** API.md staff §5b — delete own draft; evidence cleanup is best-effort. */
+export async function deleteDraftShift(
+  shiftId: string,
+  fileIds: string[] = [],
+): Promise<void> {
+  await tables.deleteRow({
+    databaseId: DB,
+    tableId: T.shifts,
+    rowId: shiftId,
+  });
+  for (const fileId of fileIds) {
+    try {
+      await storage.deleteFile({
+        bucketId: APPWRITE_IDS.buckets.evidence,
+        fileId,
+      });
+    } catch {
+      /* orphan file — ignore */
+    }
+  }
+}
+
+/** API.md staff §6 — findings for a shift the staff member can read. */
+export async function listFindingsForShift(
+  shiftId: string,
+): Promise<Finding[]> {
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: T.findings,
+    queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
+  });
+  return result.rows as unknown as Finding[];
 }
 
 export const PHOTO_MIN = 3;
