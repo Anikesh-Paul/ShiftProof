@@ -1,6 +1,7 @@
 /**
  * Appwrite Function: runShiftScore
  * Contract: docs/API.md — input { shiftId, jobId }
+ * Recheck: { mode: "recheck", shiftId, findingId, itemId, recheckFileId }
  *
  * Default: Gemini Flash (Google AI Studio) scores Storage photos + checklist
  * → FINDINGS_SCHEMA → findings / job / events.
@@ -11,7 +12,7 @@
  *   APPWRITE_API_KEY          (server key: TablesDB + Storage)
  *   GOOGLE_AI_API_KEY         (Google AI Studio — required for default path)
  *   GEMINI_MODEL              (optional, default gemini-flash-latest)
- *   SCORING_DEADLINE_MS       (optional, default 110000; use 170000 if Function timeout is 180s)
+ *   SCORING_DEADLINE_MS       (optional, default 150000; Function timeout is 180s)
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
 const { Client, TablesDB, Storage, ID, Query } = require("node-appwrite");
@@ -26,6 +27,14 @@ const T = {
   events: "events",
 };
 
+const ID_PATTERN = /^[A-Za-z0-9_-]{1,36}$/;
+const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const JOB_RUNNABLE = new Set(["waiting", "failed"]);
+
+const GENERIC_BAD_REQUEST = "Invalid request";
+const GENERIC_CONFLICT = "Request cannot be processed";
+const GENERIC_FAILED = "Scoring failed";
+
 /** Low confidence cannot be silent pass/gap (TC-C3-05). */
 const LOW_CONFIDENCE = 0.55;
 /** Cap photos sent to the model (timeout + payload). */
@@ -34,8 +43,15 @@ const MAX_PHOTOS = 5;
 const MAX_B64_CHARS = 1_600_000;
 /** One Gemini attempt must finish in time to allow a retry inside the Function timeout. */
 const GEMINI_ATTEMPT_MS = 45_000;
-/** Leave headroom under Appwrite Function timeout (120s default; set 170000 after raising to 180s). */
-const SCORING_DEADLINE_MS = Number(process.env.SCORING_DEADLINE_MS || 110_000);
+
+function scoringDeadlineMs() {
+  const n = Number(process.env.SCORING_DEADLINE_MS);
+  return Number.isFinite(n) && n > 0 ? n : 150_000;
+}
+
+function isValidId(id) {
+  return typeof id === "string" && ID_PATTERN.test(id);
+}
 
 const CLAUSE_QUOTES = {
   "FS-01": "Food handlers must wear clean disposable gloves at the prep station.",
@@ -119,15 +135,19 @@ async function loadPhotoParts(storage, photoFileIds, log) {
   const limited = photoFileIds.slice(0, MAX_PHOTOS);
   for (const fileId of limited) {
     try {
-      let mime = "image/jpeg";
+      let mime = "";
       try {
         const meta = await storage.getFile({
           bucketId: EVIDENCE_BUCKET,
           fileId,
         });
-        if (meta && meta.mimeType) mime = meta.mimeType;
+        if (meta && meta.mimeType) mime = String(meta.mimeType).toLowerCase();
       } catch {
-        /* keep default mime */
+        /* mime unknown — skip unless we can still whitelist after download */
+      }
+      if (mime && !ALLOWED_MIME.has(mime)) {
+        log(`skip disallowed mime fileId=${fileId} mime=${mime}`);
+        continue;
       }
       const buf = await storage.getFileDownload({
         bucketId: EVIDENCE_BUCKET,
@@ -142,9 +162,14 @@ async function loadPhotoParts(storage, photoFileIds, log) {
         log(`skip empty photo fileId=${fileId}`);
         continue;
       }
+      const resolved = ALLOWED_MIME.has(mime) ? mime : "image/jpeg";
+      if (!ALLOWED_MIME.has(resolved)) {
+        log(`skip photo fileId=${fileId}: no allowed mime`);
+        continue;
+      }
       parts.push({
         inline_data: {
-          mime_type: mime,
+          mime_type: resolved,
           data: b64,
         },
       });
@@ -199,9 +224,15 @@ ${JSON.stringify(checklistForModel, null, 2)}
 `;
 }
 
+function retryableParseError(message) {
+  const err = new Error(message);
+  err.retryable = true;
+  return err;
+}
+
 function extractJsonObject(text) {
   const raw = String(text || "").trim();
-  if (!raw) throw new Error("Empty model text");
+  if (!raw) throw retryableParseError("Empty model text");
   try {
     return JSON.parse(raw);
   } catch {
@@ -209,14 +240,31 @@ function extractJsonObject(text) {
   }
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) {
-    return JSON.parse(fence[1].trim());
+    try {
+      return JSON.parse(fence[1].trim());
+    } catch {
+      throw retryableParseError("Model response is not valid JSON");
+    }
   }
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start >= 0 && end > start) {
-    return JSON.parse(raw.slice(start, end + 1));
+    try {
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch {
+      throw retryableParseError("Model response is not valid JSON");
+    }
   }
-  throw new Error("Model response is not valid JSON");
+  throw retryableParseError("Model response is not valid JSON");
+}
+
+function isRetryableModelOutputError(err) {
+  if (!err) return false;
+  if (err.retryable === true) return true;
+  const msg = String(err.message || err);
+  return /not valid JSON|Empty model text|Gemini response not JSON|Unexpected end of JSON/i.test(
+    msg,
+  );
 }
 
 function clamp01(n) {
@@ -262,7 +310,6 @@ function normalizeFindings(payload, items) {
           ? "Insufficient visual evidence to score this item."
           : `Scored from evidence photos for ${item ? item.label : id}.`;
     }
-    // Cap lengths to Appwrite column limits
     quote = quote.slice(0, 1000);
     evidence_note = evidence_note.slice(0, 1000);
     byId.set(id, {
@@ -275,7 +322,6 @@ function normalizeFindings(payload, items) {
     });
   }
 
-  // Ensure every checklist item has a finding
   const scored = items.map((item, i) => {
     if (byId.has(item.id)) return byId.get(item.id);
     const clauseId =
@@ -315,6 +361,12 @@ function isDailyQuotaExhausted(status, body) {
   );
 }
 
+function classifyGeminiError(status, body) {
+  if (isDailyQuotaExhausted(status, body)) return "quota";
+  if (isRetryableGeminiHttp(status)) return "retryable";
+  return "fatal";
+}
+
 function isThinkingConfigRejected(status, body) {
   if (status !== 400) return false;
   return String(body || "").toLowerCase().includes("thinking");
@@ -345,7 +397,7 @@ async function callGeminiFlashOnce({
 }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model,
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  )}:generateContent`;
 
   const parts = [{ text: prompt }, ...imageParts];
   const generationConfig = {
@@ -372,7 +424,10 @@ async function callGeminiFlashOnce({
   );
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(GEMINI_ATTEMPT_MS),
   });
@@ -391,7 +446,7 @@ async function callGeminiFlashOnce({
   try {
     data = JSON.parse(rawText);
   } catch {
-    throw new Error("Gemini response not JSON");
+    throw retryableParseError("Gemini response not JSON");
   }
 
   const block = data.promptFeedback && data.promptFeedback.blockReason;
@@ -408,20 +463,19 @@ async function callGeminiFlashOnce({
     log(`Gemini finishReason=${finish}`);
   }
 
-  const textOut = (cand.content && cand.content.parts || [])
+  const textOut = ((cand.content && cand.content.parts) || [])
     .map((p) => p.text || "")
     .join("")
     .trim();
   if (!textOut) {
-    throw new Error("Gemini empty text (parse/safety)");
+    throw retryableParseError("Gemini empty text (parse/safety)");
   }
   return textOut;
 }
 
 /**
- * Up to 3 attempts on 429/503/500/timeout. Skip daily-quota 429s (retrying
- * burns the same empty bucket). Drop thinking config once if Gemini 400s it.
- * Still fails cleanly if exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
+ * Up to 3 attempts on 429/503/500/timeout/parse. Skip daily-quota 429s.
+ * Drop thinking config once if Gemini 400s it.
  */
 async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
   const maxAttempts = 3;
@@ -430,12 +484,12 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const elapsed = Date.now() - started;
-    if (elapsed + 8_000 > SCORING_DEADLINE_MS) {
+    if (elapsed + 8_000 > scoringDeadlineMs()) {
       log(`Gemini abort retry: ${elapsed}ms elapsed, near Function deadline`);
       break;
     }
     try {
-      return await callGeminiFlashOnce({
+      const textOut = await callGeminiFlashOnce({
         apiKey,
         model,
         prompt,
@@ -443,6 +497,8 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
         log,
         thinkingConfig,
       });
+      log(`Gemini response chars=${textOut.length}`);
+      return extractJsonObject(textOut);
     } catch (e) {
       lastErr = e;
       const status = e && e.httpStatus;
@@ -462,11 +518,20 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
         );
       }
 
-      const retryable = timedOut || isRetryableGeminiHttp(status);
+      const retryable =
+        timedOut ||
+        isRetryableGeminiHttp(status) ||
+        isRetryableModelOutputError(e);
       if (attempt < maxAttempts && retryable) {
         const delayMs = retryDelayMs(status || 503, attempt);
         log(
-          `Gemini retryable ${timedOut ? "timeout" : `HTTP ${status}`}; attempt ${attempt}/${maxAttempts}; wait ${delayMs}ms`,
+          `Gemini retryable ${
+            timedOut
+              ? "timeout"
+              : isRetryableModelOutputError(e)
+                ? "parse"
+                : `HTTP ${status}`
+          }; attempt ${attempt}/${maxAttempts}; wait ${delayMs}ms`,
         );
         await sleep(delayMs);
         continue;
@@ -477,71 +542,178 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
   throw lastErr || new Error("Gemini scoring stopped near Function deadline");
 }
 
-async function scoreWithGemini({ storage, items, photoFileIds, log }) {
+async function scoreWithGemini({
+  storage,
+  items,
+  photoFileIds,
+  log,
+  minFindings = 5,
+}) {
   const apiKey = process.env.GOOGLE_AI_API_KEY || "";
   if (!apiKey) {
     throw new Error(
       "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
     );
   }
-  // gemini-2.0-flash free-tier often 429 for new AI Studio keys; flash-latest works.
   const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  if (!photoFileIds.length) {
+    throw new Error("No evidence photos available");
+  }
   const imageParts = await loadPhotoParts(storage, photoFileIds, log);
-  if (imageParts.length < 1 && photoFileIds.length > 0) {
-    log("warning: no photos downloaded; scoring with text-only context");
+  if (imageParts.length < 1) {
+    throw new Error("No evidence photos available");
   }
   const prompt = buildScoringPrompt(items);
-  const textOut = await callGeminiFlash({
+  const payload = await callGeminiFlash({
     apiKey,
     model,
     prompt,
     imageParts,
     log,
   });
-  log(`Gemini response chars=${textOut.length}`);
-  const payload = extractJsonObject(textOut);
-  const scored = normalizeFindings(payload, items);
-  if (scored.length < 5) {
-    throw new Error(`Need ≥5 findings, got ${scored.length}`);
+  let scored;
+  try {
+    scored = normalizeFindings(payload, items);
+  } catch (e) {
+    const err = e;
+    err.retryable = true;
+    throw err;
+  }
+  if (scored.length < minFindings) {
+    throw retryableParseError(`Need ≥${minFindings} findings, got ${scored.length}`);
   }
   return { scored, model, photoCountUsed: imageParts.length };
 }
 
-module.exports = async ({ req, res, log, error }) => {
-  const client = new Client()
-    .setEndpoint(
-      process.env.APPWRITE_FUNCTION_API_ENDPOINT ||
-        process.env.APPWRITE_ENDPOINT ||
-        "https://sgp.cloud.appwrite.io/v1",
-    )
-    .setProject(
-      process.env.APPWRITE_FUNCTION_PROJECT_ID ||
-        process.env.APPWRITE_PROJECT_ID ||
-        "6a5b0ce3002605c7a776",
-    )
-    .setKey(
-      process.env.APPWRITE_API_KEY || process.env.APPWRITE_FUNCTION_API_KEY || "",
-    );
+async function writeEvent(tables, shiftId, type, payload) {
+  await tables.createRow({
+    databaseId: DB,
+    tableId: T.events,
+    rowId: ID.unique(),
+    data: {
+      shiftId,
+      type,
+      actorUserId: "function:runShiftScore",
+      payloadJson: JSON.stringify(payload),
+      createdAt: new Date().toISOString(),
+    },
+  });
+}
 
-  const tables = new TablesDB(client);
-  const storage = new Storage(client);
+async function handleRecheck({ body, tables, storage, log, error, res }) {
+  const { shiftId, findingId, itemId, recheckFileId } = body;
+  const ids = { shiftId, findingId, itemId, recheckFileId };
+  for (const [name, id] of Object.entries(ids)) {
+    if (!isValidId(id)) {
+      error(`invalid id field=${name}`);
+      return res.json({ ok: false, error: GENERIC_BAD_REQUEST }, 400);
+    }
+  }
 
-  let body = {};
+  let finding;
   try {
-    body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-  } catch {
-    body = {};
+    finding = await tables.getRow({
+      databaseId: DB,
+      tableId: T.findings,
+      rowId: findingId,
+    });
+  } catch (e) {
+    error(`recheck finding load: ${e.message || e}`);
+    return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
   }
-  if (!body.shiftId && req.bodyJson) body = req.bodyJson;
-
-  const shiftId = body.shiftId;
-  const jobId = body.jobId;
-  if (!shiftId || !jobId) {
-    error("Missing shiftId or jobId");
-    return res.json({ ok: false, error: "shiftId and jobId required" }, 400);
+  if (finding.shiftId !== shiftId || finding.itemId !== itemId) {
+    error("recheck finding does not belong to shift/item");
+    return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
   }
 
-  log(`runShiftScore shiftId=${shiftId} jobId=${jobId}`);
+  const shift = await tables.getRow({
+    databaseId: DB,
+    tableId: T.shifts,
+    rowId: shiftId,
+  });
+  const checklist = await tables.getRow({
+    databaseId: DB,
+    tableId: T.checklists,
+    rowId: shift.checklistId || "opening_fs",
+  });
+  const items = parseChecklistItems(checklist);
+  const item = items.find((it) => it.id === itemId);
+  if (!item) {
+    error("recheck item not on checklist");
+    return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
+  }
+
+  try {
+    const result = await scoreWithGemini({
+      storage,
+      items: [item],
+      photoFileIds: [recheckFileId],
+      log,
+      minFindings: 1,
+    });
+    const f = result.scored[0];
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: T.findings,
+      rowId: findingId,
+      data: {
+        status: f.status,
+        clauseId: f.clause_id,
+        quote: f.quote,
+        confidence: f.confidence,
+        evidenceNote: f.evidence_note,
+        source: "ai",
+        overrideReason: "",
+        overriddenBy: "",
+        overriddenAt: null,
+      },
+    });
+    await writeEvent(tables, shiftId, "finding.rescored", {
+      findingId,
+      itemId,
+      status: f.status,
+      confidence: f.confidence,
+      recheckFileId,
+    });
+    log(`recheck done finding=${findingId} status=${f.status}`);
+    return res.json({
+      ok: true,
+      findingId,
+      status: f.status,
+      mode: "recheck",
+    });
+  } catch (e) {
+    error(`recheck failed: ${e.message || e}`);
+    return res.json({ ok: false, error: GENERIC_FAILED }, 500);
+  }
+}
+
+async function handleFullScore({
+  shiftId,
+  jobId,
+  tables,
+  storage,
+  log,
+  error,
+  res,
+}) {
+  let job;
+  try {
+    job = await tables.getRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: jobId,
+    });
+  } catch (e) {
+    error(`job load: ${e.message || e}`);
+    return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
+  }
+  if (job.shiftId !== shiftId || !JOB_RUNNABLE.has(job.status)) {
+    error(
+      `job not runnable shiftMatch=${job.shiftId === shiftId} status=${job.status}`,
+    );
+    return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
+  }
 
   try {
     await tables.updateRow({
@@ -569,6 +741,9 @@ module.exports = async ({ req, res, log, error }) => {
 
     const photoFileIds = parsePhotoIds(shift);
     const photoCount = photoFileIds.length;
+    if (photoCount < 1) {
+      throw new Error("No evidence photos available");
+    }
 
     const checklist = await tables.getRow({
       databaseId: DB,
@@ -604,7 +779,7 @@ module.exports = async ({ req, res, log, error }) => {
     } catch (geminiErr) {
       const msg = String(geminiErr.message || geminiErr);
       error(`Gemini path failed: ${msg}`);
-      if (!allowStub) {
+      if (msg.includes("No evidence photos available") || !allowStub) {
         throw new Error(msg);
       }
       log("ALLOW_DEMO_STUB_SCORES=1 — using explicit stub after Gemini failure");
@@ -617,24 +792,19 @@ module.exports = async ({ req, res, log, error }) => {
       throw new Error("Need ≥5 findings");
     }
 
-    // Clear prior AI findings for this shift (re-run safe)
-    try {
-      const existing = await tables.listRows({
-        databaseId: DB,
-        tableId: T.findings,
-        queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
-      });
-      for (const row of existing.rows || []) {
-        if (row.source === "ai") {
-          await tables.deleteRow({
-            databaseId: DB,
-            tableId: T.findings,
-            rowId: row.$id,
-          });
-        }
+    const existing = await tables.listRows({
+      databaseId: DB,
+      tableId: T.findings,
+      queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
+    });
+    for (const row of existing.rows || []) {
+      if (row.source === "ai") {
+        await tables.deleteRow({
+          databaseId: DB,
+          tableId: T.findings,
+          rowId: row.$id,
+        });
       }
-    } catch (e) {
-      log(`skip clear findings: ${e.message}`);
     }
 
     for (const f of scored) {
@@ -655,6 +825,28 @@ module.exports = async ({ req, res, log, error }) => {
       });
     }
 
+    const jobNow = await tables.getRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: jobId,
+    });
+    const shiftNow = await tables.getRow({
+      databaseId: DB,
+      tableId: T.shifts,
+      rowId: shiftId,
+    });
+    if (jobNow.status === "failed" || shiftNow.status === "closed") {
+      error(
+        `sweep conflict job=${jobNow.status} shift=${shiftNow.status} — skip done/scored`,
+      );
+      await writeEvent(tables, shiftId, "job.sweep_conflict", {
+        jobId,
+        jobStatus: jobNow.status,
+        shiftStatus: shiftNow.status,
+      });
+      return res.json({ ok: false, error: GENERIC_CONFLICT }, 409);
+    }
+
     const trace = {
       mode,
       model: mode === "gemini" ? model : null,
@@ -664,45 +856,41 @@ module.exports = async ({ req, res, log, error }) => {
       lowConfidenceThreshold: LOW_CONFIDENCE,
     };
 
-    await tables.updateRow({
-      databaseId: DB,
-      tableId: T.agent_jobs,
-      rowId: jobId,
-      data: {
-        status: "done",
-        finishedAt: new Date().toISOString(),
-        errorMessage: null,
-        traceJson: JSON.stringify(trace),
-      },
-    });
+    const transitionedToDone = jobNow.status !== "done";
+    if (transitionedToDone) {
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.agent_jobs,
+        rowId: jobId,
+        data: {
+          status: "done",
+          finishedAt: new Date().toISOString(),
+          errorMessage: null,
+          traceJson: JSON.stringify(trace),
+        },
+      });
+    }
 
-    await tables.updateRow({
-      databaseId: DB,
-      tableId: T.shifts,
-      rowId: shiftId,
-      data: {
-        status: "scored",
-        scoredAt: new Date().toISOString(),
-      },
-    });
+    if (shiftNow.status !== "closed") {
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.shifts,
+        rowId: shiftId,
+        data: {
+          status: "scored",
+          scoredAt: new Date().toISOString(),
+        },
+      });
+    }
 
-    await tables.createRow({
-      databaseId: DB,
-      tableId: T.events,
-      rowId: ID.unique(),
-      data: {
-        shiftId,
-        type: "job.done",
-        actorUserId: "function:runShiftScore",
-        payloadJson: JSON.stringify({
-          jobId,
-          findingCount: scored.length,
-          mode,
-          model: mode === "gemini" ? model : null,
-        }),
-        createdAt: new Date().toISOString(),
-      },
-    });
+    if (transitionedToDone) {
+      await writeEvent(tables, shiftId, "job.done", {
+        jobId,
+        findingCount: scored.length,
+        mode,
+        model: mode === "gemini" ? model : null,
+      });
+    }
 
     log(`done mode=${mode} findings=${scored.length}`);
     return res.json({
@@ -714,34 +902,105 @@ module.exports = async ({ req, res, log, error }) => {
   } catch (e) {
     error(String(e.message || e));
     try {
-      await tables.updateRow({
+      const jobNow = await tables.getRow({
         databaseId: DB,
         tableId: T.agent_jobs,
         rowId: jobId,
-        data: {
-          status: "failed",
-          finishedAt: new Date().toISOString(),
-          errorMessage: String(e.message || e).slice(0, 500),
-        },
       });
-      await tables.createRow({
+      const shiftNow = await tables.getRow({
         databaseId: DB,
-        tableId: T.events,
-        rowId: ID.unique(),
-        data: {
-          shiftId,
-          type: "job.failed",
-          actorUserId: "function:runShiftScore",
-          payloadJson: JSON.stringify({
-            jobId,
-            error: String(e.message || e),
-          }),
-          createdAt: new Date().toISOString(),
-        },
+        tableId: T.shifts,
+        rowId: shiftId,
       });
+      const canFail =
+        jobNow.status === "waiting" || jobNow.status === "running";
+      if (canFail) {
+        await tables.updateRow({
+          databaseId: DB,
+          tableId: T.agent_jobs,
+          rowId: jobId,
+          data: {
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: String(e.message || e).slice(0, 500),
+          },
+        });
+        await writeEvent(tables, shiftId, "job.failed", {
+          jobId,
+          error: String(e.message || e),
+        });
+      }
+      if (shiftNow.status === "scoring") {
+        await tables.updateRow({
+          databaseId: DB,
+          tableId: T.shifts,
+          rowId: shiftId,
+          data: { status: "submitted" },
+        });
+      }
     } catch (inner) {
       error(`fail cleanup: ${inner.message}`);
     }
-    return res.json({ ok: false, error: String(e.message || e) }, 500);
+    return res.json({ ok: false, error: GENERIC_FAILED }, 500);
   }
-};
+}
+
+async function main({ req, res, log, error }) {
+  const client = new Client()
+    .setEndpoint(
+      process.env.APPWRITE_FUNCTION_API_ENDPOINT ||
+        process.env.APPWRITE_ENDPOINT ||
+        "https://sgp.cloud.appwrite.io/v1",
+    )
+    .setProject(
+      process.env.APPWRITE_FUNCTION_PROJECT_ID ||
+        process.env.APPWRITE_PROJECT_ID ||
+        "6a5b0ce3002605c7a776",
+    )
+    .setKey(
+      process.env.APPWRITE_API_KEY || process.env.APPWRITE_FUNCTION_API_KEY || "",
+    );
+
+  const tables = new TablesDB(client);
+  const storage = new Storage(client);
+
+  let body = {};
+  try {
+    body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+  } catch {
+    body = {};
+  }
+  if (!body.shiftId && req.bodyJson) body = req.bodyJson;
+
+  if (body.mode === "recheck") {
+    return handleRecheck({ body, tables, storage, log, error, res });
+  }
+
+  const shiftId = body.shiftId;
+  const jobId = body.jobId;
+  if (!isValidId(shiftId) || !isValidId(jobId)) {
+    error("Missing or invalid shiftId/jobId");
+    return res.json({ ok: false, error: GENERIC_BAD_REQUEST }, 400);
+  }
+
+  log(`runShiftScore shiftId=${shiftId} jobId=${jobId}`);
+  return handleFullScore({
+    shiftId,
+    jobId,
+    tables,
+    storage,
+    log,
+    error,
+    res,
+  });
+}
+
+module.exports = main;
+module.exports.extractJsonObject = extractJsonObject;
+module.exports.isValidId = isValidId;
+module.exports.ID_PATTERN = ID_PATTERN;
+module.exports.clamp01 = clamp01;
+module.exports.isRetryableModelOutputError = isRetryableModelOutputError;
+module.exports.classifyGeminiError = classifyGeminiError;
+module.exports.isRetryableGeminiHttp = isRetryableGeminiHttp;
+module.exports.scoringDeadlineMs = scoringDeadlineMs;

@@ -163,6 +163,11 @@ def main() -> None:
     icon512.save(PUBLIC / "logo.png", format="PNG", optimize=True)
     write_ico(PUBLIC / "favicon.ico", [icon16, icon32, icon48])
     write_svg(PUBLIC / "favicon.svg", display)
+    # Vite's default template requested /vite.svg; keep that URL on-brand too.
+    (PUBLIC / "vite.svg").write_text(
+        (PUBLIC / "favicon.svg").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
 
     print("wrote favicon set")
     for name in (
