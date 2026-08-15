@@ -583,6 +583,11 @@ export function ShiftPhotos() {
     const gapCount = findings.filter((f) => f.status === "gap").length;
     const unclearCount = findings.filter((f) => f.status === "unclear").length;
     const passCount = findings.filter((f) => f.status === "pass").length;
+    const nextRecheckFindingId =
+      sortedFindings.find((f) => {
+        const task = openTasks.find((t) => t.findingId === f.$id);
+        return Boolean(task && !task.recheckFileId);
+      })?.$id ?? null;
     const slides: EvidenceSlide[] = savedIds.map((fid, j) => ({
       src: getEvidenceFileUrl(fid),
       label: `Evidence ${j + 1}`,
@@ -646,29 +651,30 @@ export function ShiftPhotos() {
                     <FindingChip status={f.status} />
                     <div className="staff-score-copy">
                       <p className="staff-score-label">{itemLabel(f.itemId)}</p>
-                      {f.status !== "pass" && f.quote ? (
-                        <p className="caption staff-score-quote">“{f.quote}”</p>
-                      ) : null}
-                      {f.status !== "pass" ? (
-                        assigned && !assigned.recheckFileId ? (
-                          <label className="staff-score-recheck">
-                            {recheckFindingId === f.$id
-                              ? "Uploading…"
-                              : "Upload re-check photo"}
-                            <input
-                              type="file"
-                              accept={PHOTO_ACCEPT}
-                              className="visually-hidden"
-                              disabled={recheckFindingId === f.$id}
-                              onChange={(e) => {
-                                void onFindingRecheck(assigned, e.target.files);
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
-                        ) : assigned?.recheckFileId ? (
-                          <p className="caption">Re-check sent · waiting on manager</p>
-                        ) : null
+                      {assigned && !assigned.recheckFileId ? (
+                        <label
+                          className={
+                            f.$id === nextRecheckFindingId
+                              ? "staff-score-recheck"
+                              : "staff-score-recheck is-quiet"
+                          }
+                        >
+                          {recheckFindingId === f.$id
+                            ? "Uploading…"
+                            : "Re-check photo"}
+                          <input
+                            type="file"
+                            accept={PHOTO_ACCEPT}
+                            className="visually-hidden"
+                            disabled={recheckFindingId === f.$id}
+                            onChange={(e) => {
+                              void onFindingRecheck(assigned, e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      ) : assigned?.recheckFileId ? (
+                        <p className="caption">Re-check sent · waiting on manager</p>
                       ) : null}
                     </div>
                   </li>

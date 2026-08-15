@@ -133,6 +133,11 @@
   cursor: pointer;
 }
 
+.staff-score-recheck.is-quiet {
+  background: var(--fill-strong);
+  color: var(--label);
+}
+
 .item-photo-list {
   margin: 0;
   padding: 0;
