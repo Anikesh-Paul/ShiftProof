@@ -2,7 +2,7 @@
  * Demo inbox + findings for manager UI when live rows are empty or unavailable.
  * Shapes match types/shiftproof — not a second schema.
  */
-import type { Finding, FindingStatus, Shift } from "../types/shiftproof";
+import type { AgentJob, Finding, FindingStatus, Shift } from "../types/shiftproof";
 
 function meta(id: string, createdAt: string) {
   return {
@@ -19,6 +19,7 @@ export type ManagerShiftSummary = {
   unclearCount: number;
   passCount: number;
   findings: Finding[];
+  latestJob?: AgentJob | null;
 };
 
 /** Boost #1 demo agent trace when no live job. Product-facing steps only. */
@@ -235,16 +236,38 @@ const findingsC: Finding[] = [
 
 const ITEM_LABELS: Record<string, string> = {
   gloves_worn: "Gloves at prep",
-  handwash_sink: "Handwash sink clear",
+  handwash_station: "Handwash station",
+  handwash_sink: "Handwash station",
+  sanitizer_available: "Sanitizer available",
   counter_clean: "Prep counter clean",
   fridge_temp: "Fridge temperature",
-  floor_dry: "Floor dry / safe",
-  trash_area: "Waste area tidy",
+  hair_restraint: "Hair restraint",
+  floor_clear: "Floor clear",
+  floor_dry: "Floor clear",
+  waste_bin_covered: "Waste bin covered",
+  trash_area: "Waste bin covered",
   signage: "Allergen notice visible",
 };
 
+const liveLabels: Record<string, string> = { ...ITEM_LABELS };
+
+/** Merge live checklist labels so inbox / scoreboard never show raw ids. */
+export function hydrateItemLabels(
+  items: { id: string; label: string }[],
+): void {
+  for (const item of items) {
+    if (item.id && item.label?.trim()) liveLabels[item.id] = item.label.trim();
+  }
+}
+
+function titleCaseItemId(itemId: string): string {
+  return itemId
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function itemLabel(itemId: string): string {
-  return ITEM_LABELS[itemId] ?? itemId.replace(/_/g, " ");
+  return liveLabels[itemId] ?? ITEM_LABELS[itemId] ?? titleCaseItemId(itemId);
 }
 
 function summarize(

@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { FindingChip } from "../../components/FindingChip";
+import { EvidenceImg } from "../../components/EvidenceImg";
+import { formatEventType } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import {
   itemLabel,
@@ -14,7 +16,7 @@ import {
   loadManagerShift,
   type ManagerShiftSummary,
 } from "../../lib/manager";
-import { getSite } from "../../lib/shifts";
+import { getSite, parsePhotoFileIds } from "../../lib/shifts";
 import type { AuditEvent, Task } from "../../types/shiftproof";
 import "./ComplianceExport.css";
 
@@ -93,6 +95,7 @@ export function ComplianceExport() {
   const passes = findings.filter((f) => f.status === "pass");
   const overrides = findings.filter((f) => f.source === "manager_override");
   const generatedAt = new Date().toISOString();
+  const photoIds = parsePhotoFileIds(shift.photoFileIds);
 
   return (
     <div className="export-shell">
@@ -126,26 +129,16 @@ export function ComplianceExport() {
             <p>{siteName}</p>
           </div>
           <div>
-            <span className="export-label">Shift ID</span>
-            <p>{shift.$id}</p>
-          </div>
-          <div>
-            <span className="export-label">Status</span>
-            <p>{shift.status}</p>
-          </div>
-          <div>
             <span className="export-label">Staff</span>
             <p>{item.staffLabel}</p>
           </div>
           <div>
-            <span className="export-label">Started</span>
-            <p>{formatLong(shift.startedAt)}</p>
+            <span className="export-label">Opening</span>
+            <p>{formatLong(shift.submittedAt || shift.startedAt)}</p>
           </div>
           <div>
-            <span className="export-label">Submitted</span>
-            <p>
-              {shift.submittedAt ? formatLong(shift.submittedAt) : "—"}
-            </p>
+            <span className="export-label">Status</span>
+            <p>{shift.status}</p>
           </div>
           <div>
             <span className="export-label">Scored</span>
@@ -156,6 +149,23 @@ export function ComplianceExport() {
             <p>{formatLong(generatedAt)}</p>
           </div>
         </section>
+
+        {photoIds.length > 0 ? (
+          <section className="export-section export-photos" aria-label="Evidence">
+            <h2>Evidence</h2>
+            <ul className="list-plain export-photo-grid">
+              {photoIds.map((id, i) => (
+                <li key={id} className="export-photo-tile">
+                  <EvidenceImg
+                    fileId={id}
+                    alt={`Evidence ${i + 1}`}
+                    className="export-photo-img"
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <section className="export-tally">
           <span>
@@ -215,25 +225,6 @@ export function ComplianceExport() {
           )}
         </section>
 
-        {gaps.length > 0 || unclear.length > 0 ? (
-          <section className="export-section">
-            <h2>Open gaps & unclear</h2>
-            <ul className="export-gaps">
-              {[...gaps, ...unclear].map((f) => (
-                <li key={f.$id}>
-                  <strong>
-                    {itemLabel(f.itemId)} ({f.clauseId})
-                  </strong>
-                  — “{f.quote}”
-                  {f.overrideReason
-                    ? ` Override: ${f.overrideReason}`
-                    : ""}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
         {tasks.length > 0 ? (
           <section className="export-section">
             <h2>Fix tasks</h2>
@@ -255,7 +246,8 @@ export function ComplianceExport() {
             <ul className="export-events">
               {events.slice(0, 15).map((ev) => (
                 <li key={ev.$id}>
-                  {ev.type} · {formatLong(ev.createdAt || ev.$createdAt)}
+                  {formatEventType(ev.type)} ·{" "}
+                  {formatLong(ev.createdAt || ev.$createdAt)}
                 </li>
               ))}
             </ul>

@@ -9,7 +9,20 @@ const LABELS: Record<ShiftStatus, string> = {
   closed: "Closed",
 };
 
-export function StatusChip({ status }: { status: ShiftStatus }) {
+export function StatusChip({
+  status,
+  jobFailed,
+}: {
+  status: ShiftStatus;
+  jobFailed?: boolean;
+}) {
+  if (jobFailed && (status === "submitted" || status === "scoring")) {
+    return (
+      <span className="status-chip status-failed" data-status="failed">
+        Failed
+      </span>
+    );
+  }
   return (
     <span className={`status-chip status-${status}`} data-status={status}>
       {LABELS[status] ?? status}

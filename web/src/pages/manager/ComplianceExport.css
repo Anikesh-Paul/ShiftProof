@@ -172,6 +172,27 @@
   color: var(--label-secondary);
 }
 
+.export-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.export-photo-tile {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--separator);
+  background: var(--fill);
+}
+
+.export-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .export-footer {
   margin-top: var(--space-6);
   padding-top: var(--space-3);

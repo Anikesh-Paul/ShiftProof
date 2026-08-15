@@ -22,8 +22,10 @@ export type TaskStatus = "open" | "done";
 
 export type EventType =
   | "shift.submitted"
+  | "shift.closed"
   | "job.done"
   | "job.failed"
+  | "job.retry"
   | "finding.overridden"
   | "finding.rescored"
   | "task.created"

@@ -5,6 +5,7 @@
 import { tables, DB, ID, Query, realtime, Channel } from "./appwrite";
 import {
   APPWRITE_IDS,
+  type AgentJob,
   type Finding,
   type FindingStatus,
   type Shift,
@@ -16,10 +17,12 @@ import {
   DEMO_AGENT_TRACE,
   DEMO_REPEAT_OFFENDERS,
   getDemoShift,
+  hydrateItemLabels,
   itemLabel,
   type ManagerShiftSummary,
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
+import { getChecklist, getLatestJob, parseChecklistItems } from "./shifts";
 
 const T = APPWRITE_IDS.tables;
 
@@ -27,8 +30,59 @@ const T = APPWRITE_IDS.tables;
 type RowData = Record<string, any>;
 
 export type { ManagerShiftSummary };
-export { itemLabel, openGapCount, shiftsWithOpenGaps } from "./managerDemo";
+export {
+  hydrateItemLabels,
+  itemLabel,
+  openGapCount,
+  shiftsWithOpenGaps,
+} from "./managerDemo";
 export { DEMO_MANAGER_INBOX } from "./managerDemo";
+
+const STUCK_MS = 10 * 60 * 1000;
+const DEFAULT_TZ = "Asia/Kolkata";
+
+export function isSameLocalDay(
+  iso: string | undefined,
+  timeZone = DEFAULT_TZ,
+): boolean {
+  if (!iso) return false;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return fmt.format(new Date(iso)) === fmt.format(new Date());
+  } catch {
+    return false;
+  }
+}
+
+/** submitted/scoring longer than 10 minutes — manager can retry or close. */
+export function isStuckScoring(shift: Shift): boolean {
+  if (shift.status !== "submitted" && shift.status !== "scoring") return false;
+  const t = Date.parse(shift.submittedAt || shift.startedAt || "");
+  if (Number.isNaN(t)) return true;
+  return Date.now() - t > STUCK_MS;
+}
+
+/** waiting/running job older than the same 10-minute stuck threshold. */
+export function isStaleAgentJob(job: AgentJob): boolean {
+  if (job.status !== "waiting" && job.status !== "running") return false;
+  const t = Date.parse(job.startedAt || job.$createdAt || "");
+  if (Number.isNaN(t)) return true;
+  return Date.now() - t > STUCK_MS;
+}
+
+async function ensureItemLabels(): Promise<void> {
+  try {
+    const checklist = await getChecklist();
+    hydrateItemLabels(parseChecklistItems(checklist));
+  } catch {
+    /* keep static map */
+  }
+}
 
 function countByStatus(findings: Finding[]) {
   return {
@@ -66,11 +120,13 @@ function toSummary(
   shift: Shift,
   findings: Finding[],
   staffLabel?: string,
+  latestJob?: AgentJob | null,
 ): ManagerShiftSummary {
   return {
     shift,
     staffLabel: staffLabel ?? resolveStaffLabel(shift.createdBy),
     findings,
+    latestJob,
     ...countByStatus(findings),
   };
 }
@@ -86,6 +142,7 @@ export async function loadManagerInbox(): Promise<{
   source: "live" | "demo";
 }> {
   try {
+    await ensureItemLabels();
     const shifts = await listManagerShifts();
     if (shifts.length === 0) {
       return { items: DEMO_MANAGER_INBOX, source: "demo" };
@@ -94,13 +151,13 @@ export async function loadManagerInbox(): Promise<{
     // Parallel findings — sequential listFindings made inbox feel stuck
     const items = await Promise.all(
       shifts.map(async (shift) => {
-        let findings: Finding[] = [];
-        try {
-          findings = await listFindings(shift.$id);
-        } catch {
-          findings = [];
-        }
-        return toSummary(shift, findings);
+        const needsJob =
+          shift.status === "submitted" || shift.status === "scoring";
+        const [findings, latestJob] = await Promise.all([
+          listFindings(shift.$id).catch(() => [] as Finding[]),
+          needsJob ? getLatestJob(shift.$id).catch(() => null) : Promise.resolve(null),
+        ]);
+        return toSummary(shift, findings, undefined, latestJob);
       }),
     );
     return { items, source: "live" };
@@ -114,6 +171,7 @@ export async function loadManagerShift(shiftId: string): Promise<{
   source: "live" | "demo";
 } | null> {
   const demo = getDemoShift(shiftId);
+  await ensureItemLabels();
   try {
     const shift = (await tables.getRow({
       databaseId: DB,
@@ -133,8 +191,14 @@ export async function loadManagerShift(shiftId: string): Promise<{
       return { item: demo, source: "demo" };
     }
 
+    const needsJob =
+      shift.status === "submitted" || shift.status === "scoring";
+    const latestJob = needsJob
+      ? await getLatestJob(shiftId).catch(() => null)
+      : null;
+
     return {
-      item: toSummary(shift, findings),
+      item: toSummary(shift, findings, undefined, latestJob),
       source: "live",
     };
   } catch {
@@ -455,6 +519,103 @@ export async function attachRecheckAndComplete(opts: {
   return row as unknown as Task;
 }
 
+/** API.md manager §9 — mark a stale waiting/running job failed. Shift unchanged. */
+export async function failStaleJob(
+  jobId: string,
+  shiftId: string,
+  userId: string,
+): Promise<AgentJob> {
+  const row = await tables.updateRow({
+    databaseId: DB,
+    tableId: T.agent_jobs,
+    rowId: jobId,
+    data: {
+      status: "failed",
+      errorMessage: "Timed out after 10 minutes",
+      finishedAt: new Date().toISOString(),
+    } as RowData,
+  });
+
+  await tables.createRow({
+    databaseId: DB,
+    tableId: T.events,
+    rowId: ID.unique(),
+    data: {
+      shiftId,
+      type: "job.failed",
+      actorUserId: userId,
+      payloadJson: JSON.stringify({ jobId, reason: "stale" }),
+      createdAt: new Date().toISOString(),
+    } as RowData,
+  });
+
+  return row as unknown as AgentJob;
+}
+
+/** Once per inbox/scoreboard load — fail waiting/running jobs older than 10 minutes. */
+export async function sweepStaleJobs(
+  items: ManagerShiftSummary[],
+  userId: string,
+): Promise<void> {
+  await Promise.all(
+    items.map(async (item) => {
+      const job = item.latestJob;
+      if (!job || !isStaleAgentJob(job)) return;
+      try {
+        const failed = await failStaleJob(job.$id, item.shift.$id, userId);
+        item.latestJob = failed;
+      } catch {
+        /* best-effort */
+      }
+    }),
+  );
+}
+
+/** API.md manager §8 — close shift so it leaves the inbox. */
+export async function closeShift(opts: {
+  shiftId: string;
+  userId: string;
+  reason?: string;
+}): Promise<Shift> {
+  const row = await tables.updateRow({
+    databaseId: DB,
+    tableId: T.shifts,
+    rowId: opts.shiftId,
+    data: {
+      status: "closed",
+    } as RowData,
+  });
+
+  await tables.createRow({
+    databaseId: DB,
+    tableId: T.events,
+    rowId: ID.unique(),
+    data: {
+      shiftId: opts.shiftId,
+      type: "shift.closed",
+      actorUserId: opts.userId,
+      payloadJson: JSON.stringify({ reason: opts.reason ?? "reviewed" }),
+      createdAt: new Date().toISOString(),
+    } as RowData,
+  });
+
+  return row as unknown as Shift;
+}
+
+/** API.md manager §10 — all open fix / retake tasks. */
+export async function listOpenTasks(): Promise<Task[]> {
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: T.tasks,
+    queries: [
+      Query.equal("status", "open"),
+      Query.orderDesc("createdAt"),
+      Query.limit(50),
+    ],
+  });
+  return result.rows as unknown as Task[];
+}
+
 /** API.md manager §6 — audit events for a shift. */
 export async function listEvents(shiftId: string): Promise<AuditEvent[]> {
   const result = await tables.listRows({
@@ -476,21 +637,7 @@ export async function getAgentJobTrace(shiftId: string): Promise<{
   steps: string[];
   raw: Record<string, unknown> | null;
 } | null> {
-  const result = await tables.listRows({
-    databaseId: DB,
-    tableId: T.agent_jobs,
-    queries: [Query.equal("shiftId", shiftId), Query.limit(5)],
-  });
-  const job = result.rows[0] as
-    | {
-        $id: string;
-        status?: string;
-        traceJson?: string;
-        startedAt?: string;
-        finishedAt?: string;
-        errorMessage?: string;
-      }
-    | undefined;
+  const job = await getLatestJob(shiftId);
   if (!job) return null;
 
   let raw: Record<string, unknown> | null = null;

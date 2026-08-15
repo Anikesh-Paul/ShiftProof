@@ -33,3 +33,8 @@
   background: var(--fill-strong);
   color: var(--label-secondary);
 }
+
+.status-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}

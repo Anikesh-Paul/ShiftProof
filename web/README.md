@@ -12,8 +12,8 @@ Source of truth: `docs/APP.md`, `docs/API.md`, `docs/APPWRITE.md`, `docs/PERMISS
 | **C2** Staff shift + photos + `agent_jobs` / `events` | Done — resume draft, per-item slots, staff scores, discard empties |
 | **C3** `runShiftScore` | Done — **Gemini Flash** on Function (default); no silent client stub |
 | **C4** Scoreboard UI (Pass / Gap / Unclear) | Done |
-| **C5** Manager inbox + Realtime | Done (subscribe + reload) |
-| **C6** Override + tasks + events | Done — live writes + audit trail + mark done |
+| **C5** Manager inbox + Realtime | Done — Today / Backlog / All, Open fixes, stuck Retry, stale-job fail on load |
+| **C6** Override + tasks + events | Done — live writes, reject check, assign today’s gaps, audit trail + mark done |
 | **C7** Seed pack | Appwrite / docs |
 | **C8** Compliance PDF export | Done — print / Save as PDF 1-page pack |
 | **Boost #1** Agent trace + citations | Done |
@@ -27,7 +27,8 @@ Source of truth: `docs/APP.md`, `docs/API.md`, `docs/APPWRITE.md`, `docs/PERMISS
 Uses only operations in `docs/API.md`. Types: `src/types/shiftproof.ts`.
 
 Boosts Playwright: `node scripts/playwright-boosts.mjs http://localhost:5173`  
-Fix-loop Playwright: `node scripts/playwright-fix-loop.mjs http://localhost:5173`
+Fix-loop Playwright: `node scripts/playwright-fix-loop.mjs http://localhost:5173`  
+Manager-next Playwright: `node scripts/verify-manager-next.mjs http://localhost:5173 [1|2|3]`
 
 ## Setup
 
@@ -79,9 +80,24 @@ Subscribed in `src/lib/manager.ts` → `subscribeManagerTables`. Manager home re
 
 1. Login as **staff** → Continue or Start opening check (same draft if one exists)
 2. Photograph checklist items (3–8) → Submit proof → read scores
-3. Login as **manager** → inbox (live, or sample banner if no submitted shifts)
-4. Open scoreboard → select finding → Override / Assign fix (live when findings exist)
-5. Export pack → Print / Save PDF
+3. Login as **manager** → Today first (live, or sample banner if no submitted shifts). Backlog / All for older rows. Open fixes lists live tasks.
+4. Open scoreboard → select finding → Override / Request new photo / Assign fix. **Reject check** closes invalid evidence. **Close opening** archives a reviewed shift. Stuck scores: Retry. Failed chip = score failed, not still scoring.
+5. On Today, **Assign today’s gaps** creates a `Fix:` task per unassigned Gap (not Unclear) for that shift’s staff.
+6. Export pack → Print / Save PDF (identity, photos, human audit).
+
+## Manager journey (current)
+
+1. Inbox is **Today** (open gaps / unclear / in-progress + older stuck), **Backlog** (older open gaps), **All**. Repeat-gap rows filter with `?item=`.
+2. Scoreboard: finding thumbs via `photoForItem` (slotted or 1:1), else the evidence gallery. No `evidenceFileId` column — schema frozen.
+3. **Reject check** → confirm “Photos are not an opening check.” → `closeShift({ reason: "invalid_evidence" })`. Staff shift page shows “Manager rejected this check — submit a real opening.” Storage files stay.
+4. Stale `waiting`/`running` jobs older than 10 minutes are marked `failed` once per inbox/scoreboard load. Shift status is unchanged so Retry still works.
+
+## Hygiene (maintainers only)
+
+```bash
+node ../demo/hygiene-inbox.mjs         # dry-run
+# node ../demo/hygiene-inbox.mjs --run # closes leftover scored/stuck rows — do not run unless asked
+```
 
 ## Round 2 verification
 
@@ -95,6 +111,7 @@ node scripts/playwright-fix-loop.mjs http://localhost:5173
 node scripts/playwright-boosts.mjs http://localhost:5173
 node scripts/verify-usability.mjs http://localhost:5173
 node scripts/verify-fixes-timing.mjs http://localhost:5173
+node scripts/verify-manager-next.mjs http://localhost:5173 1
 ```
 
 ## Scripts

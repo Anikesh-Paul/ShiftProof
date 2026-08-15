@@ -1,7 +1,6 @@
 /**
  * C4 + C5 — Manager inbox (API.md manager §1) + Realtime reload.
- * Gap-first list; live rows preferred; demo only when live empty.
- * SOP PDF upload → sop_files + sops.cafe_sop_v1.fileId.
+ * Today first; backlog for older gaps; close removes a shift from the inbox.
  */
 import {
   useCallback,
@@ -12,17 +11,22 @@ import {
   type AnimationEvent,
   type ChangeEvent,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { StatusChip } from "../../components/StatusChip";
+import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import {
+  assignFixTask,
   DEMO_REPEAT_OFFENDERS,
+  isSameLocalDay,
+  isStuckScoring,
+  itemLabel,
+  listOpenTasks,
   loadManagerInbox,
   loadRepeatOffenders,
-  openGapCount,
-  shiftsWithOpenGaps,
   subscribeManagerTables,
+  sweepStaleJobs,
   type ManagerShiftSummary,
 } from "../../lib/manager";
 import { useSlowLoading } from "../../lib/loading";
@@ -33,24 +37,41 @@ import {
   isSopFileReady,
   uploadSopPdf,
 } from "../../lib/shifts";
-import type { Sop } from "../../types/shiftproof";
+import { resolveStaffLabel } from "../../lib/staffNames";
+import type { Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
+
+type InboxView = "today" | "backlog" | "all";
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function parseView(raw: string | null): InboxView {
+  if (raw === "backlog" || raw === "all") return raw;
+  return "today";
+}
+
 export function ManagerHome() {
+  const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const view = parseView(params.get("view"));
+  const itemFilter = params.get("item");
+
   const [items, setItems] = useState<ManagerShiftSummary[]>([]);
   const [source, setSource] = useState<"live" | "demo">("demo");
   const [siteName, setSiteName] = useState("Demo café");
+  const [timeZone, setTimeZone] = useState("Asia/Kolkata");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const [liveHint, setLiveHint] = useState<string | null>(null);
   const [repeatOffenders, setRepeatOffenders] = useState<
     { itemId: string; label: string; count: number; of: number }[]
   >([]);
+  const [openTasks, setOpenTasks] = useState<Task[]>([]);
+  const [fixesExpanded, setFixesExpanded] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignToast, setAssignToast] = useState<string | null>(null);
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -89,14 +110,19 @@ export function ManagerHome() {
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const [inbox, site, offenders] = await Promise.all([
+      const [inbox, site, offenders, tasks] = await Promise.all([
         loadManagerInbox(),
         getSite().catch(() => null),
         loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
+        listOpenTasks().catch(() => [] as Task[]),
       ]);
+      if (user && inbox.source === "live") {
+        await sweepStaleJobs(inbox.items, user.$id);
+      }
       setItems(inbox.items);
       setSource(inbox.source);
       if (site?.name) setSiteName(site.name);
+      if (site?.timezone) setTimeZone(site.timezone);
       setRepeatOffenders(
         offenders.length
           ? offenders
@@ -104,13 +130,14 @@ export function ManagerHome() {
             ? DEMO_REPEAT_OFFENDERS
             : [],
       );
+      setOpenTasks(inbox.source === "demo" ? [] : tasks);
       setError(null);
     } catch (err) {
       setError(getErrorMessage(err, "Could not load inbox"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     void reload();
@@ -167,7 +194,6 @@ export function ManagerHome() {
     return unsub;
   }, [source, reload]);
 
-  const gapShifts = useMemo(() => shiftsWithOpenGaps(items), [items]);
   const waitingShifts = useMemo(
     () =>
       items.filter(
@@ -177,39 +203,159 @@ export function ManagerHome() {
       ),
     [items],
   );
-  const defaultList = useMemo(() => {
-    if (showAll) return items;
-    const gapIds = new Set(gapShifts.map((g) => g.shift.$id));
-    const waitingOnly = waitingShifts.filter((w) => !gapIds.has(w.shift.$id));
-    return [...gapShifts, ...waitingOnly];
-  }, [showAll, items, gapShifts, waitingShifts]);
 
-  const openGaps = openGapCount(items);
+  const todayItems = useMemo(
+    () =>
+      items.filter((s) =>
+        isSameLocalDay(s.shift.submittedAt || s.shift.startedAt, timeZone),
+      ),
+    [items, timeZone],
+  );
+
+  const stuckItems = useMemo(
+    () => items.filter((s) => isStuckScoring(s.shift)),
+    [items],
+  );
+
+  const todayGaps = todayItems.reduce((n, s) => n + s.gapCount, 0);
+  const todayUnclear = todayItems.reduce((n, s) => n + s.unclearCount, 0);
+
+  const defaultList = useMemo(() => {
+    if (itemFilter) {
+      return items.filter((s) =>
+        s.findings.some(
+          (f) =>
+            f.itemId === itemFilter &&
+            (f.status === "gap" || f.status === "unclear"),
+        ),
+      );
+    }
+    if (view === "all") return items;
+    if (view === "backlog") {
+      return items.filter((s) => {
+        if (isSameLocalDay(s.shift.submittedAt || s.shift.startedAt, timeZone)) {
+          return false;
+        }
+        if (isStuckScoring(s.shift)) return false;
+        return s.gapCount > 0 || s.unclearCount > 0;
+      });
+    }
+    const todayIds = new Set(todayItems.map((s) => s.shift.$id));
+    const stuckOnly = stuckItems.filter((s) => !todayIds.has(s.shift.$id));
+    const todayNeeds = todayItems.filter(
+      (s) =>
+        s.gapCount > 0 ||
+        s.unclearCount > 0 ||
+        s.shift.status === "submitted" ||
+        s.shift.status === "scoring",
+    );
+    return [...todayNeeds, ...stuckOnly];
+  }, [itemFilter, view, items, timeZone, todayItems, stuckItems]);
+
   const sopReady = isSopFileReady(sop?.fileId);
-  const scoredClean = items.filter(
-    (s) =>
-      s.shift.status === "scored" &&
-      s.gapCount === 0 &&
-      s.unclearCount === 0,
-  ).length;
+  const activeFilter = repeatOffenders.find((r) => r.itemId === itemFilter);
 
   const headline = loading
     ? "Checking shifts…"
-    : openGaps === 0
-      ? waitingShifts.length > 0
-        ? "Checks in progress"
-        : "Nothing needs you"
-      : openGaps === 1
-        ? "1 gap needs a look"
-        : `${openGaps} gaps need a look`;
+    : itemFilter
+      ? itemLabel(itemFilter)
+      : todayGaps === 0
+        ? todayUnclear > 0
+          ? todayUnclear === 1
+            ? "1 photo needs a look"
+            : `${todayUnclear} photos need a look`
+          : stuckItems.length > 0 || waitingShifts.length > 0
+            ? "Checks in progress"
+            : "Nothing needs you today"
+        : todayGaps === 1
+          ? "1 gap needs a look"
+          : `${todayGaps} gaps need a look`;
 
   const lede = loading
     ? "Loading opening checks…"
-    : openGaps > 0
-      ? "Open gaps first. Tap a shift to review and act."
-      : waitingShifts.length > 0
-        ? "Staff submitted proof — waiting on scoring."
-        : "When staff leave open gaps, they land here first.";
+    : itemFilter && activeFilter
+      ? `Failed on ${activeFilter.count} of the last ${activeFilter.of} scored openings.`
+      : todayGaps > 0
+        ? "Today’s open gaps first. Older checks sit in Backlog."
+        : todayUnclear > 0
+          ? "Today’s unclear photos need a retake, not a fix task."
+          : stuckItems.length > 0
+            ? "Older scoring jobs are still running — retry or close them."
+            : "When staff leave open gaps today, they land here first.";
+
+  function setView(next: InboxView) {
+    const nextParams = new URLSearchParams();
+    if (next !== "today") nextParams.set("view", next);
+    setParams(nextParams);
+  }
+
+  function setItemFilter(itemId: string | null) {
+    const nextParams = new URLSearchParams();
+    if (itemId) nextParams.set("item", itemId);
+    setParams(nextParams);
+  }
+
+  async function assignTodayGaps() {
+    if (!user || assigning) return;
+    setAssigning(true);
+    setAssignToast(null);
+    setError(null);
+    const openFindingIds = new Set(openTasks.map((t) => t.findingId));
+    const scoredToday = todayItems.filter((s) => s.shift.status === "scored");
+    const created: Task[] = [];
+    let staffLabel = "";
+    try {
+      for (const row of scoredToday) {
+        for (const finding of row.findings) {
+          if (finding.status !== "gap") continue;
+          if (openFindingIds.has(finding.$id)) continue;
+          const title = `Fix: ${itemLabel(finding.itemId)}`;
+          const assignedTo = row.shift.createdBy;
+          if (source === "demo" || row.shift.$id.startsWith("demo_shift_")) {
+            created.push({
+              $id: `local_task_${Date.now()}_${finding.$id}`,
+              $createdAt: new Date().toISOString(),
+              $updatedAt: new Date().toISOString(),
+              shiftId: row.shift.$id,
+              findingId: finding.$id,
+              title,
+              status: "open",
+              assignedTo,
+              createdBy: user.$id,
+              createdAt: new Date().toISOString(),
+            });
+          } else {
+            const task = await assignFixTask({
+              shiftId: row.shift.$id,
+              findingId: finding.$id,
+              title,
+              userId: user.$id,
+              assignedTo,
+            });
+            created.push(task);
+          }
+          openFindingIds.add(finding.$id);
+          staffLabel = row.staffLabel;
+        }
+      }
+      if (created.length) {
+        setOpenTasks((prev) => [...created, ...prev]);
+      }
+      setAssignToast(
+        `Assigned ${created.length} fixes to ${staffLabel || "staff"}.`,
+      );
+      if (source !== "demo") {
+        void reload({ silent: true });
+      }
+    } catch (err) {
+      if (created.length) {
+        setOpenTasks((prev) => [...created, ...prev]);
+      }
+      setError(getErrorMessage(err, "Could not assign today’s gaps"));
+    } finally {
+      setAssigning(false);
+    }
+  }
 
   return (
     <div className="app-page stack manager-home">
@@ -240,22 +386,22 @@ export function ManagerHome() {
       {!loading ? (
         <div className="manager-pulse" aria-label="Inbox summary">
           <div className="manager-pulse-item">
-            <span className="manager-pulse-value is-gap">{openGaps}</span>
-            <span className="manager-pulse-label">Open gaps</span>
+            <span className="manager-pulse-value is-gap">{todayGaps}</span>
+            <span className="manager-pulse-label">Today’s gaps</span>
+          </div>
+          <div className="manager-pulse-item">
+            <span className="manager-pulse-value is-unclear">{todayUnclear}</span>
+            <span className="manager-pulse-label">Today’s unclear</span>
           </div>
           <div className="manager-pulse-item">
             <span className="manager-pulse-value is-wait">
-              {waitingShifts.length}
+              {stuckItems.length || waitingShifts.length}
             </span>
-            <span className="manager-pulse-label">Scoring</span>
+            <span className="manager-pulse-label">Stuck / scoring</span>
           </div>
           <div className="manager-pulse-item">
-            <span className="manager-pulse-value">{scoredClean}</span>
-            <span className="manager-pulse-label">Clean scores</span>
-          </div>
-          <div className="manager-pulse-item">
-            <span className="manager-pulse-value">{items.length}</span>
-            <span className="manager-pulse-label">Shifts</span>
+            <span className="manager-pulse-value">{openTasks.length}</span>
+            <span className="manager-pulse-label">Open fixes</span>
           </div>
         </div>
       ) : null}
@@ -272,22 +418,129 @@ export function ManagerHome() {
         </div>
       ) : null}
 
+      {!loading && openTasks.length > 0 ? (
+        <section
+          className="manager-inbox"
+          aria-labelledby="fixes-heading"
+          data-testid="open-fixes"
+        >
+          <div className="manager-section-head">
+            <h2 id="fixes-heading">Open fixes</h2>
+            {openTasks.length > 4 ? (
+              <button
+                type="button"
+                className="text-btn manager-filter-btn"
+                onClick={() => setFixesExpanded((v) => !v)}
+              >
+                {fixesExpanded ? "Show less" : `Show all ${openTasks.length}`}
+              </button>
+            ) : null}
+          </div>
+          <ul className="list-plain manager-list">
+            {(fixesExpanded ? openTasks : openTasks.slice(0, 4)).map((task) => {
+              const shiftRow = items.find((s) => s.shift.$id === task.shiftId);
+              const finding = shiftRow?.findings.find(
+                (f) => f.$id === task.findingId,
+              );
+              const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
+              const title = finding
+                ? `${kind}: ${itemLabel(finding.itemId)}`
+                : task.title;
+              const waitingRecheck = Boolean(task.recheckFileId);
+              return (
+                <li key={task.$id}>
+                  <Link
+                    to={`/manager/shifts/${task.shiftId}`}
+                    className="manager-row"
+                  >
+                    <div className="manager-row-main">
+                      <p className="manager-row-staff">{title}</p>
+                      <div className="manager-row-meta">
+                        <span className="caption">
+                          {resolveStaffLabel(
+                            task.assignedTo ||
+                              shiftRow?.shift.createdBy ||
+                              "",
+                          )}
+                        </span>
+                        <span
+                          className={`manager-pill${waitingRecheck ? " is-pass" : " is-unclear"}`}
+                        >
+                          {waitingRecheck
+                            ? "Re-check on file"
+                            : "Waiting on staff"}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="manager-row-go" aria-hidden>
+                      Review
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="manager-inbox" aria-labelledby="inbox-heading">
         <div className="manager-section-head">
           <h2 id="inbox-heading">
-            {showAll ? "All shifts" : "Needs attention"}
+            {itemFilter
+              ? itemLabel(itemFilter)
+              : view === "all"
+                ? "All shifts"
+                : view === "backlog"
+                  ? "Backlog"
+                  : "Today"}
           </h2>
-          {items.length > 0 ? (
-            <button
-              type="button"
-              className="text-btn manager-filter-btn"
-              onClick={() => setShowAll((v) => !v)}
-              aria-pressed={showAll}
-            >
-              {showAll ? "Needs attention" : "Show all"}
-            </button>
-          ) : null}
+          <div className="manager-view-tabs" role="tablist" aria-label="Inbox">
+            {itemFilter ? (
+              <button
+                type="button"
+                className="text-btn manager-filter-btn"
+                onClick={() => setItemFilter(null)}
+              >
+                Clear
+              </button>
+            ) : (
+              (["today", "backlog", "all"] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  className={`text-btn manager-filter-btn${view === key ? " is-active" : ""}`}
+                  aria-selected={view === key}
+                  onClick={() => setView(key)}
+                >
+                  {key === "today"
+                    ? "Today"
+                    : key === "backlog"
+                      ? "Backlog"
+                      : "All"}
+                </button>
+              ))
+            )}
+          </div>
         </div>
+
+        {view === "today" && !itemFilter && todayGaps > 0 && !loading ? (
+          <div className="manager-today-actions">
+            <Button
+              variant="secondary"
+              loading={assigning}
+              data-testid="assign-today-gaps"
+              onClick={() => void assignTodayGaps()}
+            >
+              Assign today’s gaps
+            </Button>
+            {assignToast ? (
+              <p className="manager-sop-toast" role="status">
+                {assignToast}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="stack-sm">
@@ -309,18 +562,28 @@ export function ManagerHome() {
         ) : defaultList.length === 0 ? (
           <div className="manager-empty staff-settle-in">
             <h3>
-              {items.length === 0 ? "No opening checks yet" : "All clear"}
+              {items.length === 0
+                ? "No opening checks yet"
+                : itemFilter
+                  ? "No matching shifts"
+                  : view === "backlog"
+                    ? "Backlog is empty"
+                    : "All clear today"}
             </h3>
             <p className="muted">
               {items.length === 0
                 ? "When staff submit an opening check, shifts appear here."
-                : "No open gaps. Show all shifts to review clean scores."}
+                : itemFilter
+                  ? "No open gaps for this checklist item in the inbox."
+                  : view === "today"
+                    ? "No open gaps today. Backlog holds older checks."
+                    : "Show all shifts to review clean scores."}
             </p>
-            {items.length > 0 ? (
+            {items.length > 0 && view !== "all" && !itemFilter ? (
               <button
                 type="button"
                 className="text-btn is-accent"
-                onClick={() => setShowAll(true)}
+                onClick={() => setView("all")}
               >
                 Show all shifts
               </button>
@@ -336,7 +599,10 @@ export function ManagerHome() {
                 >
                   <div className="manager-row-main">
                     <div className="manager-row-top">
-                      <StatusChip status={row.shift.status} />
+                      <StatusChip
+                        status={row.shift.status}
+                        jobFailed={row.latestJob?.status === "failed"}
+                      />
                       <time className="caption manager-row-when">
                         {formatWhen(
                           row.shift.submittedAt || row.shift.startedAt,
@@ -345,8 +611,14 @@ export function ManagerHome() {
                     </div>
                     <p className="manager-row-staff">{row.staffLabel}</p>
                     <div className="manager-row-meta">
-                      {row.shift.status === "scoring" ||
-                      row.shift.status === "submitted" ? (
+                      {row.latestJob?.status === "failed" ? (
+                        <span className="manager-meta-wait">Score failed</span>
+                      ) : isStuckScoring(row.shift) ? (
+                        <span className="manager-meta-wait">
+                          Scoring stuck — retry from the scoreboard
+                        </span>
+                      ) : row.shift.status === "scoring" ||
+                        row.shift.status === "submitted" ? (
                         <span className="manager-meta-wait">
                           {row.findings.length
                             ? `${row.gapCount} gap · ${row.unclearCount} unclear`
@@ -390,14 +662,25 @@ export function ManagerHome() {
           aria-labelledby="repeat-heading"
         >
           <h2 id="repeat-heading">Repeat gaps</h2>
-          <p className="caption muted">Across recent scored shifts</p>
+          <p className="caption muted">
+            Failed on this many of the last {repeatOffenders[0]?.of ?? 5}{" "}
+            scored openings
+          </p>
           <ul className="list-plain repeat-list">
             {repeatOffenders.map((r) => (
-              <li key={r.itemId} className="repeat-row">
-                <span className="repeat-label">{r.label}</span>
-                <span className="repeat-count">
-                  {r.count}/{r.of}
-                </span>
+              <li key={r.itemId}>
+                <button
+                  type="button"
+                  className={`repeat-row repeat-row-btn${itemFilter === r.itemId ? " is-active" : ""}`}
+                  onClick={() =>
+                    setItemFilter(itemFilter === r.itemId ? null : r.itemId)
+                  }
+                >
+                  <span className="repeat-label">{r.label}</span>
+                  <span className="repeat-count">
+                    {r.count}/{r.of}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>

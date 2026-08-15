@@ -107,6 +107,10 @@
   color: var(--warning-ink);
 }
 
+.manager-pulse-value.is-unclear {
+  color: var(--warning-ink);
+}
+
 .manager-pulse-label {
   font-size: 0.6875rem;
   font-weight: 600;
@@ -150,6 +154,26 @@
 
 .manager-filter-btn {
   flex-shrink: 0;
+}
+
+.manager-today-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.manager-view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.manager-filter-btn.is-active {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 /* —— Shift list —— */
@@ -319,6 +343,22 @@
   padding: var(--space-3) var(--space-4);
   font-size: 0.875rem;
   border-bottom: 1px solid var(--separator);
+}
+
+.repeat-row-btn {
+  width: 100%;
+  margin: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.repeat-row-btn:hover,
+.repeat-row-btn.is-active {
+  background: var(--fill);
 }
 
 .repeat-row:last-child {

@@ -21,8 +21,10 @@ import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
+import { latestEventReason } from "../../lib/events";
 import {
   attachRecheckAndRescore,
+  listEvents,
   listTasks,
 } from "../../lib/manager";
 import {
@@ -50,6 +52,7 @@ import {
 } from "../../lib/shifts";
 import type {
   AgentJob,
+  AuditEvent,
   ChecklistItem,
   Finding,
   Shift,
@@ -99,6 +102,7 @@ export function ShiftPhotos() {
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [openTasks, setOpenTasks] = useState<Task[]>([]);
+  const [events, setEvents] = useState<AuditEvent[]>([]);
   const [latestJob, setLatestJob] = useState<AgentJob | null>(null);
   const [loading, setLoading] = useState(true);
   const loadingSlow = useSlowLoading(loading);
@@ -185,15 +189,17 @@ export function ShiftPhotos() {
         if (row.status !== "draft") {
           setDone(true);
           try {
-            const [scored, tasks, job] = await Promise.all([
+            const [scored, tasks, job, evs] = await Promise.all([
               listFindingsForShift(shiftId),
               listTasks(shiftId).catch(() => [] as Task[]),
               getLatestJob(shiftId).catch(() => null),
+              listEvents(shiftId).catch(() => [] as AuditEvent[]),
             ]);
             if (!cancelled) {
               setFindings(scored);
               setOpenTasks(tasks.filter((t) => t.status === "open"));
               setLatestJob(job);
+              setEvents(evs);
             }
           } catch {
             if (!cancelled) setFindings([]);
@@ -567,8 +573,10 @@ export function ShiftPhotos() {
           ? "Scoring"
           : "Submitted";
     const stuck = isStuck(shift, latestJob);
-    const lede =
-      shift.status === "scored" || shift.status === "closed"
+    const rejected = latestEventReason(events) === "invalid_evidence";
+    const lede = rejected
+      ? "Manager rejected this check — submit a real opening."
+      : shift.status === "scored" || shift.status === "closed"
         ? "Fix gaps here when a task is assigned — or wait for the manager."
         : stuck
           ? "Scoring did not finish. Retry, or check back in a minute."
@@ -595,7 +603,12 @@ export function ShiftPhotos() {
             <h1>{heading}</h1>
             <StatusChip status={shift.status} />
           </div>
-          <p className="muted">{lede}</p>
+          <p
+            className="muted"
+            data-testid={rejected ? "invalid-evidence-reason" : undefined}
+          >
+            {lede}
+          </p>
           <p className="caption">
             {savedIds.length} photo{savedIds.length === 1 ? "" : "s"}
           </p>

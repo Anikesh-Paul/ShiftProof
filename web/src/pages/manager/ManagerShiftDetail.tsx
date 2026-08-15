@@ -6,11 +6,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type AnimationEvent,
 } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import {
   EvidenceLightbox,
   type EvidenceSlide,
@@ -18,39 +20,47 @@ import {
 import { FindingChip } from "../../components/FindingChip";
 import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
+import { formatEventType } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
 import {
   applyLocalOverride,
   assignFixTask,
   attachRecheckAndRescore,
+  closeShift,
   DEMO_AGENT_TRACE,
   getAgentJobTrace,
   hasForcedCitation,
+  isStuckScoring,
   itemLabel,
   listEvents,
   listTasks,
   loadManagerShift,
   markTaskDone,
   overrideFinding,
+  sweepStaleJobs,
   type ManagerShiftSummary,
 } from "../../lib/manager";
 import {
+  getChecklist,
   getEvidenceFileUrl,
-  getEvidencePreviewUrl,
+  parseChecklistItems,
   parsePhotoFileIds,
+  photoForItem,
+  retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
 import { resolveStaffLabel } from "../../lib/staffNames";
 import type {
   AuditEvent,
+  ChecklistItem,
   Finding,
   FindingStatus,
   Task,
 } from "../../types/shiftproof";
 import "./ManagerShiftDetail.css";
 
-type StickyMode = "idle" | "override" | "assign";
+type StickyMode = "idle" | "override" | "assign" | "retake";
 
 type AgentTrace = {
   jobId: string;
@@ -66,7 +76,11 @@ function prefersReducedMotion() {
 export function ManagerShiftDetail() {
   const { shiftId = "" } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const listRef = useRef<HTMLUListElement>(null);
   const [item, setItem] = useState<ManagerShiftSummary | null>(null);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [traceOpen, setTraceOpen] = useState(false);
   const [source, setSource] = useState<"live" | "demo">("demo");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -187,6 +201,19 @@ export function ManagerShiftDetail() {
         // Paint scoreboard first — extras (trace/tasks/events) fill in after
         setItem(result.item);
         setSource(result.source);
+        if (result.source === "live" && user && result.item.latestJob) {
+          void sweepStaleJobs([result.item], user.$id).then(() => {
+            if (!cancelled) setItem({ ...result.item });
+          });
+        }
+        const stuck =
+          isStuckScoring(result.item.shift) ||
+          result.item.shift.status === "submitted" ||
+          result.item.shift.status === "scoring";
+        setTraceOpen(stuck);
+        void getChecklist()
+          .then((c) => setChecklistItems(parseChecklistItems(c)))
+          .catch(() => setChecklistItems([]));
         // If every finding is Pass (e.g. golden after overrides), default to Show all
         // so managers / demo path can still select rows without an empty board.
         const openGaps = result.item.findings.filter(
@@ -209,7 +236,7 @@ export function ManagerShiftDetail() {
     return () => {
       cancelled = true;
     };
-  }, [shiftId, loadExtras]);
+  }, [shiftId, loadExtras, user]);
 
   const selected = useMemo(
     () => item?.findings.find((f) => f.$id === selectedId) ?? null,
@@ -248,6 +275,14 @@ export function ManagerShiftDetail() {
     setReason("");
     setToast(null);
     setError(null);
+    window.requestAnimationFrame(() => {
+      const row = listRef.current?.querySelector(
+        `[data-finding-id="${f.$id}"]`,
+      );
+      if (row instanceof HTMLElement) {
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    });
   }
 
   async function runOverride() {
@@ -315,11 +350,14 @@ export function ManagerShiftDetail() {
     }
   }
 
-  async function runAssign() {
+  async function runAssign(kind: "fix" | "retake" = "fix") {
     if (!item || !selected || !user) return;
     setError(null);
     setSaving(true);
-    const title = `Fix: ${itemLabel(selected.itemId)}`;
+    const title =
+      kind === "retake"
+        ? `Retake: ${itemLabel(selected.itemId)}`
+        : `Fix: ${itemLabel(selected.itemId)}`;
     const assignedTo = item.shift.createdBy;
     try {
       if (source === "demo") {
@@ -380,6 +418,74 @@ export function ManagerShiftDetail() {
     } catch (err) {
       setError(getErrorMessage(err, "Could not create task"));
       setMode("assign");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runRetry() {
+    if (!item || !user) return;
+    setError(null);
+    setSaving(true);
+    try {
+      if (source === "demo" || item.shift.$id.startsWith("demo_shift_")) {
+        setToast("Retry is sample-only on this shift.");
+      } else {
+        await retryShiftScore(item.shift.$id, user.$id);
+        const refreshed = await loadManagerShift(shiftId);
+        if (refreshed) {
+          setItem(refreshed.item);
+          setSource(refreshed.source);
+        }
+        await loadExtras(item.shift.$id, false);
+        setToast("Scoring started again.");
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not retry scoring"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runClose() {
+    if (!item || !user) return;
+    setError(null);
+    setSaving(true);
+    try {
+      if (source === "demo" || item.shift.$id.startsWith("demo_shift_")) {
+        setToast("Closed (sample).");
+        navigate("/manager");
+      } else {
+        await closeShift({ shiftId: item.shift.$id, userId: user.$id });
+        navigate("/manager");
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not close this opening"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runReject() {
+    if (!item || !user) return;
+    const ok = window.confirm("Photos are not an opening check.");
+    if (!ok) return;
+    setError(null);
+    setSaving(true);
+    try {
+      if (source === "demo" || item.shift.$id.startsWith("demo_shift_")) {
+        setToast("Rejected (sample).");
+        navigate("/manager");
+      } else {
+        await closeShift({
+          shiftId: item.shift.$id,
+          userId: user.$id,
+          reason: "invalid_evidence",
+        });
+        navigate("/manager");
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not reject this check"));
     } finally {
       setSaving(false);
     }
@@ -568,17 +674,45 @@ export function ManagerShiftDetail() {
           <Link to="/manager" className="back-link">
             ← Inbox
           </Link>
-          <Link
-            to={`/manager/shifts/${item.shift.$id}/export`}
-            className="text-btn is-accent export-link"
-          >
-            Export pack
-          </Link>
+          <div className="manager-detail-nav-actions">
+            {item.findings.length > 0 ? (
+              <Link
+                to={`/manager/shifts/${item.shift.$id}/export`}
+                className="text-btn is-accent export-link"
+              >
+                Export pack
+              </Link>
+            ) : null}
+            {item.shift.status !== "closed" ? (
+              <>
+                <Button
+                  variant="quiet"
+                  className="close-opening-btn"
+                  data-testid="reject-check-btn"
+                  disabled={saving}
+                  onClick={() => void runReject()}
+                >
+                  Reject check
+                </Button>
+                <Button
+                  variant="quiet"
+                  className="close-opening-btn"
+                  disabled={saving}
+                  onClick={() => void runClose()}
+                >
+                  Close opening
+                </Button>
+              </>
+            ) : null}
+          </div>
         </div>
 
         <header className="stack-sm">
           <div className="manager-detail-meta">
-            <StatusChip status={item.shift.status} />
+            <StatusChip
+              status={item.shift.status}
+              jobFailed={item.latestJob?.status === "failed"}
+            />
             <span className="caption">
               {formatWhen(item.shift.submittedAt || item.shift.startedAt)}
             </span>
@@ -587,8 +721,28 @@ export function ManagerShiftDetail() {
           <p className="muted">
             {item.staffLabel}
             {source === "demo" ? " · sample data" : ""}
+            {item.shift.status === "closed" ? " · closed" : ""}
           </p>
         </header>
+
+        {isStuckScoring(item.shift) ? (
+          <div className="manager-stuck-banner" role="status">
+            <div>
+              <p className="manager-stuck-title">Scoring is stuck</p>
+              <p className="caption muted">
+                This job has been running too long. Retry it, or close the
+                opening if you are done reviewing.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              loading={saving}
+              onClick={() => void runRetry()}
+            >
+              Retry scoring
+            </Button>
+          </div>
+        ) : null}
 
         <div className="manager-tally" aria-label="Finding counts">
           <span>
@@ -628,7 +782,6 @@ export function ManagerShiftDetail() {
           {evidenceIds.length > 0 ? (
             <ul className="list-plain evidence-grid">
               {evidenceIds.map((id, i) => {
-                const src = getEvidencePreviewUrl(id);
                 const label = `Evidence ${i + 1}`;
                 return (
                   <li key={id} className="evidence-tile">
@@ -643,23 +796,11 @@ export function ManagerShiftDetail() {
                       }
                       aria-label={`View ${label}`}
                     >
-                      <img
-                        src={src}
+                      <EvidenceImg
+                        fileId={id}
                         alt={label}
                         className="evidence-img"
-                        loading="lazy"
-                        onError={(e) => {
-                          const el = e.currentTarget;
-                          el.style.display = "none";
-                          const fallback = el.nextElementSibling;
-                          if (fallback instanceof HTMLElement) {
-                            fallback.hidden = false;
-                          }
-                        }}
                       />
-                      <span className="evidence-missing caption" hidden>
-                        Unavailable
-                      </span>
                       <span className="evidence-index caption">{i + 1}</span>
                     </button>
                   </li>
@@ -673,67 +814,67 @@ export function ManagerShiftDetail() {
           )}
         </section>
 
-        {/* Boost #1 — agent trace (product copy, no debug stub/job ids) */}
         {agentTrace ? (
           <section
             className="card stack-sm agent-trace"
             data-testid="agent-trace"
             aria-label="Agent trace"
           >
-            <h2>How this was scored</h2>
-            <p className="caption">
-              {agentTrace.status === "done" ? "Scoring complete" : agentTrace.status}
-            </p>
-            <ol className="agent-trace-steps">
-              {agentTrace.steps
-                .map(stripStepNumber)
-                .filter(Boolean)
-                .map((s) => (
-                  <li key={s}>{s}</li>
-                ))}
-            </ol>
-            {citationGaps.length > 0 ? (
-              <p className="caption" data-testid="citation-warning">
-                {citationGaps.length} finding(s) missing clause/quote/confidence.
-              </p>
+            <button
+              type="button"
+              className="agent-trace-toggle"
+              aria-expanded={traceOpen}
+              onClick={() => setTraceOpen((v) => !v)}
+            >
+              <h2>How this was scored</h2>
+              <span className="caption">
+                {agentTrace.status === "done"
+                  ? "Scoring complete"
+                  : agentTrace.status}
+                {traceOpen ? " · Hide" : " · Show"}
+              </span>
+            </button>
+            {traceOpen ? (
+              <>
+                <ol className="agent-trace-steps">
+                  {agentTrace.steps
+                    .map(stripStepNumber)
+                    .filter(Boolean)
+                    .map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                </ol>
+                {citationGaps.length > 0 ? (
+                  <p className="caption" data-testid="citation-warning">
+                    {citationGaps.length} finding(s) missing
+                    clause/quote/confidence.
+                  </p>
+                ) : (
+                  <p className="caption" data-testid="citations-ok">
+                    All findings carry clause · quote · confidence.
+                  </p>
+                )}
+              </>
             ) : (
-              <p className="caption" data-testid="citations-ok">
+              <p className="caption visually-hidden" data-testid="citations-ok">
                 All findings carry clause · quote · confidence.
               </p>
             )}
           </section>
         ) : null}
 
-        {/* Boost #2 — hero Unclear */}
         {unclearFindings.length > 0 ? (
           <section
-            className="hero-unclear card stack-sm"
+            className="hero-unclear card"
             data-testid="hero-unclear"
             aria-label="Unclear findings need review"
           >
             <h2>Needs human eyes</h2>
             <p className="muted">
-              AI marked Unclear — override with a reason or assign a fix.
+              {unclearFindings.length === 1
+                ? "1 photo is unclear — request a retake, don’t assign a fix."
+                : `${unclearFindings.length} photos are unclear — request a retake, don’t assign a fix.`}
             </p>
-            <ul className="list-plain hero-unclear-list">
-              {unclearFindings.map((f) => (
-                <li key={f.$id}>
-                  <button
-                    type="button"
-                    className="hero-unclear-item"
-                    onClick={() => selectFinding(f)}
-                  >
-                    <FindingChip status="unclear" />
-                    <span className="finding-title">{itemLabel(f.itemId)}</span>
-                    <span className="citation-bar caption" data-testid="citation">
-                      {f.clauseId} · {Math.round(f.confidence * 100)}% · “
-                      {f.quote.slice(0, 80)}
-                      {f.quote.length > 80 ? "…" : ""}”
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
           </section>
         ) : null}
 
@@ -796,17 +937,27 @@ export function ManagerShiftDetail() {
           </div>
         ) : (
           <ul
+            ref={listRef}
             className="list-plain finding-list stagger-in"
             role="listbox"
             aria-label="Findings"
           >
             {visibleFindings.map((f) => {
               const isSelected = f.$id === selectedId;
+              const photoId = photoForItem(
+                f.itemId,
+                item.shift.photoFileIds,
+                checklistItems,
+              );
+              const photoIndex = photoId
+                ? evidenceIds.indexOf(photoId)
+                : -1;
               return (
                 <li key={f.$id}>
                   <button
                     type="button"
                     role="option"
+                    data-finding-id={f.$id}
                     aria-selected={isSelected}
                     className={`finding-row card ${isSelected ? "is-selected" : ""}`}
                     onClick={() => selectFinding(f)}
@@ -815,7 +966,28 @@ export function ManagerShiftDetail() {
                       <FindingChip status={f.status} />
                       <span className="caption citation-clause">{f.clauseId}</span>
                     </div>
-                    <p className="finding-title">{itemLabel(f.itemId)}</p>
+                    <div className="finding-title-row">
+                      <p className="finding-title">{itemLabel(f.itemId)}</p>
+                      {photoId ? (
+                        <span
+                          className="finding-photo"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setLightbox({
+                              items: evidenceSlides,
+                              startIndex: photoIndex >= 0 ? photoIndex : 0,
+                            });
+                          }}
+                        >
+                          <EvidenceImg
+                            fileId={photoId}
+                            alt=""
+                            className="finding-photo-img"
+                          />
+                        </span>
+                      ) : null}
+                    </div>
                     {/* Boost #1 forced citation */}
                     <p
                       className="citation-bar caption"
@@ -847,11 +1019,13 @@ export function ManagerShiftDetail() {
         {openTasks.length > 0 || tasks.length > 0 ? (
           <section className="card stack-sm manager-side-panel">
             <h2>Fix tasks</h2>
-            {tasks.length === 0 ? (
-              <p className="muted caption">No tasks yet.</p>
+            {openTasks.length === 0 ? (
+              <p className="muted caption">
+                {tasks.length} closed · none open
+              </p>
             ) : (
               <ul className="list-plain task-list">
-                {tasks.map((t) => (
+                {openTasks.map((t) => (
                   <li key={t.$id} className="task-row" data-testid="fix-row">
                     <div className="stack-sm">
                       <p className="task-title">{t.title}</p>
@@ -980,15 +1154,18 @@ export function ManagerShiftDetail() {
                   </Button>
                 </div>
               </div>
-            ) : mode === "assign" ? (
+            ) : mode === "assign" || mode === "retake" ? (
               <div className="manager-sticky-form stack-sm">
                 <p className="muted">
-                  Assign fix:{" "}
-                  <strong>Fix: {itemLabel(selected.itemId)}</strong>
+                  {mode === "retake" ? "Request retake: " : "Assign fix: "}
+                  <strong>
+                    {mode === "retake" ? "Retake: " : "Fix: "}
+                    {itemLabel(selected.itemId)}
+                  </strong>
                 </p>
                 <p className="caption" data-testid="assign-to-staff">
                   To {item ? resolveStaffLabel(item.shift.createdBy) : "staff"}{" "}
-                  — they upload a re-check photo; AI re-scores; you mark done.
+                  — they upload a new photo; AI re-scores; you mark done.
                 </p>
                 <div className="manager-sticky-actions">
                   <Button variant="secondary" onClick={() => setMode("idle")}>
@@ -998,9 +1175,11 @@ export function ManagerShiftDetail() {
                     variant="primary"
                     loading={saving}
                     data-testid="create-task-btn"
-                    onClick={() => void runAssign()}
+                    onClick={() =>
+                      void runAssign(mode === "retake" ? "retake" : "fix")
+                    }
                   >
-                    Assign to staff
+                    {mode === "retake" ? "Request photo" : "Assign to staff"}
                   </Button>
                 </div>
               </div>
@@ -1021,23 +1200,19 @@ export function ManagerShiftDetail() {
                 <Button
                   variant="primary"
                   disabled={saving}
-                  onClick={() => setMode("assign")}
+                  onClick={() =>
+                    setMode(selected.status === "unclear" ? "retake" : "assign")
+                  }
                 >
-                  Assign fix
+                  {selected.status === "unclear"
+                    ? "Request new photo"
+                    : "Assign fix"}
                 </Button>
               </div>
             )}
           </div>
         </div>
-      ) : (
-        <div className="manager-sticky manager-sticky-hint" aria-live="polite">
-          <div className="manager-sticky-inner">
-            <p className="caption">
-              Select a finding to override or assign a fix.
-            </p>
-          </div>
-        </div>
-      )}
+      ) : null}
 
       {lightbox ? (
         <EvidenceLightbox
@@ -1072,28 +1247,5 @@ function formatWhen(iso: string): string {
     }).format(new Date(iso));
   } catch {
     return iso;
-  }
-}
-
-function formatEventType(type: string): string {
-  switch (type) {
-    case "finding.overridden":
-      return "Override";
-    case "task.created":
-      return "Task created";
-    case "task.recheck":
-      return "Re-check photo";
-    case "finding.rescored":
-      return "Re-scored";
-    case "task.done":
-      return "Task done";
-    case "shift.submitted":
-      return "Submitted";
-    case "job.done":
-      return "Scored";
-    case "job.failed":
-      return "Score failed";
-    default:
-      return type;
   }
 }

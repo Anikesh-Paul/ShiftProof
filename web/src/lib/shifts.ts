@@ -128,6 +128,31 @@ export function parsePhotoFileIds(photoFileIds?: string): string[] {
   }
 }
 
+/** File id for a checklist item when photos are slotted or 1:1 with items. */
+export function photoForItem(
+  itemId: string,
+  photoFileIds: string | undefined,
+  items: ChecklistItem[],
+): string | null {
+  if (!photoFileIds || items.length === 0) return null;
+  const slotted = parsePhotoSlots(photoFileIds, items);
+  if (slotted.slots[itemId]) return slotted.slots[itemId];
+  try {
+    const parsed = JSON.parse(photoFileIds) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const filled = parsed.filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    );
+    const idx = items.findIndex((item) => item.id === itemId);
+    if (idx >= 0 && filled.length === items.length && filled[idx]) {
+      return filled[idx];
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /** Slotted layout: empty strings mark unused checklist rows. Compact arrays are extras. */
 export function parsePhotoSlots(
   photoFileIds: string | undefined,
@@ -291,7 +316,11 @@ export async function listJobsForShift(shiftId: string): Promise<AgentJob[]> {
   const result = await tables.listRows({
     databaseId: DB,
     tableId: T.agent_jobs,
-    queries: [Query.equal("shiftId", shiftId), Query.limit(10)],
+    queries: [
+      Query.equal("shiftId", shiftId),
+      Query.orderDesc("$createdAt"),
+      Query.limit(10),
+    ],
   });
   return result.rows as unknown as AgentJob[];
 }
@@ -486,7 +515,12 @@ export async function retryShiftScore(
 export async function getLatestJob(shiftId: string): Promise<AgentJob | null> {
   const jobs = await listJobsForShift(shiftId);
   if (!jobs.length) return null;
-  return jobs[0] ?? null;
+  const sorted = [...jobs].sort((a, b) =>
+    (b.$createdAt || b.startedAt || "").localeCompare(
+      a.$createdAt || a.startedAt || "",
+    ),
+  );
+  return sorted[0] ?? null;
 }
 
 /** Poll until job done/failed or timeout (ms). */
