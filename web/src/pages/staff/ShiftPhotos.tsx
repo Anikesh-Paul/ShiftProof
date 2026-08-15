@@ -576,11 +576,7 @@ export function ShiftPhotos() {
     const rejected = latestEventReason(events) === "invalid_evidence";
     const lede = rejected
       ? "Manager rejected this check — submit a real opening."
-      : shift.status === "scored" || shift.status === "closed"
-        ? "Fix gaps here when a task is assigned — or wait for the manager."
-        : stuck
-          ? "Scoring did not finish. Retry, or check back in a minute."
-          : "Photos are in. Scores appear here when AI finishes.";
+      : null;
     const sortedFindings = [...findings].sort(
       (a, b) => findingRank(a.status) - findingRank(b.status),
     );
@@ -603,15 +599,14 @@ export function ShiftPhotos() {
             <h1>{heading}</h1>
             <StatusChip status={shift.status} />
           </div>
-          <p
-            className="muted"
-            data-testid={rejected ? "invalid-evidence-reason" : undefined}
-          >
-            {lede}
-          </p>
-          <p className="caption">
-            {savedIds.length} photo{savedIds.length === 1 ? "" : "s"}
-          </p>
+          {lede ? (
+            <p
+              className="muted"
+              data-testid={rejected ? "invalid-evidence-reason" : undefined}
+            >
+              {lede}
+            </p>
+          ) : null}
         </header>
 
         {errorShown ? (
@@ -636,9 +631,8 @@ export function ShiftPhotos() {
         ) : null}
 
         {findings.length > 0 ? (
-          <section className="staff-scores" aria-labelledby="staff-scores-title">
+          <section className="staff-scores" aria-label="Scores">
             <div className="staff-scores-head">
-              <h2 id="staff-scores-title">Scores</h2>
               <p className="caption">
                 {gapCount} gap · {unclearCount} unclear · {passCount} pass
               </p>
@@ -674,11 +668,7 @@ export function ShiftPhotos() {
                           </label>
                         ) : assigned?.recheckFileId ? (
                           <p className="caption">Re-check sent · waiting on manager</p>
-                        ) : (
-                          <p className="caption">
-                            Manager will assign a fix if this still needs work.
-                          </p>
-                        )
+                        ) : null
                       ) : null}
                     </div>
                   </li>
@@ -768,9 +758,6 @@ export function ShiftPhotos() {
           <h1>Evidence</h1>
           <StatusChip status={shift.status} />
         </div>
-        <p className="muted">
-          One photo per item when you can. 3–8 shots total to submit.
-        </p>
       </header>
 
       <div
@@ -971,7 +958,7 @@ export function ShiftPhotos() {
       ) : null}
 
       <p className="caption photo-formats">
-        JPG, PNG, or WebP · max 10 MB · {PHOTO_MIN}–{PHOTO_MAX} required
+        JPG, PNG, or WebP · max 10 MB
       </p>
 
       <div className="photo-submit-bar">

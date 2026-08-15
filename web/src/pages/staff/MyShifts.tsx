@@ -127,7 +127,6 @@ export function MyShifts() {
     <div className="app-page stack">
       <header className="stack-sm">
         <h1>History</h1>
-        <p className="muted">Your opening checks at this site.</p>
         <div className="history-filters" role="tablist" aria-label="Filter history">
           {(
             [
@@ -219,24 +218,9 @@ export function MyShifts() {
             const when = formatWhen(shift.startedAt);
             const isDraft = shift.status === "draft";
             const isPrimaryDraft = isDraft && shift.$id === primaryDraftId;
-            const statusLine =
-              shift.status === "draft"
-                ? "Draft — continue photos"
-                : shift.status === "submitted" || shift.status === "scoring"
-                  ? isStuckScoring(shift)
-                    ? "Scoring stuck — open to retry"
-                    : "Submitted · scoring in progress"
-                  : shift.status === "scored"
-                    ? "Scored — view Pass, Gap, Unclear"
-                    : shift.status;
-            // Staff can always open: draft to edit, submitted+ to review scores
-            const actionLabel = isDraft
-              ? "Continue draft"
-              : shift.status === "scored"
-                ? "View scores"
-                : count > 0
-                  ? "View photos"
-                  : "View shift";
+            const stuck =
+              (shift.status === "submitted" || shift.status === "scoring") &&
+              isStuckScoring(shift);
 
             return (
               <li key={shift.$id}>
@@ -255,14 +239,11 @@ export function MyShifts() {
                     <span
                       className={`shift-link${isPrimaryDraft ? " is-primary" : ""}`}
                     >
-                      {actionLabel}
+                      Continue draft
                     </span>
-                  ) : (
-                    <>
-                      <p className="caption">{statusLine}</p>
-                      <span className="shift-link">{actionLabel}</span>
-                    </>
-                  )}
+                  ) : stuck ? (
+                    <p className="caption">Scoring stuck</p>
+                  ) : null}
                 </Link>
               </li>
             );

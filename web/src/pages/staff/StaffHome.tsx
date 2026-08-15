@@ -44,7 +44,6 @@ export function StaffHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [site, setSite] = useState<Site | null>(null);
-  const [checklistTitle, setChecklistTitle] = useState<string>("");
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -96,7 +95,6 @@ export function StaffHome() {
         const [s, c] = await Promise.all([getSite(), getChecklist()]);
         if (cancelled) return;
         setSite(s);
-        setChecklistTitle(c.title);
         setItems(parseChecklistItems(c));
       } catch (err) {
         if (!cancelled)
@@ -289,11 +287,6 @@ export function StaffHome() {
                 : "Site unavailable"}
           </p>
           <h1 id="staff-home-title">Opening check</h1>
-          <p className="staff-lede">
-            {loading
-              ? "Loading checklist…"
-              : "Photograph each item — about a minute. Submit once when you have 3–8 clear shots."}
-          </p>
           {!loading && items.length > 0 ? (
             <p className="staff-meta caption" aria-label="Check summary">
               <span>{items.length} items</span>
@@ -301,18 +294,6 @@ export function StaffHome() {
                 ·
               </span>
               <span>~1 min</span>
-              <span className="staff-meta-dot" aria-hidden>
-                ·
-              </span>
-              <span>3–8 photos</span>
-              {checklistTitle ? (
-                <>
-                  <span className="staff-meta-dot" aria-hidden>
-                    ·
-                  </span>
-                  <span className="staff-meta-checklist">{checklistTitle}</span>
-                </>
-              ) : null}
             </p>
           ) : null}
         </header>
@@ -369,13 +350,13 @@ export function StaffHome() {
               {!fixLoading && uniqueFixes.length > 0 ? (
                 <p className="staff-fixes-count caption">
                   {pendingUnique.length > 0
-                    ? `${pendingUnique.length} need${pendingUnique.length === 1 ? "s" : ""} a re-check photo`
+                    ? `${pendingUnique.length} to re-check`
                     : null}
                   {pendingUnique.length > 0 && waitingUnique.length > 0
                     ? " · "
                     : null}
                   {waitingUnique.length > 0
-                    ? `${waitingUnique.length} waiting on manager`
+                    ? `${waitingUnique.length} waiting`
                     : null}
                 </p>
               ) : null}
@@ -399,12 +380,11 @@ export function StaffHome() {
                     />
                   ) : null}
                   <div className="staff-fix-body">
-                    <p className="staff-fix-title">{t.title}</p>
+                    <p className="staff-fix-title">{displayFixTitle(t.title)}</p>
                     <p className="caption staff-fix-status">
-                      {formatFixWhen(t.createdAt || t.$createdAt)}
                       {t.recheckFileId
-                        ? " · re-check on file, waiting for manager"
-                        : " · upload one clear photo after you fix it"}
+                        ? "Waiting on manager"
+                        : formatFixWhen(t.createdAt || t.$createdAt)}
                     </p>
                     <Link
                       to={`/staff/shifts/${t.shiftId}`}
@@ -464,9 +444,6 @@ export function StaffHome() {
         >
           <div className="staff-checklist-head">
             <h2 id="photo-list-title">What to photograph</h2>
-            <p className="muted staff-checklist-lede">
-              Clear shots of each item — proof for the manager.
-            </p>
           </div>
 
           {loading ? (
@@ -507,23 +484,13 @@ export function StaffHome() {
         }
       >
         <div className="staff-cta-inner">
-          {pendingUnique.length > 0 ? (
-            <p className="staff-cta-hint caption">
-              {pendingUnique.length} open fix
-              {pendingUnique.length === 1 ? "" : "es"} above
-              {resumeDraft ? " — or continue your draft" : " — or start a new check"}
-            </p>
-          ) : resumeDraft ? (
+          {resumeDraft && pendingUnique.length === 0 ? (
             <p className="staff-cta-hint caption">
               {resumePhotoCount === 0
                 ? "Draft waiting — add photos to finish"
                 : `${resumePhotoCount} photo${resumePhotoCount === 1 ? "" : "s"} saved · finish and submit`}
             </p>
-          ) : (
-            <p className="staff-cta-hint caption">
-              Photograph · Submit · Manager reviews scores
-            </p>
-          )}
+          ) : null}
           <Button
             fullWidth
             loading={starting}
@@ -537,6 +504,10 @@ export function StaffHome() {
       </div>
     </div>
   );
+}
+
+function displayFixTitle(title: string) {
+  return title.replace(/^Fix:\s*/i, "");
 }
 
 function uniqueFixTasks(tasks: Task[]): Task[] {
