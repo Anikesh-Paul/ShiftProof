@@ -23,8 +23,6 @@ import {
   getSite,
   listMyShifts,
   parseChecklistItems,
-  getEvidencePreviewUrl,
-  getShift,
   parsePhotoFileIds,
   pickResumableDraft,
   PHOTO_ACCEPT,
@@ -34,7 +32,7 @@ import {
 import type { ChecklistItem, Shift, Site, Task } from "../../types/shiftproof";
 import "./StaffHome.css";
 
-const FIX_VISIBLE = 4;
+const FIX_VISIBLE = 2;
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -56,7 +54,6 @@ export function StaffHome() {
   const [resumeDraft, setResumeDraft] = useState<Shift | null>(null);
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixesExpanded, setFixesExpanded] = useState(false);
-  const [fixThumbs, setFixThumbs] = useState<Record<string, string>>({});
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -218,65 +215,30 @@ export function StaffHome() {
     ? parsePhotoFileIds(resumeDraft.photoFileIds).length
     : 0;
 
-  const visibleFixKey = visibleFixes.map((t) => `${t.$id}:${t.shiftId}`).join(",");
-
-  useEffect(() => {
-    if (!visibleFixKey) return;
-    let cancelled = false;
-    const rows = visibleFixKey.split(",").map((pair) => {
-      const [id, shiftId] = pair.split(":");
-      return { id, shiftId };
-    });
-    void Promise.all(
-      rows.map(async ({ id, shiftId }) => {
-        if (!id || !shiftId) return null;
-        try {
-          const row = await getShift(shiftId);
-          const first = parsePhotoFileIds(row.photoFileIds)[0];
-          return first ? ([id, getEvidencePreviewUrl(first)] as const) : null;
-        } catch {
-          return null;
-        }
-      }),
-    ).then((pairs) => {
-      if (cancelled) return;
-      setFixThumbs((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const pair of pairs) {
-          if (pair && next[pair[0]] !== pair[1]) {
-            next[pair[0]] = pair[1];
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [visibleFixKey]);
-
   return (
     <div className="staff-home" data-testid="staff-opening">
       <div className="app-page stack staff-home-page">
-        {/* Full-bleed hero photo; title stays on paper below */}
-        <div className="staff-atmosphere" aria-hidden="true">
-          <img
-            className={
-              photoLoaded
-                ? "staff-atmosphere-photo is-loaded"
-                : "staff-atmosphere-photo"
-            }
-            src="/staff-open.jpg"
-            alt=""
-            width={1600}
-            height={900}
-            decoding="async"
-            onLoad={() => setPhotoLoaded(true)}
-          />
-          <div className="staff-atmosphere-scrim" />
-        </div>
+        {!showFixes && !fixLoading ? (
+          <div
+            className="staff-atmosphere staff-atmosphere--slim"
+            aria-hidden="true"
+          >
+            <img
+              className={
+                photoLoaded
+                  ? "staff-atmosphere-photo is-loaded"
+                  : "staff-atmosphere-photo"
+              }
+              src="/staff-open.jpg"
+              alt=""
+              width={1600}
+              height={900}
+              decoding="async"
+              onLoad={() => setPhotoLoaded(true)}
+            />
+            <div className="staff-atmosphere-scrim" />
+          </div>
+        ) : null}
 
         <header className="staff-head stack-sm">
           <p className="staff-site" data-testid="staff-site">
@@ -370,28 +332,18 @@ export function StaffHome() {
                   data-testid="staff-fix-row"
                   data-state={t.recheckFileId ? "sent" : "needs-photo"}
                 >
-                  {fixThumbs[t.$id] ? (
-                    <img
-                      className="staff-fix-thumb"
-                      src={fixThumbs[t.$id]}
-                      alt=""
-                      width={56}
-                      height={56}
-                    />
-                  ) : null}
                   <div className="staff-fix-body">
-                    <p className="staff-fix-title">{displayFixTitle(t.title)}</p>
-                    <p className="caption staff-fix-status">
-                      {t.recheckFileId
-                        ? "Waiting on manager"
-                        : formatFixWhen(t.createdAt || t.$createdAt)}
-                    </p>
                     <Link
                       to={`/staff/shifts/${t.shiftId}`}
-                      className="text-btn staff-fix-shift-link"
+                      className="staff-fix-title"
                     >
-                      View scores
+                      {displayFixTitle(t.title)}
                     </Link>
+                    {t.recheckFileId ? (
+                      <p className="caption staff-fix-status">
+                        Waiting on manager
+                      </p>
+                    ) : null}
                   </div>
                   {!t.recheckFileId ? (
                     <label className="staff-recheck-upload">
@@ -493,6 +445,7 @@ export function StaffHome() {
           ) : null}
           <Button
             fullWidth
+            variant={pendingUnique.length > 0 ? "secondary" : "primary"}
             loading={starting}
             disabled={loading || (!resumeDraft && items.length === 0)}
             data-testid="start-opening-check"
@@ -520,15 +473,4 @@ function uniqueFixTasks(tasks: Task[]): Task[] {
     out.push(t);
   }
   return out;
-}
-
-function formatFixWhen(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
 }
