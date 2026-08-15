@@ -278,15 +278,6 @@ export function ShiftPhotos() {
     totalCount <= PHOTO_MAX &&
     !submitting;
 
-  const statusHint = useMemo(() => {
-    if (uploading) return "Uploading to evidence storage…";
-    if (totalCount < PHOTO_MIN) {
-      const need = PHOTO_MIN - totalCount;
-      return `${totalCount} of ${PHOTO_MIN}–${PHOTO_MAX} · add ${need} more`;
-    }
-    return `${totalCount} photos ready · submit when done`;
-  }, [totalCount, uploading]);
-
   const progress = Math.min(1, totalCount / PHOTO_MIN);
 
   const itemLabel = useCallback(
@@ -771,13 +762,17 @@ export function ShiftPhotos() {
         role="status"
         aria-label={`${totalCount} of ${PHOTO_MIN} minimum photos`}
       >
-        <div className="photo-progress-track">
-          <div
-            className="photo-progress-fill"
-            style={{ transform: `scaleX(${progress})` }}
-          />
+        <div className="photo-progress-row">
+          <div className="photo-progress-track">
+            <div
+              className="photo-progress-fill"
+              style={{ transform: `scaleX(${progress})` }}
+            />
+          </div>
+          <p className="photo-hint">
+            {uploading ? "Uploading…" : `${totalCount} / ${PHOTO_MIN}`}
+          </p>
         </div>
-        <p className="photo-hint">{statusHint}</p>
       </div>
 
       {errorShown ? (

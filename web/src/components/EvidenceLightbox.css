@@ -10,9 +10,9 @@
   padding: var(--space-4);
   padding-top: calc(var(--space-4) + env(safe-area-inset-top));
   padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
-  background: oklch(0.12 0.02 40 / 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: oklch(0.12 0.02 40);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   animation: lightbox-in var(--dur-enter) var(--ease-out);
   cursor: zoom-out;
 }
@@ -66,7 +66,7 @@
   object-fit: contain;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-card);
-  background: var(--bg-elevated);
+  background: transparent;
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -204,6 +204,6 @@
   .lightbox {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    background: oklch(0.1 0.02 40 / 0.96);
+    background: oklch(0.1 0.02 40);
   }
 }

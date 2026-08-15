@@ -32,7 +32,7 @@ export function Shell({ title, variant }: ShellProps) {
               <NavLink to="/staff" end className={navClass}>
                 Opening
               </NavLink>
-              <NavLink to="/staff/shifts" className={navClass}>
+              <NavLink to="/staff/shifts" end className={navClass}>
                 History
               </NavLink>
             </nav>

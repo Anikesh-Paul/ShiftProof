@@ -227,8 +227,16 @@
   gap: var(--space-2);
 }
 
+.photo-progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .photo-progress-track {
-  height: 4px;
+  flex: 1;
+  min-width: 0;
+  height: 8px;
   border-radius: 999px;
   background: var(--fill-strong);
   overflow: hidden;
@@ -245,8 +253,10 @@
 
 .photo-hint {
   margin: 0;
-  font-size: 0.875rem;
-  font-weight: 500;
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--label-secondary);
 }
 

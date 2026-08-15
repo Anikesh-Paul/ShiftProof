@@ -23,6 +23,7 @@
   padding: var(--space-6) var(--space-5);
   padding-top: calc(var(--space-6) + env(safe-area-inset-top));
   color: oklch(0.98 0.01 80);
+  background: oklch(0.16 0.03 32);
 }
 
 .login-brand-media {
