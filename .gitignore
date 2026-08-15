@@ -32,6 +32,9 @@ npm-debug.log*
 # Playwright / local screenshots
 playwright-shots/
 web/playwright-shots/
+
+# Local font cache for favicon generation
+web/scripts/fonts/
 **/playwright-report/
 **/test-results/
 
