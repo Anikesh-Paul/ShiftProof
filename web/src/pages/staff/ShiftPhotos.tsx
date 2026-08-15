@@ -80,7 +80,8 @@ function findingRank(status: Finding["status"]) {
 }
 
 function isStuck(shift: Shift, job: AgentJob | null): boolean {
-  if (job?.status === "failed") return true;
+  // With a job, failure is the job's own status — never an age guess.
+  if (job) return job.status === "failed";
   if (shift.status !== "submitted" && shift.status !== "scoring") return false;
   const raw = shift.submittedAt || shift.startedAt;
   const then = Date.parse(raw);
@@ -591,9 +592,12 @@ export function ShiftPhotos() {
         </Link>
 
         <header className="stack-sm">
-          <div className="shift-header-row">
+          <div
+            className="shift-header-row"
+            data-job-status={latestJob?.status ?? "none"}
+          >
             <h1>{heading}</h1>
-            <StatusChip status={shift.status} />
+            <StatusChip status={shift.status} jobFailed={latestJob?.status === "failed"} />
           </div>
           {lede ? (
             <p

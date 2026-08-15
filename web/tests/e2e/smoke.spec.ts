@@ -9,6 +9,14 @@ import {
   STAFF,
 } from "../helpers/auth";
 import { expect, test } from "../helpers/fixtures";
+import {
+  hasServerKey,
+  latestExecutionId,
+  latestJobFor,
+  seedAgentJob,
+  seedSubmittedShift,
+  setAgentJobStatus,
+} from "../helpers/agentJobs";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -116,6 +124,54 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     test.skip(testInfo.project.name !== "desktop", "once per run");
   });
 
+  test("staff shift page shows Failed chip when the Agent job fails", async ({
+    page,
+  }) => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed agent jobs",
+    );
+    const errors = collectPageErrors(page);
+
+    const shiftId = await seedSubmittedShift();
+    const jobId = await seedAgentJob(shiftId, "running");
+
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const chip = page.locator(".status-chip");
+    await expect(chip).toHaveAttribute("data-status", "submitted", {
+      timeout: 25_000,
+    });
+    await expect(page.locator("[data-job-status]")).toHaveAttribute(
+      "data-job-status",
+      "running",
+    );
+
+    await setAgentJobStatus(jobId, "failed", {
+      errorMessage: "seeded e2e failure (quota-shaped)",
+    });
+
+    // No reload: the page's own polling must surface the failure within seconds.
+    await expect(chip).toHaveAttribute("data-status", "failed", {
+      timeout: 15_000,
+    });
+    const retry = page.getByRole("button", { name: /try scoring again/i });
+    await expect(retry).toBeVisible();
+
+    // Retry behaves as today: a fresh Agent job plus a re-triggered execution.
+    // (Chip-level "leaves failed" is racy here: this photo-less shift's retry
+    // fails within ~200ms, so assert at the DB seam instead.)
+    const execBefore = await latestExecutionId();
+    await retry.click();
+    await expect
+      .poll(async () => (await latestJobFor(shiftId))?.id, { timeout: 15_000 })
+      .not.toBe(jobId);
+    await expect
+      .poll(async () => await latestExecutionId(), { timeout: 20_000 })
+      .not.toBe(execBefore);
+    assertNoPageErrors(errors);
+  });
+
   test("staff full scoring loop", async ({ page }) => {
     test.setTimeout(240_000);
     const errors = collectPageErrors(page);
@@ -142,11 +198,24 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     await expect(submit).toBeEnabled({ timeout: 45_000 });
     await submit.click();
 
+    // Settle on the Agent job status, not the Shift status — a quota/503
+    // failure must fail loudly here, not time out as a 180s hang.
+    const jobStatus = page.locator("[data-job-status]");
+    await expect
+      .poll(() => jobStatus.getAttribute("data-job-status"), {
+        timeout: 180_000,
+      })
+      .toMatch(/done|failed/);
+    const settled = await jobStatus.getAttribute("data-job-status");
+    expect(
+      settled,
+      `Agent job ended "${settled}" — scoring did not complete (quota/503/timeout); Retry is available on the page`,
+    ).toBe("done");
+
     const chip = page.locator(".status-chip");
     await expect
-      .poll(async () => chip.getAttribute("data-status"), { timeout: 180_000 })
-      .toMatch(/scored|failed|closed/);
-    expect(await chip.getAttribute("data-status")).toBe("scored");
+      .poll(() => chip.getAttribute("data-status"), { timeout: 30_000 })
+      .toBe("scored");
     await expect(page.getByRole("heading", { name: /your scores/i })).toBeVisible();
     assertNoPageErrors(errors);
   });
