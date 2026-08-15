@@ -162,12 +162,58 @@ export async function getShift(shiftId: string): Promise<Shift> {
   return row as unknown as Shift;
 }
 
+const EVIDENCE_MAX_EDGE = 1280;
+const EVIDENCE_JPEG_QUALITY = 0.72;
+const EVIDENCE_SKIP_COMPRESS_BYTES = 350_000;
+
+/** Shrink phone photos before Storage + Gemini. Kit JPGs under 350KB pass through. */
+export async function compressEvidenceFile(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
+    return file;
+  }
+  if (file.size <= EVIDENCE_SKIP_COMPRESS_BYTES) return file;
+  try {
+    const bitmap = await createImageBitmap(file, {
+      imageOrientation: "from-image",
+    });
+    const scale = Math.min(
+      1,
+      EVIDENCE_MAX_EDGE / Math.max(bitmap.width, bitmap.height),
+    );
+    if (scale === 1 && file.size <= EVIDENCE_SKIP_COMPRESS_BYTES) {
+      bitmap.close();
+      return file;
+    }
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", EVIDENCE_JPEG_QUALITY),
+    );
+    if (!blob || blob.size >= file.size) return file;
+    const base = file.name.replace(/\.[^.]+$/, "") || "evidence";
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
 /** Upload one evidence photo to the evidence bucket. */
 export async function uploadEvidence(file: File): Promise<string> {
+  const toUpload = await compressEvidenceFile(file);
   const result = await storage.createFile({
     bucketId: APPWRITE_IDS.buckets.evidence,
     fileId: ID.unique(),
-    file,
+    file: toUpload,
   });
   return result.$id;
 }
@@ -335,7 +381,7 @@ export async function pollJobUntilSettled(
   shiftId: string,
   opts?: { timeoutMs?: number; intervalMs?: number },
 ): Promise<AgentJob | null> {
-  const timeoutMs = opts?.timeoutMs ?? 90_000;
+  const timeoutMs = opts?.timeoutMs ?? 180_000;
   const intervalMs = opts?.intervalMs ?? 2_000;
   const start = Date.now();
   let last: AgentJob | null = null;

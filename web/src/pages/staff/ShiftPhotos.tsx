@@ -246,7 +246,7 @@ export function ShiftPhotos() {
         result.job.status !== "failed" &&
         result.scoreTrigger.triggered
       ) {
-        void pollJobUntilSettled(shiftId, { timeoutMs: 90_000 }).then(
+        void pollJobUntilSettled(shiftId, { timeoutMs: 180_000 }).then(
           async () => {
             try {
               setShift(await getShift(shiftId));

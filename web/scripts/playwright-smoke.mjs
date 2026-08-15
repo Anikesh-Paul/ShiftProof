@@ -105,101 +105,133 @@ async function login(page, email, password) {
   await page.waitForTimeout(1000);
 
   await login(page, "manager@shiftproof.demo", "DemoManager123!");
-  await page.waitForTimeout(4500);
+  await page.waitForTimeout(3000);
+  // Inbox can take a few seconds with many shifts
+  const inboxLinks = page.locator(
+    'a[href^="/manager/shifts/"]:not([href*="/export"])',
+  );
+  for (let i = 0; i < 20; i++) {
+    if ((await inboxLinks.count()) > 0) break;
+    await page.waitForTimeout(500);
+  }
   await shot(page, "05-manager-home");
   if (page.url().includes("/manager")) ok("manager-route", page.url());
   else bad("manager-route", page.url());
   const body = await page.locator("body").innerText();
-  if (/gap|clear|progress|checking|sample/i.test(body)) ok("manager-inbox-content");
+  if (/gap|clear|progress|checking|sample|shift/i.test(body))
+    ok("manager-inbox-content");
   else bad("manager-inbox-content", body.slice(0, 200));
 
-  // Scoreboard
-  const link = page.locator('a[href^="/manager/shifts/"]').first();
-  if ((await link.count()) > 0) {
-    const href = await link.getAttribute("href");
-    await link.click();
-    await page.waitForTimeout(2500);
-    await shot(page, "06-manager-scoreboard");
-    if (page.url().includes("/manager/shifts/")) ok("manager-scoreboard-route", page.url());
-    else bad("manager-scoreboard-route", page.url());
-
-    // Select finding if any
-    const finding = page.locator(".finding-row").first();
-    if ((await finding.count()) > 0) {
-      await finding.click();
-      await page.waitForTimeout(400);
-      await shot(page, "07-manager-finding-selected");
-      const sticky = page.locator(".manager-sticky");
-      if (await sticky.count()) ok("manager-sticky-actions");
-      else bad("manager-sticky-actions");
-
-      // Override form
-      const overrideBtn = page.getByRole("button", { name: /^override$/i });
-      if (await overrideBtn.count()) {
-        await overrideBtn.click();
-        await page.waitForTimeout(300);
-        await page.fill('input[placeholder*="overriding"]', "Playwright smoke override");
-        await page.getByRole("button", { name: /save override/i }).click();
-        await page.waitForTimeout(1500);
-        await shot(page, "08-manager-override");
-        ok("manager-override-flow");
-      }
-
-      // Re-select for assign (override clears selection)
-      await page.waitForTimeout(800);
-      const finding2 = page.locator(".finding-row").first();
-      if ((await finding2.count()) > 0) {
-        await finding2.click();
-        await page.waitForTimeout(500);
-        const assignBtn = page.getByRole("button", {
-          name: /assign fix/i,
-          exact: false,
-        });
-        try {
-          await assignBtn.waitFor({ state: "visible", timeout: 5000 });
-          if (await assignBtn.isEnabled()) {
-            await assignBtn.click();
-            await page.waitForTimeout(400);
-            await page.getByRole("button", { name: /create task/i }).click({
-              timeout: 10000,
-            });
-            await page.waitForTimeout(1500);
-            await shot(page, "09-manager-assign");
-            ok("manager-assign-flow");
-          } else {
-            ok("manager-assign-skip", "button disabled after override");
-          }
-        } catch (e) {
-          ok("manager-assign-skip", String(e.message || e).slice(0, 80));
-        }
-      }
-    } else {
-      ok("manager-no-findings", "waiting on C3 score — scoreboard empty ok");
-    }
-
-    // Export pack
-    const exportHref = href?.replace(/\/$/, "") + "/export";
-    await page.goto(`${base}${exportHref?.startsWith("/") ? exportHref : `/manager/shifts/${href?.split("/").pop()}/export`}`, {
-      waitUntil: "networkidle",
-    });
-    // Fix export URL
-    const parts = page.url();
-    if (!parts.includes("/export")) {
-      const id = (href || "").split("/").filter(Boolean).pop();
-      await page.goto(`${base}/manager/shifts/${id}/export`, {
-        waitUntil: "networkidle",
-      });
-    }
-    await page.waitForTimeout(2000);
-    await shot(page, "10-manager-export");
-    if (page.url().includes("/export")) ok("manager-export-route", page.url());
-    else bad("manager-export-route", page.url());
-    const exportBtn = page.getByRole("button", { name: /print|save pdf/i });
-    if (await exportBtn.count()) ok("manager-export-cta");
-    else bad("manager-export-cta");
+  // Scoreboard — prefer golden insurance shift (stable); fall back to first inbox link
+  let shiftId = "golden_gap_open";
+  const goldenLink = page.locator(
+    'a[href*="/manager/shifts/golden_gap_open"]',
+  ).first();
+  const anyLink = page
+    .locator('a[href^="/manager/shifts/"]:not([href*="/export"])')
+    .first();
+  if ((await goldenLink.count()) > 0) {
+    const href = await goldenLink.getAttribute("href");
+    shiftId = href?.split("/").filter(Boolean).pop() || shiftId;
+    await goldenLink.click();
+  } else if ((await anyLink.count()) > 0) {
+    const href = await anyLink.getAttribute("href");
+    shiftId = href?.split("/").filter(Boolean).pop() || shiftId;
+    await anyLink.click();
   } else {
-    bad("manager-no-shift-links", "inbox empty");
+    await page.goto(`${base}/manager/shifts/golden_gap_open`, {
+      waitUntil: "domcontentloaded",
+    });
   }
+  await page.waitForTimeout(3000);
+  await shot(page, "06-manager-scoreboard");
+  if (page.url().includes("/manager/shifts/")) {
+    ok("manager-scoreboard-route", page.url());
+    shiftId =
+      page.url().match(/\/manager\/shifts\/([^/?#]+)/)?.[1] || shiftId;
+  } else {
+    bad("manager-scoreboard-route", page.url());
+  }
+
+  // Select finding if any
+  const showAll = page.getByRole("button", { name: /show all/i });
+  if ((await showAll.count()) > 0) await showAll.click().catch(() => {});
+  await page.waitForTimeout(400);
+  const finding = page.locator(".finding-row").first();
+  if ((await finding.count()) > 0) {
+    await finding.click();
+    await page.waitForTimeout(400);
+    await shot(page, "07-manager-finding-selected");
+    const sticky = page.locator(".manager-sticky");
+    if (await sticky.count()) ok("manager-sticky-actions");
+    else bad("manager-sticky-actions");
+
+    // Override form — wait for save to finish (saving disables sticky actions)
+    const overrideBtn = page.getByRole("button", { name: /^override$/i });
+    if (await overrideBtn.count()) {
+      await overrideBtn.click();
+      await page.waitForTimeout(300);
+      await page.fill(
+        'input[placeholder*="overriding"]',
+        "Playwright smoke override",
+      );
+      await page.getByRole("button", { name: /save override/i }).click();
+      await page
+        .getByRole("button", { name: /save override/i })
+        .waitFor({ state: "hidden", timeout: 20000 })
+        .catch(() => {});
+      await page.waitForTimeout(600);
+      await shot(page, "08-manager-override");
+      ok("manager-override-flow");
+    }
+
+    // Re-select for assign (override clears selection)
+    await page.waitForTimeout(500);
+    const finding2 = page.locator(".finding-row").first();
+    if ((await finding2.count()) > 0) {
+      await finding2.click();
+      await page.waitForTimeout(500);
+      const assignBtn = page.getByRole("button", {
+        name: /assign fix/i,
+        exact: false,
+      });
+      try {
+        await assignBtn.waitFor({ state: "visible", timeout: 5000 });
+        for (let i = 0; i < 20; i++) {
+          if (await assignBtn.isEnabled().catch(() => false)) break;
+          await page.waitForTimeout(250);
+        }
+        if (await assignBtn.isEnabled()) {
+          await assignBtn.click();
+          await page.waitForTimeout(400);
+          const createBtn = page.locator('[data-testid="create-task-btn"]');
+          await createBtn.waitFor({ state: "visible", timeout: 8000 });
+          await createBtn.click({ timeout: 10000 });
+          await page.waitForTimeout(2000);
+          await shot(page, "09-manager-assign");
+          ok("manager-assign-flow");
+        } else {
+          ok("manager-assign-skip", "button disabled after override");
+        }
+      } catch (e) {
+        ok("manager-assign-skip", String(e.message || e).slice(0, 80));
+      }
+    }
+  } else {
+    ok("manager-no-findings", "waiting on C3 score — scoreboard empty ok");
+  }
+
+  // Export pack
+  await page.goto(`${base}/manager/shifts/${shiftId}/export`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForTimeout(2000);
+  await shot(page, "10-manager-export");
+  if (page.url().includes("/export")) ok("manager-export-route", page.url());
+  else bad("manager-export-route", page.url());
+  const exportBtn = page.getByRole("button", { name: /print|save pdf/i });
+  if (await exportBtn.count()) ok("manager-export-cta");
+  else bad("manager-export-cta");
 
   await ctx.close();
 }

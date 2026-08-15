@@ -186,6 +186,16 @@ export function ManagerShiftDetail() {
         // Paint scoreboard first — extras (trace/tasks/events) fill in after
         setItem(result.item);
         setSource(result.source);
+        // If every finding is Pass (e.g. golden after overrides), default to Show all
+        // so managers / demo path can still select rows without an empty board.
+        const openGaps = result.item.findings.filter(
+          (f) => f.status === "gap" || f.status === "unclear",
+        ).length;
+        if (result.item.findings.length > 0 && openGaps === 0) {
+          setShowAll(true);
+        } else {
+          setShowAll(false);
+        }
         setLoading(false);
         void loadExtras(result.item.shift.$id, result.source === "demo");
       } catch (err) {
@@ -347,14 +357,19 @@ export function ManagerShiftDetail() {
           `Task assigned to ${resolveStaffLabel(assignedTo)} (sample): ${title}`,
         );
       } else {
-        await assignFixTask({
+        const created = await assignFixTask({
           shiftId: item.shift.$id,
           findingId: selected.$id,
           title,
           userId: user.$id,
           assignedTo,
         });
+        // Reload extras, then ensure created task stays visible if listTasks lags
         await loadExtras(item.shift.$id, false);
+        setTasks((prev) => {
+          if (prev.some((t) => t.$id === created.$id)) return prev;
+          return [created, ...prev];
+        });
         setToast(
           `Task assigned to ${resolveStaffLabel(assignedTo)}: ${title}`,
         );

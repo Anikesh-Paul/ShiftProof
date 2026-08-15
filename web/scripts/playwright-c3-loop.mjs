@@ -1,8 +1,10 @@
 /**
  * C3 full loop: staff submit → score → manager sees findings.
+ * Prefer real demo kit photos when present (gap kit for video narrative).
  * node web/scripts/playwright-c3-loop.mjs [baseUrl]
  */
 import { createRequire } from "node:module";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -15,11 +17,55 @@ const base = process.argv[2] || "http://localhost:5174";
 const out = path.resolve("web/playwright-shots/c3");
 await mkdir(out, { recursive: true });
 
-// 1x1 png
+// 1x1 png fallback when demo kits missing
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+
+/** Load up to 5 images from demo/photos/gap (or pass/unclear). */
+function loadKitFiles() {
+  const roots = [
+    path.resolve("demo/photos"),
+    path.resolve("../demo/photos"),
+  ];
+  for (const root of roots) {
+    for (const kit of ["gap", "pass", "unclear"]) {
+      const dir = path.join(root, kit);
+      if (!existsSync(dir)) continue;
+      const names = readdirSync(dir)
+        .filter((f) => /\.(jpe?g|png|webp)$/i.test(f))
+        .sort()
+        .slice(0, 5);
+      if (names.length >= 3) {
+        return {
+          kit,
+          files: names.map((name) => {
+            const buf = readFileSync(path.join(dir, name));
+            const ext = path.extname(name).toLowerCase();
+            const mime =
+              ext === ".png"
+                ? "image/png"
+                : ext === ".webp"
+                  ? "image/webp"
+                  : "image/jpeg";
+            return { name, mimeType: mime, buffer: buf };
+          }),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+const kit = loadKitFiles();
+const uploadFiles = kit
+  ? kit.files
+  : [
+      { name: "a.png", mimeType: "image/png", buffer: PNG },
+      { name: "b.png", mimeType: "image/png", buffer: PNG },
+      { name: "c.png", mimeType: "image/png", buffer: PNG },
+    ];
 
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({
@@ -45,6 +91,12 @@ async function login(email, password) {
 }
 
 try {
+  step(
+    kit
+      ? `kit=${kit.kit} files=${uploadFiles.length}`
+      : "kit=fallback-1x1-png (demo/photos missing)",
+  );
+
   // Staff
   await login("staff@shiftproof.demo", "DemoStaff123!");
   await page.waitForTimeout(3000);
@@ -67,18 +119,15 @@ try {
     '[data-testid="staff-evidence-input"], input[type="file"][multiple]',
   );
   await input.first().waitFor({ state: "attached", timeout: 10000 });
-  await input.first().setInputFiles([
-    { name: "a.png", mimeType: "image/png", buffer: PNG },
-    { name: "b.png", mimeType: "image/png", buffer: PNG },
-    { name: "c.png", mimeType: "image/png", buffer: PNG },
-  ]);
-  // wait for uploads
-  await page.waitForTimeout(10000);
+  await input.first().setInputFiles(uploadFiles);
+  // wait for uploads (real kit jpgs are larger)
+  const uploadWait = kit ? 20000 : 10000;
+  await page.waitForTimeout(uploadWait);
   await page.screenshot({ path: path.join(out, "01-after-upload.png") });
 
   const submit = page.getByRole("button", { name: /submit proof/i });
   // may need wait until enabled
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     if (await submit.isEnabled()) break;
     await page.waitForTimeout(1000);
   }
@@ -86,8 +135,8 @@ try {
     throw new Error("Submit still disabled after uploads");
   }
   await submit.click();
-  // Gemini + Storage can take a while; poll staff page for settled job UI
-  for (let i = 0; i < 45; i++) {
+  // Gemini + Storage can take 2+ min (large kit + 503 retries); poll staff UI
+  for (let i = 0; i < 90; i++) {
     await page.waitForTimeout(2000);
     const t = (await page.locator("body").innerText()).toLowerCase();
     if (
@@ -124,14 +173,18 @@ try {
     waitUntil: "networkidle",
   });
   step(`open /manager/shifts/${shiftId}`);
-  // Wait for scoreboard findings (Gemini job may still be running)
+  // Wait for scoreboard findings (Gemini job may still be running; allow ~3 min)
   let findingRows = 0;
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < 90; i++) {
     await page.waitForTimeout(2000);
     findingRows = await page.locator(".finding-row").count();
     if (findingRows >= 5) break;
     const t = (await page.locator("body").innerText()).toLowerCase();
-    if (/job failed|scoring failed|failed/.test(t) && findingRows < 1 && i > 5) {
+    if (
+      /job failed|scoring failed|could not score/.test(t) &&
+      findingRows < 1 &&
+      i > 8
+    ) {
       step("WARN job appears failed with no findings");
       break;
     }

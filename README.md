@@ -7,7 +7,7 @@ Built for **AI First Hackathon**.
 
 | | |
 |--|--|
-| **Live app** | _Vercel URL — [link](https://shift-proof-phi.vercel.app/) |
+| **Live app** | [shift-proof-phi.vercel.app](https://shift-proof-phi.vercel.app) |
 | **Repo** | [github.com/Anikesh-Paul/ShiftProof](https://github.com/Anikesh-Paul/ShiftProof) |
 
 ---

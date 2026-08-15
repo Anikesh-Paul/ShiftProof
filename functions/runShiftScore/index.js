@@ -11,6 +11,7 @@
  *   APPWRITE_API_KEY          (server key: TablesDB + Storage)
  *   GOOGLE_AI_API_KEY         (Google AI Studio — required for default path)
  *   GEMINI_MODEL              (optional, default gemini-flash-latest)
+ *   SCORING_DEADLINE_MS       (optional, default 110000; use 170000 if Function timeout is 180s)
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
 const { Client, TablesDB, Storage, ID, Query } = require("node-appwrite");
@@ -28,9 +29,13 @@ const T = {
 /** Low confidence cannot be silent pass/gap (TC-C3-05). */
 const LOW_CONFIDENCE = 0.55;
 /** Cap photos sent to the model (timeout + payload). */
-const MAX_PHOTOS = 6;
-/** Cap base64 chars per image (~3MB decoded). */
-const MAX_B64_CHARS = 4_000_000;
+const MAX_PHOTOS = 5;
+/** Cap base64 chars per image (~1.2MB decoded). Phone originals are compressed on upload. */
+const MAX_B64_CHARS = 1_600_000;
+/** One Gemini attempt must finish in time to allow a retry inside the Function timeout. */
+const GEMINI_ATTEMPT_MS = 45_000;
+/** Leave headroom under Appwrite Function timeout (120s default; set 170000 after raising to 180s). */
+const SCORING_DEADLINE_MS = Number(process.env.SCORING_DEADLINE_MS || 110_000);
 
 const CLAUSE_QUOTES = {
   "FS-01": "Food handlers must wear clean disposable gloves at the prep station.",
@@ -280,12 +285,69 @@ function normalizeFindings(payload, items) {
   return scored;
 }
 
-async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Transient Gemini errors worth one more try (not silent stub). */
+function isRetryableGeminiHttp(status) {
+  return status === 429 || status === 503 || status === 500;
+}
+
+function isDailyQuotaExhausted(status, body) {
+  if (status !== 429) return false;
+  const t = String(body || "").toLowerCase();
+  return (
+    t.includes("perday") ||
+    t.includes("requests per day") ||
+    t.includes("limit: 0") ||
+    t.includes('"limit": 0') ||
+    t.includes('"limit":0')
+  );
+}
+
+function isThinkingConfigRejected(status, body) {
+  if (status !== 400) return false;
+  return String(body || "").toLowerCase().includes("thinking");
+}
+
+/** 2.5 Flash: thinkingBudget 0. 3.x / flash-latest: MINIMAL (cannot fully disable). */
+function thinkingConfigFor(model) {
+  const m = String(model || "").toLowerCase();
+  if (m.includes("2.5") || m.includes("2.0")) {
+    return { thinkingBudget: 0 };
+  }
+  return { thinkingLevel: "MINIMAL" };
+}
+
+function retryDelayMs(status, attempt) {
+  if (status === 429) return 12_000;
+  if (status === 503) return attempt === 1 ? 5_000 : 12_000;
+  return 4_000 * attempt;
+}
+
+async function callGeminiFlashOnce({
+  apiKey,
+  model,
+  prompt,
+  imageParts,
+  log,
+  thinkingConfig,
+}) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model,
   )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const parts = [{ text: prompt }, ...imageParts];
+  const generationConfig = {
+    temperature: 0.2,
+    maxOutputTokens: 2048,
+    responseMimeType: "application/json",
+  };
+  if (thinkingConfig) {
+    generationConfig.thinkingConfig = thinkingConfig;
+  }
+
   const body = {
     contents: [
       {
@@ -293,25 +355,27 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
         parts,
       },
     ],
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 4096,
-      responseMimeType: "application/json",
-    },
+    generationConfig,
   };
 
-  log(`Gemini request model=${model} images=${imageParts.length}`);
+  log(
+    `Gemini request model=${model} images=${imageParts.length} think=${JSON.stringify(thinkingConfig || null)}`,
+  );
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(GEMINI_ATTEMPT_MS),
   });
 
   const rawText = await resp.text();
   if (!resp.ok) {
-    throw new Error(
+    const err = new Error(
       `Gemini HTTP ${resp.status}: ${rawText.slice(0, 400).replace(/\s+/g, " ")}`,
     );
+    err.httpStatus = resp.status;
+    err.responseBody = rawText;
+    throw err;
   }
 
   let data;
@@ -343,6 +407,65 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
     throw new Error("Gemini empty text (parse/safety)");
   }
   return textOut;
+}
+
+/**
+ * Up to 3 attempts on 429/503/500/timeout. Skip daily-quota 429s (retrying
+ * burns the same empty bucket). Drop thinking config once if Gemini 400s it.
+ * Still fails cleanly if exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
+ */
+async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
+  const maxAttempts = 3;
+  const started = Date.now();
+  let thinkingConfig = thinkingConfigFor(model);
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const elapsed = Date.now() - started;
+    if (elapsed + 8_000 > SCORING_DEADLINE_MS) {
+      log(`Gemini abort retry: ${elapsed}ms elapsed, near Function deadline`);
+      break;
+    }
+    try {
+      return await callGeminiFlashOnce({
+        apiKey,
+        model,
+        prompt,
+        imageParts,
+        log,
+        thinkingConfig,
+      });
+    } catch (e) {
+      lastErr = e;
+      const status = e && e.httpStatus;
+      const body = (e && e.responseBody) || String(e && e.message) || "";
+      const timedOut =
+        e && (e.name === "TimeoutError" || e.name === "AbortError");
+
+      if (thinkingConfig && isThinkingConfigRejected(status, body)) {
+        log("Gemini rejected thinkingConfig; retrying without it");
+        thinkingConfig = null;
+        continue;
+      }
+
+      if (isDailyQuotaExhausted(status, body)) {
+        throw new Error(
+          "Gemini daily free quota used (20 RPD). Open golden_gap_open instead of retrying.",
+        );
+      }
+
+      const retryable = timedOut || isRetryableGeminiHttp(status);
+      if (attempt < maxAttempts && retryable) {
+        const delayMs = retryDelayMs(status || 503, attempt);
+        log(
+          `Gemini retryable ${timedOut ? "timeout" : `HTTP ${status}`}; attempt ${attempt}/${maxAttempts}; wait ${delayMs}ms`,
+        );
+        await sleep(delayMs);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error("Gemini scoring stopped near Function deadline");
 }
 
 async function scoreWithGemini({ storage, items, photoFileIds, log }) {

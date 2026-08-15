@@ -294,6 +294,7 @@ export async function listOpenFixTasksForStaff(
 ): Promise<Task[]> {
   const byId = new Map<string, Task>();
 
+  // Prefer assignedTo+status; fall back to open-status scan if compound index missing
   try {
     const assigned = await tables.listRows({
       databaseId: DB,
@@ -308,7 +309,19 @@ export async function listOpenFixTasksForStaff(
       byId.set(row.$id, row as unknown as Task);
     }
   } catch {
-    /* assignedTo filter may fail if empty index — continue */
+    try {
+      const open = await tables.listRows({
+        databaseId: DB,
+        tableId: T.tasks,
+        queries: [Query.equal("status", "open"), Query.limit(100)],
+      });
+      for (const row of open.rows) {
+        const t = row as unknown as Task;
+        if (t.assignedTo === userId) byId.set(t.$id, t);
+      }
+    } catch {
+      /* continue to shift-owned path */
+    }
   }
 
   try {
@@ -318,7 +331,7 @@ export async function listOpenFixTasksForStaff(
       queries: [
         Query.equal("createdBy", userId),
         Query.orderDesc("startedAt"),
-        Query.limit(20),
+        Query.limit(50),
       ],
     });
     for (const shift of shifts.rows) {

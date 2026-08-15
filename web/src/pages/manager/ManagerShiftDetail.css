@@ -115,6 +115,10 @@
   font-weight: 600;
 }
 
+.evidence-missing[hidden] {
+  display: none;
+}
+
 .evidence-index {
   position: absolute;
   left: 6px;

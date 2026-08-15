@@ -58,15 +58,23 @@ try {
     pass("boost-6-repeat-offender", "absent on live (ok if <2 repeats)");
   }
 
-  // Prefer golden pre-scored shift (S2 insurance), else demo_shift, else first link
+  // Prefer golden pre-scored shift (S2 insurance), else first non-export shift link
   {
     await page.goto(`${base}/manager/shifts/golden_gap_open`, {
       waitUntil: "networkidle",
     });
     await page.waitForTimeout(2500);
+    // Pass-only boards hide rows until Show all (or auto-show after product fix)
+    const showAll = page.getByRole("button", { name: /show all/i });
+    if ((await showAll.count()) > 0) {
+      await showAll.click().catch(() => {});
+      await page.waitForTimeout(400);
+    }
     let hasRows = (await page.locator(".finding-row").count()) > 0;
     if (!hasRows) {
-      const links = page.locator('a[href^="/manager/shifts/"]');
+      await page.goto(`${base}/manager`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(3000);
+      const links = page.locator('a[href^="/manager/shifts/"]:not([href*="/export"])');
       const n = await links.count();
       if (n === 0) {
         fail("open-scoreboard", "no shift links");
@@ -74,7 +82,11 @@ try {
         let opened = false;
         for (let i = 0; i < n; i++) {
           const href = await links.nth(i).getAttribute("href");
-          if (href?.includes("demo_shift") || href?.includes("golden_")) {
+          if (
+            href &&
+            !href.includes("/export") &&
+            (href.includes("golden_") || href.includes("demo_shift"))
+          ) {
             await page.goto(`${base}${href}`, { waitUntil: "networkidle" });
             opened = true;
             break;
@@ -82,9 +94,13 @@ try {
         }
         if (!opened) {
           const href = await links.first().getAttribute("href");
-          if (href) await page.goto(`${base}${href}`, { waitUntil: "networkidle" });
+          if (href && !href.includes("/export"))
+            await page.goto(`${base}${href}`, { waitUntil: "networkidle" });
         }
         await page.waitForTimeout(2500);
+        const showAll2 = page.getByRole("button", { name: /show all/i });
+        if ((await showAll2.count()) > 0) await showAll2.click().catch(() => {});
+        await page.waitForTimeout(400);
       }
     }
     pass("open-scoreboard", page.url());
@@ -157,10 +173,12 @@ try {
       if ((await assign.count()) && (await assign.isEnabled())) {
         await assign.click();
         await page.waitForTimeout(300);
-        const create = page.getByRole("button", { name: /create task/i });
+        // Label is "Assign to staff"; testid is create-task-btn
+        const create = page.locator('[data-testid="create-task-btn"]');
         if ((await create.count()) > 0 && (await create.isEnabled().catch(() => false))) {
           await create.click({ timeout: 8000 }).catch(() => {});
           await page.waitForTimeout(2000);
+          pass("boost-3-create-task");
         } else {
           pass("boost-3-create-task", "create task control not available");
         }
