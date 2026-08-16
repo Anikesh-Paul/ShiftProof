@@ -61,18 +61,17 @@ async function openGoldenScoreboard(page: import("@playwright/test").Page) {
 }
 
 async function waitForFindings(page: import("@playwright/test").Page) {
-  const showAll = page.getByRole("button", { name: /show all/i });
-  for (let i = 0; i < 20; i++) {
-    if ((await showAll.count()) > 0) {
-      await showAll.click().catch(() => {});
-    }
-    if ((await page.locator(".finding-row").count()) >= 5) return;
-    await page.waitForTimeout(500);
-  }
-  expect(
-    await page.locator(".finding-row").count(),
-    "expected ≥5 findings on golden_gap_open",
-  ).toBeGreaterThanOrEqual(5);
+  // Exact name — /show all/i plus a default 20s click can hang the 180s test
+  // when the filter label is "Hide passes" or another "Show …" control is busy.
+  await page
+    .getByRole("button", { name: /^show all$/i })
+    .click({ timeout: 3_000 })
+    .catch(() => {});
+  const rows = page.locator(".finding-row");
+  await rows.first().waitFor({ state: "attached", timeout: 25_000 });
+  await expect
+    .poll(async () => rows.count(), { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(5);
 }
 
 test.describe("login", () => {
