@@ -18,7 +18,6 @@ import {
   type EvidenceSlide,
 } from "../../components/EvidenceLightbox";
 import { FindingChip } from "../../components/FindingChip";
-import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
 import { formatEventType, formatFindingSource } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
@@ -182,9 +181,9 @@ export function ManagerShiftDetail() {
       ]);
       setTasks((prev) => mergeTasksById(t, prev));
       setEvents(e);
-      setAgentTrace(trace ?? DEMO_AGENT_TRACE);
+      setAgentTrace(trace);
     } catch {
-      // Non-blocking for scoreboard
+      // Non-blocking for the findings table
     }
   }, []);
 
@@ -209,11 +208,7 @@ export function ManagerShiftDetail() {
             if (!cancelled) setItem({ ...result.item });
           });
         }
-        const stuck =
-          isStuckScoring(result.item.shift, result.item.latestJob) ||
-          result.item.shift.status === "submitted" ||
-          result.item.shift.status === "scoring";
-        setTraceOpen(stuck);
+        setTraceOpen(false);
         void getChecklist()
           .then((c) => setChecklistItems(parseChecklistItems(c)))
           .catch(() => setChecklistItems([]));
@@ -231,7 +226,7 @@ export function ManagerShiftDetail() {
         void loadExtras(result.item.shift.$id, result.source === "demo");
       } catch (err) {
         if (!cancelled) {
-          setError(getErrorMessage(err, "Could not load scoreboard"));
+          setError(getErrorMessage(err, "Could not load this opening"));
           setLoading(false);
         }
       }
@@ -294,9 +289,8 @@ export function ManagerShiftDetail() {
     [item],
   );
 
-  function selectFinding(f: Finding) {
+  function focusFinding(f: Finding) {
     setSelectedId(f.$id);
-    setMode("idle");
     setReason("");
     setToast(null);
     setError(null);
@@ -308,6 +302,17 @@ export function ManagerShiftDetail() {
         row.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     });
+  }
+
+  function startOverride(f: Finding) {
+    focusFinding(f);
+    setOverrideTo(f.status === "pass" ? "gap" : "pass");
+    setMode("override");
+  }
+
+  function startAssign(f: Finding) {
+    focusFinding(f);
+    setMode(f.status === "unclear" ? "retake" : "assign");
   }
 
   async function runOverride() {
@@ -664,7 +669,7 @@ export function ManagerShiftDetail() {
         <div className="skeleton-card" style={{ minHeight: "8rem" }} />
         {loadingSlow ? (
           <p className="loading-slow-hint" role="status">
-            Still loading scoreboard…
+            Still loading this opening…
           </p>
         ) : null}
       </div>
@@ -690,9 +695,12 @@ export function ManagerShiftDetail() {
     src: getEvidenceFileUrl(fid),
     label: `Evidence ${j + 1}`,
   }));
+  const stuck = isStuckScoring(item.shift, item.latestJob);
+  const jobFailed = item.latestJob?.status === "failed";
+  const formOpen = Boolean(selected) && mode !== "idle";
 
   return (
-    <div className={`manager-detail ${selected ? "has-sticky" : ""}`}>
+    <div className={`manager-detail ${formOpen ? "has-sticky" : ""}`}>
       <div className="app-page stack manager-detail-page staff-settle-in">
         <div className="manager-detail-nav">
           <Link to="/manager" className="back-link">
@@ -732,36 +740,76 @@ export function ManagerShiftDetail() {
         </div>
 
         <header className="stack-sm">
-          <div className="manager-detail-meta">
-            <StatusChip
-              status={item.shift.status}
-              jobFailed={item.latestJob?.status === "failed"}
-            />
-            <span className="caption">
-              {formatWhen(item.shift.submittedAt || item.shift.startedAt)}
-            </span>
-          </div>
-          <h1>Scoreboard</h1>
-          <p className="muted">
-            {item.staffLabel}
-            {source === "demo" ? " · sample data" : ""}
-            {item.shift.status === "closed" ? " · closed" : ""}
-          </p>
+          <h1>{scoreboardHeading(item)}</h1>
+          {source === "demo" ? (
+            <p className="caption muted">Sample data</p>
+          ) : null}
+          {!stuck ? (
+            <p
+              className="muted"
+              data-testid="shift-status"
+              data-status={shiftStatusCode(item)}
+            >
+              {shiftStatusSentence(item)}
+            </p>
+          ) : null}
         </header>
 
-        {isStuckScoring(item.shift, item.latestJob) ? (
+        {evidenceIds.length > 0 ? (
+          <section
+            className="card stack-sm evidence-gallery"
+            aria-label="Shift evidence photos"
+          >
+            <div className="evidence-gallery-head">
+              <h2>Evidence</h2>
+              <p className="caption">
+                {evidenceIds.length} photo
+                {evidenceIds.length === 1 ? "" : "s"} from opening check
+              </p>
+            </div>
+            <ul className="list-plain evidence-grid">
+              {evidenceIds.map((id, i) => {
+                const label = `Evidence ${i + 1}`;
+                return (
+                  <li key={id} className="evidence-tile">
+                    <button
+                      type="button"
+                      className="evidence-link"
+                      onClick={() =>
+                        setLightbox({
+                          items: evidenceSlides,
+                          startIndex: i,
+                        })
+                      }
+                      aria-label={`View ${label}`}
+                    >
+                      <EvidenceImg
+                        fileId={id}
+                        alt={label}
+                        className="evidence-img"
+                      />
+                      <span className="evidence-index caption">{i + 1}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
+        {stuck ? (
           <div
             className="manager-stuck-banner"
             role="status"
             data-testid="stuck-banner"
           >
-            <div>
-              <p className="manager-stuck-title">Scoring is stuck</p>
-              <p className="caption muted">
-                This job has been running too long. Retry it, or close the
-                opening if you are done reviewing.
-              </p>
-            </div>
+            <p
+              className="manager-stuck-title"
+              data-testid="shift-status"
+              data-status={jobFailed ? "failed" : "stuck"}
+            >
+              {shiftStatusSentence(item)}
+            </p>
             <Button
               variant="primary"
               loading={saving}
@@ -794,59 +842,11 @@ export function ManagerShiftDetail() {
           ) : null}
         </div>
 
-        {/* Evidence photos — same bucket staff uploaded to; manager can review frames */}
-        <section
-          className="card stack-sm evidence-gallery"
-          aria-label="Shift evidence photos"
-        >
-          <div className="evidence-gallery-head">
-            <h2>Evidence</h2>
-            <p className="caption">
-              {evidenceIds.length === 0
-                ? "No photos on this shift"
-                : `${evidenceIds.length} photo${evidenceIds.length === 1 ? "" : "s"} from opening check`}
-            </p>
-          </div>
-          {evidenceIds.length > 0 ? (
-            <ul className="list-plain evidence-grid">
-              {evidenceIds.map((id, i) => {
-                const label = `Evidence ${i + 1}`;
-                return (
-                  <li key={id} className="evidence-tile">
-                    <button
-                      type="button"
-                      className="evidence-link"
-                      onClick={() =>
-                        setLightbox({
-                          items: evidenceSlides,
-                          startIndex: i,
-                        })
-                      }
-                      aria-label={`View ${label}`}
-                    >
-                      <EvidenceImg
-                        fileId={id}
-                        alt={label}
-                        className="evidence-img"
-                      />
-                      <span className="evidence-index caption">{i + 1}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="muted caption">
-              Photos appear here once staff uploads and saves evidence.
-            </p>
-          )}
-        </section>
-
         {agentTrace ? (
           <section
             className="card stack-sm agent-trace"
             data-testid="agent-trace"
-            aria-label="Agent trace"
+            aria-label="How this was scored"
           >
             <button
               type="button"
@@ -855,14 +855,9 @@ export function ManagerShiftDetail() {
               onClick={() => setTraceOpen((v) => !v)}
             >
               <h2>How this was scored</h2>
-              <span className="caption">
-                {agentTrace.status === "done"
-                  ? "Scoring complete"
-                  : agentTrace.status}
-                {traceOpen ? " · Hide" : " · Show"}
-              </span>
+              <span className="caption">{traceOpen ? "Hide" : "Show"}</span>
             </button>
-            {traceOpen ? (
+            {traceOpen && agentTrace.status !== "failed" ? (
               <>
                 <ol className="agent-trace-steps">
                   {agentTrace.steps
@@ -877,17 +872,9 @@ export function ManagerShiftDetail() {
                     {citationGaps.length} finding(s) missing
                     clause/quote/confidence.
                   </p>
-                ) : (
-                  <p className="caption" data-testid="citations-ok">
-                    All findings carry clause · quote · confidence.
-                  </p>
-                )}
+                ) : null}
               </>
-            ) : (
-              <p className="caption visually-hidden" data-testid="citations-ok">
-                All findings carry clause · quote · confidence.
-              </p>
-            )}
+            ) : null}
           </section>
         ) : null}
 
@@ -949,6 +936,7 @@ export function ManagerShiftDetail() {
         ) : null}
 
         {visibleFindings.length === 0 ? (
+          stuck || jobFailed ? null : (
           <div className="card stack-sm">
             <h2>
               {item.findings.length === 0
@@ -959,19 +947,19 @@ export function ManagerShiftDetail() {
             </h2>
             <p className="muted">
               {item.findings.length === 0
-                ? "Scoring writes Pass / Gap / Unclear when runShiftScore finishes (C3)."
+                ? "Scores appear here when this opening is scored."
                 : "Show all to review passes."}
             </p>
           </div>
+          )
         ) : (
           <ul
             ref={listRef}
             className="list-plain finding-list stagger-in"
-            role="listbox"
             aria-label="Findings"
           >
             {visibleFindings.map((f) => {
-              const isSelected = f.$id === selectedId;
+              const isSelected = f.$id === selectedId && mode !== "idle";
               const photoId = photoForItem(
                 f.itemId,
                 item.shift.photoFileIds,
@@ -980,51 +968,49 @@ export function ManagerShiftDetail() {
               const photoIndex = photoId
                 ? evidenceIds.indexOf(photoId)
                 : -1;
+              const note = displayEvidenceNote(f.evidenceNote);
               return (
                 <li key={f.$id}>
-                  <button
-                    type="button"
-                    role="option"
+                  <article
                     data-finding-id={f.$id}
-                    aria-selected={isSelected}
+                    data-testid="finding-row"
                     className={`finding-row card ${isSelected ? "is-selected" : ""}`}
-                    onClick={() => selectFinding(f)}
                   >
                     <div className="finding-row-top">
                       <FindingChip status={f.status} />
-                      <span className="caption citation-clause">{f.clauseId}</span>
                     </div>
                     <div className="finding-title-row">
                       <p className="finding-title">{itemLabel(f.itemId)}</p>
                       {photoId ? (
-                        <span
+                        <button
+                          type="button"
                           className="finding-photo"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
+                          onClick={() =>
                             setLightbox({
                               items: evidenceSlides,
                               startIndex: photoIndex >= 0 ? photoIndex : 0,
-                            });
-                          }}
+                            })
+                          }
+                          aria-label="View evidence photo"
                         >
                           <EvidenceImg
                             fileId={photoId}
                             alt=""
                             className="finding-photo-img"
                           />
-                        </span>
+                        </button>
                       ) : null}
                     </div>
-                    {/* Boost #1 forced citation */}
                     <p
                       className="citation-bar caption"
                       data-testid="citation"
                     >
-                      {f.clauseId} · conf {Math.round(f.confidence * 100)}%
+                      {f.clauseId} · {confidenceLabel(f.confidence)}
                     </p>
                     <p className="finding-quote muted">“{f.quote}”</p>
-                    <p className="finding-note caption">{f.evidenceNote}</p>
+                    {note ? (
+                      <p className="finding-note caption">{note}</p>
+                    ) : null}
                     {f.overrideReason ? (
                       <p
                         className="override-reason caption"
@@ -1033,14 +1019,34 @@ export function ManagerShiftDetail() {
                         Override: {f.overrideReason}
                       </p>
                     ) : null}
-                    <p
-                      className="finding-conf caption"
-                      data-testid="finding-source"
-                      data-source={f.source}
-                    >
-                      {formatFindingSource(f.source)}
-                    </p>
-                  </button>
+                    {f.source && f.source !== "ai" ? (
+                      <p
+                        className="finding-conf caption"
+                        data-testid="finding-source"
+                        data-source={f.source}
+                      >
+                        {formatFindingSource(f.source)}
+                      </p>
+                    ) : null}
+                    <div className="finding-actions">
+                      <Button
+                        variant="secondary"
+                        disabled={saving}
+                        onClick={() => startOverride(f)}
+                      >
+                        Override
+                      </Button>
+                      <Button
+                        variant="primary"
+                        disabled={saving}
+                        onClick={() => startAssign(f)}
+                      >
+                        {f.status === "unclear"
+                          ? "Request new photo"
+                          : "Assign fix"}
+                      </Button>
+                    </div>
+                  </article>
                 </li>
               );
             })}
@@ -1136,11 +1142,11 @@ export function ManagerShiftDetail() {
         ) : null}
       </div>
 
-      {selected ? (
+      {formOpen && selected ? (
         <div className="manager-sticky" role="region" aria-label="Finding actions">
           <div className="manager-sticky-inner">
             <p className="manager-sticky-label caption">
-              Selected: {itemLabel(selected.itemId)}
+              {itemLabel(selected.itemId)}
             </p>
 
             {mode === "override" ? (
@@ -1163,7 +1169,7 @@ export function ManagerShiftDetail() {
                   <input
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Why are you overriding AI?"
+                    placeholder="Add a short reason"
                     autoFocus
                   />
                 </label>
@@ -1186,14 +1192,11 @@ export function ManagerShiftDetail() {
                   </Button>
                 </div>
               </div>
-            ) : mode === "assign" || mode === "retake" ? (
+            ) : (
               <div className="manager-sticky-form stack-sm">
                 <p className="muted">
-                  {mode === "retake" ? "Request retake: " : "Assign fix: "}
-                  <strong>
-                    {mode === "retake" ? "Retake: " : "Fix: "}
-                    {itemLabel(selected.itemId)}
-                  </strong>
+                  {mode === "retake" ? "Request a new photo for " : "Assign fix: "}
+                  <strong>{itemLabel(selected.itemId)}</strong>
                 </p>
                 <p className="caption" data-testid="assign-to-staff">
                   To {item ? resolveStaffLabel(item.shift.createdBy) : "staff"}{" "}
@@ -1214,32 +1217,6 @@ export function ManagerShiftDetail() {
                     {mode === "retake" ? "Request photo" : "Assign to staff"}
                   </Button>
                 </div>
-              </div>
-            ) : (
-              <div className="manager-sticky-actions">
-                <Button
-                  variant="secondary"
-                  disabled={saving}
-                  onClick={() => {
-                    setOverrideTo(
-                      selected.status === "pass" ? "gap" : "pass",
-                    );
-                    setMode("override");
-                  }}
-                >
-                  Override
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={saving}
-                  onClick={() =>
-                    setMode(selected.status === "unclear" ? "retake" : "assign")
-                  }
-                >
-                  {selected.status === "unclear"
-                    ? "Request new photo"
-                    : "Assign fix"}
-                </Button>
               </div>
             )}
           </div>
@@ -1280,4 +1257,76 @@ function formatWhen(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function staffTitleLabel(label: string): string {
+  return label.replace(/\s*·\s*Opening\s*$/i, "").trim() || label;
+}
+
+function formatTitleTime(iso: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "");
+    const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+    if (Number.isNaN(hour)) return iso;
+    return `${hour}:${minute}`;
+  } catch {
+    return iso;
+  }
+}
+
+function shiftOutcome(item: ManagerShiftSummary): string {
+  if (item.gapCount > 0) return `${item.gapCount} Gap`;
+  if (item.unclearCount > 0) return `${item.unclearCount} Unclear`;
+  if (item.latestJob?.status === "failed") return "Failed";
+  if (isStuckScoring(item.shift, item.latestJob)) return "Stuck";
+  if (item.shift.status === "submitted" || item.shift.status === "scoring") {
+    return "Scoring";
+  }
+  if (item.shift.status === "closed") return "Closed";
+  if (item.passCount > 0) return "All Pass";
+  return "Waiting";
+}
+
+function shiftStatusCode(item: ManagerShiftSummary): string {
+  if (item.latestJob?.status === "failed") return "failed";
+  if (isStuckScoring(item.shift, item.latestJob)) return "stuck";
+  return item.shift.status;
+}
+
+function shiftStatusSentence(item: ManagerShiftSummary): string {
+  if (item.shift.status === "closed") return "This opening is closed.";
+  if (item.latestJob?.status === "failed") return "Scoring failed.";
+  if (isStuckScoring(item.shift, item.latestJob)) return "Scoring is stuck.";
+  if (
+    item.shift.status === "scoring" ||
+    item.latestJob?.status === "waiting" ||
+    item.latestJob?.status === "running"
+  ) {
+    return "Scoring is in progress.";
+  }
+  if (item.shift.status === "submitted") return "Waiting to score.";
+  if (item.shift.status === "scored") return "This opening is scored.";
+  return "This opening is a draft.";
+}
+
+function scoreboardHeading(item: ManagerShiftSummary): string {
+  const staff = staffTitleLabel(item.staffLabel);
+  const time = formatTitleTime(item.shift.submittedAt || item.shift.startedAt);
+  return `${staff}, ${time} — ${shiftOutcome(item)}`;
+}
+
+function displayEvidenceNote(note: string | undefined): string | null {
+  if (!note?.trim()) return null;
+  if (/seeded e2e finding\.?/i.test(note.trim())) return null;
+  return note;
+}
+
+function confidenceLabel(confidence: number): string {
+  return `${Math.round(confidence * 100)}% sure`;
 }

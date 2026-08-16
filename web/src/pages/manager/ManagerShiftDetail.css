@@ -69,10 +69,14 @@
   flex-shrink: 0;
   width: 3rem;
   height: 3rem;
+  padding: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--separator);
   background: var(--bg-sunken);
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
 }
 
 .finding-photo-img {
@@ -389,6 +393,13 @@
   gap: var(--space-2);
 }
 
+.finding-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
 .finding-row {
   display: flex;
   flex-direction: column;
@@ -397,7 +408,6 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  cursor: pointer;
   padding: var(--space-4);
   transition:
     transform var(--dur-press) var(--ease-out),

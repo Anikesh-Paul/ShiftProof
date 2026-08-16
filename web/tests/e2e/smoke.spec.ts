@@ -421,15 +421,15 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     expect(await rows.count()).toBeGreaterThanOrEqual(5);
 
     const target = rows.filter({ hasNotText: /unclear/i }).first();
-    await target.click();
-    await expect(page.locator(".manager-sticky")).toBeVisible();
+    await expect(target.getByRole("button", { name: /^override$/i })).toBeVisible();
     const gallery = page.getByRole("region", { name: /shift evidence photos/i });
     await expect(gallery.locator("img.evidence-img, img").first()).toBeVisible();
     await expect(gallery.getByText("Unavailable")).toHaveCount(0);
     await expect(page.locator(".evidence-img-missing")).toHaveCount(0);
 
-    await page.getByRole("button", { name: /^override$/i }).click();
-    await page.locator('input[placeholder*="overriding"]').fill("Playwright smoke override");
+    await target.getByRole("button", { name: /^override$/i }).click();
+    await expect(page.locator(".manager-sticky")).toBeVisible();
+    await page.getByLabel(/reason/i).fill("Playwright smoke override");
     await page.getByRole("button", { name: /save override/i }).click();
     await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
       timeout: 20_000,
@@ -443,8 +443,7 @@ test.describe("staff scoring + manager golden + fix loop", () => {
       .locator(".finding-row")
       .filter({ hasText: /Playwright smoke override/i })
       .first();
-    await overridden.click();
-    const assignBtn = page.getByRole("button", { name: /assign fix/i });
+    const assignBtn = overridden.getByRole("button", { name: /assign fix/i });
     await expect(assignBtn).toBeVisible({ timeout: 10_000 });
     await expect(assignBtn).toBeEnabled({ timeout: 10_000 });
     await assignBtn.click();
@@ -515,9 +514,8 @@ test.describe("demo pack attestation", () => {
       .locator(".finding-row")
       .filter({ has: page.locator('.finding-chip[data-status="gap"]') })
       .first();
-    await target.click();
-    await page.getByRole("button", { name: /^override$/i }).click();
-    await page.locator('input[placeholder*="overriding"]').fill(reason);
+    await target.getByRole("button", { name: /^override$/i }).click();
+    await page.getByLabel(/reason/i).fill(reason);
     await page.getByRole("button", { name: /save override/i }).click();
     await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
       timeout: 20_000,
@@ -525,8 +523,7 @@ test.describe("demo pack attestation", () => {
 
     await waitForFindings(page);
     const overridden = page.locator(".finding-row").filter({ hasText: reason }).first();
-    await overridden.click();
-    await page.getByRole("button", { name: /assign fix/i }).click();
+    await overridden.getByRole("button", { name: /assign fix/i }).click();
     await page.locator('[data-testid="create-task-btn"]').click();
     await expect(page.locator(".task-row").first()).toBeVisible({ timeout: 20_000 });
 
@@ -573,9 +570,8 @@ test.describe("staff attestation", () => {
     await page.goto(`/manager/shifts/${shiftId}`);
     const row = page.locator(`.finding-row[data-finding-id="${findingId}"]`);
     await expect(row).toBeVisible({ timeout: 25_000 });
-    await row.click();
-    await page.getByRole("button", { name: /^override$/i }).click();
-    await page.locator('input[placeholder*="overriding"]').fill(reason);
+    await row.getByRole("button", { name: /^override$/i }).click();
+    await page.getByLabel(/reason/i).fill(reason);
     await page.getByRole("button", { name: /save override/i }).click();
     await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
       timeout: 20_000,
@@ -586,8 +582,7 @@ test.describe("staff attestation", () => {
       .click({ timeout: 3_000 })
       .catch(() => {});
     await expect(row).toBeVisible({ timeout: 15_000 });
-    await row.click();
-    await page.getByRole("button", { name: /assign fix/i }).click();
+    await row.getByRole("button", { name: /assign fix/i }).click();
     await page.locator('[data-testid="create-task-btn"]').click();
     await expect(page.locator(".task-row").first()).toBeVisible({ timeout: 20_000 });
 
@@ -962,16 +957,19 @@ test.describe("manager shift detail live", () => {
 
     await login(page, MANAGER.email, MANAGER.password);
     await page.goto(`/manager/shifts/${shiftId}`);
-    await expect(page.getByRole("heading", { name: /scoreboard/i })).toBeVisible({
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({
       timeout: 25_000,
     });
-    await expect(page.locator(".status-chip")).toHaveAttribute(
+    await expect(page.getByRole("heading", { name: /scoreboard/i })).toHaveCount(
+      0,
+    );
+    await expect(page.locator('[data-testid="shift-status"]')).toHaveAttribute(
       "data-status",
       "failed",
     );
     const banner = page.locator('[data-testid="stuck-banner"]');
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText(/scoring is stuck/i);
+    await expect(banner).toContainText(/scoring failed|scoring is stuck/i);
 
     await page.getByRole("button", { name: /retry scoring/i }).click();
     await expect(banner).toBeHidden({ timeout: 15_000 });
@@ -988,11 +986,11 @@ test.describe("manager shift detail live", () => {
 
     await login(page, MANAGER.email, MANAGER.password);
     await page.goto(`/manager/shifts/${shiftId}`);
-    await expect(page.getByRole("heading", { name: /scoreboard/i })).toBeVisible({
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({
       timeout: 25_000,
     });
     await expect(page.getByRole("heading", { name: /waiting on score/i })).toBeVisible();
-    await expect(page.locator(".status-chip")).toHaveAttribute(
+    await expect(page.locator('[data-testid="shift-status"]')).toHaveAttribute(
       "data-status",
       "submitted",
     );
@@ -1008,7 +1006,7 @@ test.describe("manager shift detail live", () => {
     await expect(page.locator(".finding-row").first()).toBeVisible({
       timeout: 15_000,
     });
-    await expect(page.locator(".status-chip")).toHaveAttribute(
+    await expect(page.locator('[data-testid="shift-status"]')).toHaveAttribute(
       "data-status",
       "scored",
     );
