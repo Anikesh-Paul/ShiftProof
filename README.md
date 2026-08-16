@@ -28,7 +28,7 @@ Hackathon demo only — rotate before any real production use.
 
 ```powershell
 cd web
-copy .env.example .env   # already has public Appwrite endpoint + project id
+# create web/.env with the public vars below
 npm install
 npm run dev
 ```
@@ -52,8 +52,6 @@ Never put `GOOGLE_AI_API_KEY` or Appwrite server keys in `web/` or Vercel fronte
 |------|----------|
 | [`web/`](web/) | React + Vite client (staff + manager) |
 | [`functions/runShiftScore/`](functions/runShiftScore/) | Appwrite Function — **Gemini Flash** vision scoring |
-| [`demo/photos/`](demo/photos/) | Pass / gap / unclear photo kits |
-| [`demo/Cafe_Food_Safety_Opening_SOP_v1.pdf`](demo/Cafe_Food_Safety_Opening_SOP_v1.pdf) | Opening SOP (FS-01…) |
 | [`types/shiftproof.ts`](types/shiftproof.ts) | Shared types |
 
 ---
@@ -81,16 +79,6 @@ Staff photos → Appwrite Storage (evidence)
 ```
 
 See [`functions/runShiftScore/README.md`](functions/runShiftScore/README.md).
-
-### Demo kits & SOP seed
-
-```powershell
-node demo/build-sop-pdf.mjs
-node demo/seed-s2.mjs
-node demo/live-score-kit.mjs gap
-node demo/hygiene-inbox.mjs          # dry-run: what would close
-# node demo/hygiene-inbox.mjs --run  # mutates the live café — only when asked
-```
 
 ---
 

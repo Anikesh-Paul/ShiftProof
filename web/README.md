@@ -19,7 +19,7 @@ Source of truth: `docs/APP.md`, `docs/API.md`, `docs/APPWRITE.md`, `docs/PERMISS
 | **Boost #1** Agent trace + citations | Done |
 | **Boost #2** Hero Unclear + audited override | Done |
 | **Boost #3** Task re-check photo | Done |
-| **Boost #4** Golden photo pack folders | Done (`demo/photos/`) |
+| **Boost #4** Golden photo pack folders | Done |
 | **Boost #5** Richer compliance PDF | Done |
 | **Boost #6** Repeat-offender strip | Done |
 | **Phase 3** Assign → staff re-check → AI re-score → manager done | Done |
@@ -34,7 +34,7 @@ Manager-next Playwright: `node scripts/verify-manager-next.mjs http://localhost:
 
 ```bash
 cd web
-cp .env.example .env
+# create .env with the public vars below
 npm install
 npm run dev
 ```
@@ -91,13 +91,6 @@ Subscribed in `src/lib/manager.ts` → `subscribeManagerTables`. Manager home re
 2. Scoreboard: finding thumbs via `photoForItem` (slotted or 1:1), else the evidence gallery. No `evidenceFileId` column — schema frozen.
 3. **Reject check** → confirm “Photos are not an opening check.” → `closeShift({ reason: "invalid_evidence" })`. Staff shift page shows “Manager rejected this check — submit a real opening.” Storage files stay.
 4. Stale `waiting`/`running` jobs older than 10 minutes are marked `failed` once per inbox/scoreboard load. Shift status is unchanged so Retry still works.
-
-## Hygiene (maintainers only)
-
-```bash
-node ../demo/hygiene-inbox.mjs         # dry-run
-# node ../demo/hygiene-inbox.mjs --run # closes leftover scored/stuck rows — do not run unless asked
-```
 
 ## Round 2 verification
 

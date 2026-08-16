@@ -5,9 +5,9 @@ node_modules/
 # Env & secrets (never commit)
 .env
 .env.*
-!.env.example
 **/.env
-!**/.env.example
+/demo/
+/appwrite.config.json
 
 # Build / tooling output
 dist/
@@ -48,6 +48,7 @@ web/scripts/fonts/
 .claude/
 .agents/
 .impeccable/
+/.scratch/
 /plans/
 /unpacked/
 /tpl_s5/
@@ -84,5 +85,3 @@ skills-lock.json
 
 .vercel
 .env*
-!.env.example
-!**/.env.example
