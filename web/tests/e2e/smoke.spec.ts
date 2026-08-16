@@ -559,3 +559,94 @@ test.describe("manager shift detail live", () => {
     assertNoPageErrors(errors);
   });
 });
+
+function isTaskList(url: URL): boolean {
+  return /\/tablesdb\/[^/]+\/tables\/tasks\/rows\/?$/.test(url.pathname);
+}
+
+test.describe("manager assign task durability", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed scored gaps",
+    );
+  });
+
+  test("assign-all-gaps tasks stay in Open fixes across the silent refresh", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    const findingA = await seedFinding(shiftId, {
+      itemId: "e2e_assign_durability_alpha",
+      status: "gap",
+    });
+    const findingB = await seedFinding(shiftId, {
+      itemId: "e2e_assign_durability_beta",
+      status: "gap",
+    });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await expect(page.getByRole("tab", { name: /^today$/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    const assignBtn = page.locator('[data-testid="assign-today-gaps"]');
+    await expect(assignBtn).toBeVisible({ timeout: 25_000 });
+
+    // After the first inbox load, fail later open-task lists so the silent
+    // reload after assign cannot be the thing that paints the panel.
+    let failTaskLists = false;
+    await page.route(
+      (url) => isTaskList(new URL(url)) && failTaskLists,
+      async (route) => {
+        if (route.request().method() === "GET") {
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      },
+    );
+    failTaskLists = true;
+
+    await assignBtn.click();
+    const toast = page.getByText(/Assigned \d+ fixes/i);
+    await expect(toast).toBeVisible({ timeout: 45_000 });
+    const toastText = (await toast.textContent()) ?? "";
+    const created = Number(/Assigned (\d+)/i.exec(toastText)?.[1] ?? 0);
+    expect(created).toBeGreaterThanOrEqual(2);
+
+    const openFixes = page.locator('[data-testid="open-fixes"]');
+    await expect(openFixes).toBeVisible();
+    const showAll = openFixes.getByRole("button", { name: /show all/i });
+    if (await showAll.isVisible()) await showAll.click();
+
+    const rowA = openFixes.locator(`[data-finding-id="${findingA}"]`);
+    const rowB = openFixes.locator(`[data-finding-id="${findingB}"]`);
+    await expect(rowA).toBeVisible();
+    await expect(rowB).toBeVisible();
+    await expect(rowA).toHaveCount(1);
+    await expect(rowB).toHaveCount(1);
+
+    // Silent reload + realtime debounce (400ms) fire after the toast.
+    await expect(assignBtn).toBeEnabled({ timeout: 15_000 });
+    await page.waitForTimeout(2_000);
+    await expect(
+      page.locator(".manager-live-pill", { hasText: /Updating/i }),
+    ).toHaveCount(0, { timeout: 15_000 });
+    await expect(rowA).toBeVisible();
+    await expect(rowB).toBeVisible();
+    await expect(rowA).toHaveCount(1);
+    await expect(rowB).toHaveCount(1);
+
+    await assignBtn.click();
+    await expect(page.getByText(/Assigned 0 fixes/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(rowA).toBeVisible();
+    await expect(rowB).toBeVisible();
+    await expect(rowA).toHaveCount(1);
+    await expect(rowB).toHaveCount(1);
+    assertNoPageErrors(errors);
+  });
+});

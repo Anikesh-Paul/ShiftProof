@@ -25,6 +25,7 @@ import {
   listOpenTasks,
   loadManagerInbox,
   loadRepeatOffenders,
+  mergeTasksById,
   subscribeManagerTables,
   sweepStaleJobs,
   type ManagerShiftSummary,
@@ -130,7 +131,9 @@ export function ManagerHome() {
             ? DEMO_REPEAT_OFFENDERS
             : [],
       );
-      setOpenTasks(inbox.source === "demo" ? [] : tasks);
+      setOpenTasks((prev) =>
+        inbox.source === "demo" ? [] : mergeTasksById(prev, tasks),
+      );
       setError(null);
     } catch (err) {
       setError(getErrorMessage(err, "Could not load inbox"));
@@ -301,55 +304,79 @@ export function ManagerHome() {
     setAssignToast(null);
     setError(null);
     const openFindingIds = new Set(openTasks.map((t) => t.findingId));
-    const scoredToday = todayItems.filter((s) => s.shift.status === "scored");
-    const created: Task[] = [];
+    const pending: {
+      shiftId: string;
+      findingId: string;
+      title: string;
+      assignedTo: string;
+      local: boolean;
+    }[] = [];
     let staffLabel = "";
+    for (const row of todayItems.filter((s) => s.shift.status === "scored")) {
+      for (const finding of row.findings) {
+        if (finding.status !== "gap") continue;
+        if (openFindingIds.has(finding.$id)) continue;
+        openFindingIds.add(finding.$id);
+        pending.push({
+          shiftId: row.shift.$id,
+          findingId: finding.$id,
+          title: `Fix: ${itemLabel(finding.itemId)}`,
+          assignedTo: row.shift.createdBy,
+          local: source === "demo" || row.shift.$id.startsWith("demo_shift_"),
+        });
+        staffLabel = row.staffLabel;
+      }
+    }
+    const created: Task[] = [];
     try {
-      for (const row of scoredToday) {
-        for (const finding of row.findings) {
-          if (finding.status !== "gap") continue;
-          if (openFindingIds.has(finding.$id)) continue;
-          const title = `Fix: ${itemLabel(finding.itemId)}`;
-          const assignedTo = row.shift.createdBy;
-          if (source === "demo" || row.shift.$id.startsWith("demo_shift_")) {
-            created.push({
-              $id: `local_task_${Date.now()}_${finding.$id}`,
-              $createdAt: new Date().toISOString(),
-              $updatedAt: new Date().toISOString(),
-              shiftId: row.shift.$id,
-              findingId: finding.$id,
-              title,
+      const settled = await Promise.allSettled(
+        pending.map(async (job) => {
+          if (job.local) {
+            const now = new Date().toISOString();
+            const localTask: Task = {
+              $id: `local_task_${job.findingId}`,
+              $createdAt: now,
+              $updatedAt: now,
+              shiftId: job.shiftId,
+              findingId: job.findingId,
+              title: job.title,
               status: "open",
-              assignedTo,
+              assignedTo: job.assignedTo,
               createdBy: user.$id,
-              createdAt: new Date().toISOString(),
-            });
-          } else {
-            const task = await assignFixTask({
-              shiftId: row.shift.$id,
-              findingId: finding.$id,
-              title,
-              userId: user.$id,
-              assignedTo,
-            });
-            created.push(task);
+              createdAt: now,
+            };
+            return localTask;
           }
-          openFindingIds.add(finding.$id);
-          staffLabel = row.staffLabel;
-        }
+          return assignFixTask({
+            shiftId: job.shiftId,
+            findingId: job.findingId,
+            title: job.title,
+            userId: user.$id,
+            assignedTo: job.assignedTo,
+          });
+        }),
+      );
+      let firstError: unknown = null;
+      for (const result of settled) {
+        if (result.status === "fulfilled") created.push(result.value);
+        else if (!firstError) firstError = result.reason;
       }
       if (created.length) {
-        setOpenTasks((prev) => [...created, ...prev]);
+        setOpenTasks((prev) => mergeTasksById(created, prev));
       }
+      if (firstError && created.length === 0) throw firstError;
       setAssignToast(
         `Assigned ${created.length} fixes to ${staffLabel || "staff"}.`,
       );
       if (source !== "demo") {
         void reload({ silent: true });
       }
+      if (firstError) {
+        setError(getErrorMessage(firstError, "Could not assign today’s gaps"));
+      }
     } catch (err) {
       if (created.length) {
-        setOpenTasks((prev) => [...created, ...prev]);
+        setOpenTasks((prev) => mergeTasksById(created, prev));
       }
       setError(getErrorMessage(err, "Could not assign today’s gaps"));
     } finally {
@@ -448,7 +475,7 @@ export function ManagerHome() {
                 : task.title;
               const waitingRecheck = Boolean(task.recheckFileId);
               return (
-                <li key={task.$id}>
+                <li key={task.$id} data-finding-id={task.findingId}>
                   <Link
                     to={`/manager/shifts/${task.shiftId}`}
                     className="manager-row"

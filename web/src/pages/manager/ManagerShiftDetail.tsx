@@ -37,6 +37,7 @@ import {
   listTasks,
   loadManagerShift,
   markTaskDone,
+  mergeTasksById,
   overrideFinding,
   subscribeManagerTables,
   sweepStaleJobs,
@@ -179,7 +180,7 @@ export function ManagerShiftDetail() {
         listEvents(id),
         getAgentJobTrace(id).catch(() => null),
       ]);
-      setTasks(t);
+      setTasks((prev) => mergeTasksById(t, prev));
       setEvents(e);
       setAgentTrace(trace ?? DEMO_AGENT_TRACE);
     } catch {
@@ -189,6 +190,7 @@ export function ManagerShiftDetail() {
 
   useEffect(() => {
     let cancelled = false;
+    setTasks([]);
     (async () => {
       try {
         const result = await loadManagerShift(shiftId);
@@ -396,7 +398,7 @@ export function ManagerShiftDetail() {
           createdBy: user.$id,
           createdAt: new Date().toISOString(),
         };
-        setTasks((prev) => [localTask, ...prev]);
+        setTasks((prev) => mergeTasksById([localTask], prev));
         setEvents((prev) => [
           {
             $id: `local_ev_${Date.now()}`,
@@ -426,12 +428,9 @@ export function ManagerShiftDetail() {
           userId: user.$id,
           assignedTo,
         });
-        // Reload extras, then ensure created task stays visible if listTasks lags
+        // Reload extras, then merge so a stale/silent refetch cannot drop it
         await loadExtras(item.shift.$id, false);
-        setTasks((prev) => {
-          if (prev.some((t) => t.$id === created.$id)) return prev;
-          return [created, ...prev];
-        });
+        setTasks((prev) => mergeTasksById([created], prev));
         setToast(
           `Task assigned to ${resolveStaffLabel(assignedTo)}: ${title}`,
         );

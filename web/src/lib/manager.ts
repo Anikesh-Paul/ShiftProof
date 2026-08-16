@@ -629,6 +629,23 @@ export async function listOpenTasks(): Promise<Task[]> {
   return result.rows as unknown as Task[];
 }
 
+/** Union by `$id`. `preferred` wins on conflict and keeps its order first. */
+export function mergeTasksById(preferred: Task[], other: Task[]): Task[] {
+  const seen = new Set<string>();
+  const out: Task[] = [];
+  for (const t of preferred) {
+    if (seen.has(t.$id)) continue;
+    seen.add(t.$id);
+    out.push(t);
+  }
+  for (const t of other) {
+    if (seen.has(t.$id)) continue;
+    seen.add(t.$id);
+    out.push(t);
+  }
+  return out;
+}
+
 /** API.md manager §6 — audit events for a shift. */
 export async function listEvents(shiftId: string): Promise<AuditEvent[]> {
   const result = await tables.listRows({
