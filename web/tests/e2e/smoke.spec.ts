@@ -1192,3 +1192,89 @@ test.describe("staff scoring poll abort", () => {
     assertNoPageErrors(errors);
   });
 });
+
+function isShiftRowDelete(url: URL, shiftId: string): boolean {
+  return (
+    /\/(tables|collections)\/shifts\//.test(url.pathname) &&
+    new RegExp(`/(rows|documents)/${shiftId}/?$`).test(url.pathname)
+  );
+}
+
+function leftoverIdsFrom(
+  raw: string | null,
+): string[] {
+  return raw ? raw.split(/\s+/).filter(Boolean) : [];
+}
+
+test.describe("staff history discard", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed leftover drafts",
+    );
+  });
+
+  test("partial discard keeps the failed leftover and drops the deleted one", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const failId = await seedDraftShift();
+    const okId = await seedDraftShift();
+    const resumeId = await seedDraftShift({
+      photoFileIds: ["e2e_history_discard"],
+    });
+
+    let blockFailId = true;
+    await page.route(
+      (url) => isShiftRowDelete(new URL(url), failId),
+      async (route) => {
+        if (blockFailId && route.request().method() === "DELETE") {
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      },
+    );
+
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto("/staff/shifts");
+    await expect(page.getByRole("heading", { name: /^history$/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    const leftover = page.locator('[data-testid="history-leftover"]');
+    await expect(leftover).toBeVisible({ timeout: 25_000 });
+    await expect
+      .poll(async () => leftoverIdsFrom(await leftover.getAttribute("data-leftover-ids")))
+      .toEqual(expect.arrayContaining([failId, okId]));
+
+    await leftover.getByRole("button", { name: /^discard$/i }).click();
+
+    await expect(page.getByRole("alert")).toContainText(
+      /not everything could be discarded/i,
+      { timeout: 15_000 },
+    );
+    await expect(leftover).toBeVisible();
+    await expect(leftover.getByRole("button", { name: /^discard$/i })).toBeEnabled();
+    const remaining = leftoverIdsFrom(await leftover.getAttribute("data-leftover-ids"));
+    expect(remaining).toContain(failId);
+    expect(remaining).not.toContain(okId);
+
+    const draftIds = await listStaffDraftIds();
+    expect(draftIds).toContain(failId);
+    expect(draftIds).toContain(resumeId);
+    expect(draftIds).not.toContain(okId);
+    await expect(page.locator(`a[href="/staff/shifts/${resumeId}"]`)).toBeVisible();
+    await expect(page.locator(`a[href="/staff/shifts/${okId}"]`)).toHaveCount(0);
+
+    blockFailId = false;
+    await leftover.getByRole("button", { name: /^discard$/i }).click();
+    await expect(leftover).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(`a[href="/staff/shifts/${resumeId}"]`)).toBeVisible();
+
+    const afterRetry = await listStaffDraftIds();
+    expect(afterRetry).not.toContain(failId);
+    expect(afterRetry).toContain(resumeId);
+    assertNoPageErrors(errors);
+  });
+});
