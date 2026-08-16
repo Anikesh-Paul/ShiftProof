@@ -70,61 +70,6 @@
   max-width: 36ch;
 }
 
-/* —— Pulse strip (labeled counts, not hero-metric cliché) —— */
-
-.manager-pulse {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--separator);
-}
-
-.manager-pulse-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-  padding: var(--space-1) var(--space-2);
-}
-
-.manager-pulse-value {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  color: var(--label);
-}
-
-.manager-pulse-value.is-gap {
-  color: var(--danger);
-}
-
-.manager-pulse-value.is-wait {
-  color: var(--warning-ink);
-}
-
-.manager-pulse-value.is-unclear {
-  color: var(--warning-ink);
-}
-
-.manager-pulse-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--label-tertiary);
-  line-height: 1.25;
-}
-
-@media (max-width: 360px) {
-  .manager-pulse {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* —— Section chrome —— */
 
 .manager-inbox,
@@ -134,15 +79,6 @@
   gap: var(--space-3);
 }
 
-.manager-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: 2.25rem;
-}
-
-.manager-section-head h2,
 .manager-side-block > h2 {
   margin: 0;
   font-family: var(--font);
@@ -161,7 +97,35 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  margin: 0 0 var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.manager-fixes-summary {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .manager-fixes-summary:hover {
+    color: var(--label);
+  }
+}
+
+.manager-fixes-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .manager-view-tabs {
@@ -377,45 +341,16 @@
   font-size: 0.8125rem;
 }
 
-/* —— SOP (utility, not hero) —— */
+/* —— SOP missing line (no furniture when the PDF is on file) —— */
 
-.manager-sop {
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--separator);
-}
-
-.manager-sop-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.4rem;
-  padding: 0 0.55rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.manager-sop-badge.is-ready {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.manager-sop-badge.is-missing {
-  background: var(--warning-soft);
-  color: var(--warning-ink);
-}
-
-.manager-sop-status {
-  margin: 0;
-  font-size: 0.875rem;
-  max-width: 40ch;
-}
-
-.manager-sop-actions {
+.manager-sop-missing {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
   align-items: center;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--label-secondary);
 }
 
 .manager-sop-file {
@@ -440,10 +375,6 @@
 @media (min-width: 768px) {
   .manager-home-header h1 {
     font-size: 2rem;
-  }
-
-  .manager-pulse-value {
-    font-size: 1.375rem;
   }
 
   .manager-row {

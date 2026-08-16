@@ -1075,8 +1075,8 @@ test.describe("manager assign task durability", () => {
 
     const openFixes = page.locator('[data-testid="open-fixes"]');
     await expect(openFixes).toBeVisible();
-    const showAll = openFixes.getByRole("button", { name: /show all/i });
-    if (await showAll.isVisible()) await showAll.click();
+    const expandFixes = openFixes.getByRole("button", { name: /open fix/i });
+    if (await expandFixes.count()) await expandFixes.click();
 
     const rowA = openFixes.locator(`[data-finding-id="${findingA}"]`);
     const rowB = openFixes.locator(`[data-finding-id="${findingB}"]`);

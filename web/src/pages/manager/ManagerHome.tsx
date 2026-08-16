@@ -34,7 +34,6 @@ import { useSlowLoading } from "../../lib/loading";
 import {
   getSite,
   getSop,
-  getSopFileUrl,
   isSopFileReady,
   uploadSopPdf,
 } from "../../lib/shifts";
@@ -256,6 +255,7 @@ export function ManagerHome() {
   }, [itemFilter, view, items, timeZone, todayItems, stuckItems]);
 
   const sopReady = isSopFileReady(sop?.fileId);
+  const waitingOnStaff = openTasks.filter((t) => !t.recheckFileId).length;
   const activeFilter = repeatOffenders.find((r) => r.itemId === itemFilter);
 
   const headline = loading
@@ -410,29 +410,6 @@ export function ManagerHome() {
         </div>
       ) : null}
 
-      {!loading ? (
-        <div className="manager-pulse" aria-label="Inbox summary">
-          <div className="manager-pulse-item">
-            <span className="manager-pulse-value is-gap">{todayGaps}</span>
-            <span className="manager-pulse-label">Today’s gaps</span>
-          </div>
-          <div className="manager-pulse-item">
-            <span className="manager-pulse-value is-unclear">{todayUnclear}</span>
-            <span className="manager-pulse-label">Today’s unclear</span>
-          </div>
-          <div className="manager-pulse-item">
-            <span className="manager-pulse-value is-wait">
-              {stuckItems.length || waitingShifts.length}
-            </span>
-            <span className="manager-pulse-label">Stuck / scoring</span>
-          </div>
-          <div className="manager-pulse-item">
-            <span className="manager-pulse-value">{openTasks.length}</span>
-            <span className="manager-pulse-label">Open fixes</span>
-          </div>
-        </div>
-      ) : null}
-
       {errorShown ? (
         <div
           className="error-banner"
@@ -448,113 +425,103 @@ export function ManagerHome() {
       {!loading && openTasks.length > 0 ? (
         <section
           className="manager-inbox"
-          aria-labelledby="fixes-heading"
+          aria-label="Open fixes"
           data-testid="open-fixes"
         >
-          <div className="manager-section-head">
-            <h2 id="fixes-heading">Open fixes</h2>
-            {openTasks.length > 4 ? (
-              <button
-                type="button"
-                className="text-btn manager-filter-btn"
-                onClick={() => setFixesExpanded((v) => !v)}
-              >
-                {fixesExpanded ? "Show less" : `Show all ${openTasks.length}`}
-              </button>
-            ) : null}
-          </div>
-          <ul className="list-plain manager-list">
-            {(fixesExpanded ? openTasks : openTasks.slice(0, 4)).map((task) => {
-              const shiftRow = items.find((s) => s.shift.$id === task.shiftId);
-              const finding = shiftRow?.findings.find(
-                (f) => f.$id === task.findingId,
-              );
-              const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
-              const title = finding
-                ? `${kind}: ${itemLabel(finding.itemId)}`
-                : task.title;
-              const waitingRecheck = Boolean(task.recheckFileId);
-              return (
-                <li key={task.$id} data-finding-id={task.findingId}>
-                  <Link
-                    to={`/manager/shifts/${task.shiftId}`}
-                    className="manager-row"
-                  >
-                    <div className="manager-row-main">
-                      <p className="manager-row-staff">{title}</p>
-                      <div className="manager-row-meta">
-                        <span className="caption">
-                          {resolveStaffLabel(
-                            task.assignedTo ||
-                              shiftRow?.shift.createdBy ||
-                              "",
-                          )}
-                        </span>
-                        <span
-                          className={`manager-pill${waitingRecheck ? " is-pass" : " is-unclear"}`}
-                        >
-                          {waitingRecheck
-                            ? "Re-check on file"
-                            : "Waiting on staff"}
-                        </span>
+          <button
+            type="button"
+            className="manager-fixes-summary"
+            aria-expanded={fixesExpanded}
+            onClick={() => setFixesExpanded((v) => !v)}
+          >
+            {openTasks.length === 1
+              ? "1 open fix"
+              : `${openTasks.length} open fixes`}
+            {" · "}
+            {waitingOnStaff === 1
+              ? "1 waiting on staff"
+              : `${waitingOnStaff} waiting on staff`}
+          </button>
+          {fixesExpanded ? (
+            <ul className="list-plain manager-list">
+              {openTasks.map((task) => {
+                const shiftRow = items.find((s) => s.shift.$id === task.shiftId);
+                const finding = shiftRow?.findings.find(
+                  (f) => f.$id === task.findingId,
+                );
+                const title = openFixTitle(task, finding);
+                const waitingRecheck = Boolean(task.recheckFileId);
+                return (
+                  <li key={task.$id} data-finding-id={task.findingId}>
+                    <Link
+                      to={`/manager/shifts/${task.shiftId}`}
+                      className="manager-row"
+                    >
+                      <div className="manager-row-main">
+                        <p className="manager-row-staff">{title}</p>
+                        <div className="manager-row-meta">
+                          <span className="caption">
+                            {resolveStaffLabel(
+                              task.assignedTo ||
+                                shiftRow?.shift.createdBy ||
+                                "",
+                            )}
+                          </span>
+                          <span
+                            className={`manager-pill${waitingRecheck ? " is-pass" : " is-unclear"}`}
+                          >
+                            {waitingRecheck
+                              ? "Re-check on file"
+                              : "Waiting on staff"}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <span className="manager-row-go" aria-hidden>
-                      Review
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+                      <span className="manager-row-go" aria-hidden>
+                        Review
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
         </section>
       ) : null}
 
-      <section className="manager-inbox" aria-labelledby="inbox-heading">
-        <div className="manager-section-head">
-          <h2 id="inbox-heading">
-            {itemFilter
-              ? itemLabel(itemFilter)
-              : view === "all"
-                ? "All shifts"
-                : view === "backlog"
-                  ? "Backlog"
-                  : "Today"}
-          </h2>
-          <div className="manager-view-tabs" role="tablist" aria-label="Inbox">
-            {itemFilter ? (
+      <section className="manager-inbox" aria-label="Inbox">
+        <div className="manager-view-tabs" role="tablist" aria-label="Inbox">
+          {itemFilter ? (
+            <button
+              type="button"
+              className="text-btn manager-filter-btn"
+              onClick={() => setItemFilter(null)}
+            >
+              Clear
+            </button>
+          ) : (
+            (["today", "backlog", "all"] as const).map((key) => (
               <button
+                key={key}
                 type="button"
-                className="text-btn manager-filter-btn"
-                onClick={() => setItemFilter(null)}
+                role="tab"
+                className={`text-btn manager-filter-btn${view === key ? " is-active" : ""}`}
+                aria-selected={view === key}
+                onClick={() => setView(key)}
               >
-                Clear
+                {key === "today"
+                  ? "Today"
+                  : key === "backlog"
+                    ? "Backlog"
+                    : "All"}
               </button>
-            ) : (
-              (["today", "backlog", "all"] as const).map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  className={`text-btn manager-filter-btn${view === key ? " is-active" : ""}`}
-                  aria-selected={view === key}
-                  onClick={() => setView(key)}
-                >
-                  {key === "today"
-                    ? "Today"
-                    : key === "backlog"
-                      ? "Backlog"
-                      : "All"}
-                </button>
-              ))
-            )}
-          </div>
+            ))
+          )}
         </div>
 
         {view === "today" && !itemFilter && todayGaps > 0 && !loading ? (
           <div className="manager-today-actions">
             <Button
-              variant="secondary"
+              variant="quiet"
               loading={assigning}
               data-testid="assign-today-gaps"
               onClick={() => void assignTodayGaps()}
@@ -714,73 +681,56 @@ export function ManagerHome() {
         </section>
       ) : null}
 
-      <section
-        className="manager-side-block manager-sop"
-        aria-labelledby="sop-heading"
-        data-testid="sop-upload"
-      >
-        <div className="manager-section-head">
-          <h2 id="sop-heading">Opening SOP</h2>
-          {!sopLoading ? (
-            <span
-              className={`manager-sop-badge${sopReady ? " is-ready" : " is-missing"}`}
-            >
-              {sopReady ? "On file" : "Missing"}
-            </span>
+      {!sopLoading && !sopReady ? (
+        <div className="manager-sop-missing" data-testid="sop-upload">
+          <span>Missing</span>
+          <input
+            ref={sopInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            className="manager-sop-file"
+            onChange={(e) => void onSopFileChange(e)}
+            disabled={sopUploading}
+          />
+          <button
+            type="button"
+            className="text-btn"
+            disabled={sopUploading}
+            onClick={() => sopInputRef.current?.click()}
+          >
+            Upload
+          </button>
+          {sopMessage ? (
+            <p className="manager-sop-toast" role="status">
+              {sopMessage}
+            </p>
+          ) : null}
+          {sopError ? (
+            <div className="error-banner" role="alert">
+              {sopError}
+            </div>
           ) : null}
         </div>
-        {sopLoading ? (
-          <p className="caption muted">Loading SOP…</p>
-        ) : (
-          <>
-            <p className="muted manager-sop-status">
-              {sop?.title || "Café food-safety SOP"}
-              {!sopReady
-                ? " — upload a PDF so scoring can cite clauses."
-                : null}
-            </p>
-            <div className="manager-sop-actions">
-              <input
-                ref={sopInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                className="manager-sop-file"
-                onChange={(e) => void onSopFileChange(e)}
-                disabled={sopUploading}
-              />
-              <Button
-                variant={sopReady ? "secondary" : "primary"}
-                loading={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                {sopReady ? "Replace PDF" : "Upload PDF"}
-              </Button>
-              {sopReady && sop?.fileId ? (
-                <a
-                  className="text-btn"
-                  href={getSopFileUrl(sop.fileId)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open
-                </a>
-              ) : null}
-            </div>
-            {sopMessage ? (
-              <p className="manager-sop-toast" role="status">
-                {sopMessage}
-              </p>
-            ) : null}
-            {sopError ? (
-              <div className="error-banner" role="alert">
-                {sopError}
-              </div>
-            ) : null}
-          </>
-        )}
-      </section>
+      ) : null}
     </div>
   );
+}
+
+function isHarnessName(text: string): boolean {
+  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
+}
+
+function openFixTitle(task: Task, finding?: { itemId: string }): string {
+  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
+  if (finding) {
+    const label = itemLabel(finding.itemId);
+    if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
+      return `${kind}: ${label}`;
+    }
+    return kind;
+  }
+  if (isHarnessName(task.title)) return kind;
+  return task.title;
 }
 
 function formatWhen(iso: string): string {

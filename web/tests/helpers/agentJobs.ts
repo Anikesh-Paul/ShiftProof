@@ -272,6 +272,35 @@ export async function seedFinding(
   return row.$id as string;
 }
 
+/** Seed an open Task so the Inbox Open fixes line can be asserted. */
+export async function seedOpenTask(opts: {
+  shiftId: string;
+  findingId: string;
+  title: string;
+}): Promise<string> {
+  const { tables } = sdk();
+  const { ID } = require(NODE_APPWRITE);
+  const now = new Date().toISOString();
+  const row = await tables.createRow({
+    databaseId: DB,
+    tableId: "tasks",
+    rowId: ID.unique(),
+    data: {
+      shiftId: opts.shiftId,
+      findingId: opts.findingId,
+      title: opts.title,
+      status: "open",
+      assignedTo: STAFF_USER_ID,
+      createdBy: "demo_manager",
+      recheckFileId: null,
+      createdAt: now,
+      doneAt: null,
+    },
+    permissions: ['read("users")'],
+  });
+  return row.$id as string;
+}
+
 export async function markShiftScored(shiftId: string): Promise<void> {
   const { tables } = sdk();
   await tables.updateRow({
