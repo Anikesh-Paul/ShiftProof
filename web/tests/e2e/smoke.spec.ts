@@ -17,6 +17,16 @@ import {
   seedSubmittedShift,
   setAgentJobStatus,
 } from "../helpers/agentJobs";
+import {
+  addPhotoToSlot,
+  holdNextEvidenceUpload,
+  isEvidenceDelete,
+  isEvidenceUpload,
+  isShiftWrite,
+  openSeededDraft,
+  replaceSlotPhoto,
+  waitUploadIdle,
+} from "../helpers/photos";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -311,6 +321,165 @@ test.describe("staff scoring + manager golden + fix loop", () => {
       timeout: 20_000,
     });
     await expect(page.getByRole("button", { name: /print|save pdf/i })).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+});
+
+test.describe("staff photo upload races", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a clean draft",
+    );
+  });
+
+  test("remove during an in-flight upload does not resurrect the removed photo", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    const slots = page.locator('[data-testid="photo-slot"]');
+
+    await addPhotoToSlot(page, 0);
+    await waitUploadIdle(page);
+    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "true");
+
+    const hold = await holdNextEvidenceUpload(page);
+    await addPhotoToSlot(page, 1);
+    await hold.held;
+    await expect(page.locator(".photo-hint")).toContainText(/Uploading/i);
+
+    const removeFirst = slots.nth(0).locator(".photo-remove");
+    const removeLocal = slots.nth(1).locator(".photo-remove");
+    await expect(removeFirst).toBeEnabled();
+    await expect(removeLocal).toBeEnabled();
+
+    await removeFirst.click();
+    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "false", {
+      timeout: 20_000,
+    });
+
+    await hold.release();
+    await waitUploadIdle(page);
+
+    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "false");
+    await expect(slots.nth(1)).toHaveAttribute("data-has-file", "true");
+    await expect(slots.nth(0).locator('[data-testid="persisted-slot"]')).toHaveCount(0);
+    await expect(slots.nth(0).locator("img")).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: /evidence/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    const after = page.locator('[data-testid="photo-slot"]');
+    await expect(after.nth(0)).toHaveAttribute("data-has-file", "false");
+    await expect(after.nth(1)).toHaveAttribute("data-has-file", "true");
+    await expect(after.nth(0).locator("img")).toHaveCount(0);
+    assertNoPageErrors(errors);
+  });
+
+  test("replace persists the new reference before deleting the old file", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    const slot = page.locator('[data-testid="photo-slot"]').nth(0);
+
+    await addPhotoToSlot(page, 0);
+    await waitUploadIdle(page);
+    await expect(slot).toHaveAttribute("data-has-file", "true");
+    const oldId = await slot.locator("[data-file-id]").getAttribute("data-file-id");
+    expect(oldId).toBeTruthy();
+
+    const order: string[] = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      const method = req.method();
+      if (method === "POST" && isEvidenceUpload(url)) order.push("upload");
+      if ((method === "PATCH" || method === "PUT") && isShiftWrite(url)) {
+        order.push("persist");
+      }
+      if (method === "DELETE" && isEvidenceDelete(url)) order.push("delete");
+    });
+
+    await replaceSlotPhoto(page, 0);
+    await waitUploadIdle(page);
+
+    await expect(slot).toHaveAttribute("data-has-file", "true");
+    await expect
+      .poll(async () => slot.locator("[data-file-id]").getAttribute("data-file-id"), {
+        timeout: 20_000,
+      })
+      .not.toBe(oldId);
+
+    const fromReplace = order.slice(order.lastIndexOf("upload"));
+    expect(fromReplace, fromReplace.join(" → ")).toContain("persist");
+    expect(fromReplace, fromReplace.join(" → ")).toContain("delete");
+    expect(fromReplace.indexOf("persist")).toBeLessThan(fromReplace.indexOf("delete"));
+    assertNoPageErrors(errors);
+  });
+
+  test("a failed replace persist keeps the old file referenced", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    const slot = page.locator('[data-testid="photo-slot"]').nth(0);
+
+    await addPhotoToSlot(page, 0);
+    await waitUploadIdle(page);
+    const oldId = await slot.locator("[data-file-id]").getAttribute("data-file-id");
+    expect(oldId).toBeTruthy();
+
+    let blockPersist = false;
+    const deletes: string[] = [];
+    await page.route(
+      (url) => isShiftWrite(url),
+      async (route) => {
+        const method = route.request().method();
+        if (blockPersist && (method === "PATCH" || method === "PUT")) {
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      },
+    );
+    page.on("request", (req) => {
+      if (req.method() === "DELETE" && isEvidenceDelete(new URL(req.url()))) {
+        deletes.push(req.url());
+      }
+    });
+
+    blockPersist = true;
+    await replaceSlotPhoto(page, 0);
+    await expect(page.locator(".error-banner")).toBeVisible({ timeout: 20_000 });
+    await expect(slot.locator("[data-file-id]")).toHaveAttribute(
+      "data-file-id",
+      oldId!,
+    );
+    expect(deletes, "old evidence must not be deleted when persist fails").toEqual([]);
+    assertNoPageErrors(errors);
+  });
+
+  test("upload works when crypto.randomUUID is missing", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        delete (globalThis.crypto as { randomUUID?: unknown }).randomUUID;
+      } catch {
+        Object.defineProperty(globalThis.crypto, "randomUUID", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+    });
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    await addPhotoToSlot(page, 0);
+    await waitUploadIdle(page);
+    await expect(page.locator('[data-testid="photo-slot"]').nth(0)).toHaveAttribute(
+      "data-has-file",
+      "true",
+    );
     assertNoPageErrors(errors);
   });
 });

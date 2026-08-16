@@ -69,6 +69,42 @@ type LocalPhoto = {
   itemId: string | null;
 };
 
+type PhotoCommit = {
+  slots: Record<string, string>;
+  extras: string[];
+};
+
+function localPhotoId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* insecure context — fall through */
+  }
+  return `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function applyUploadedFile(
+  prev: PhotoCommit,
+  itemId: string | null,
+  fileId: string,
+): { next: PhotoCommit; superseded?: string } {
+  if (itemId) {
+    const superseded = prev.slots[itemId] || undefined;
+    return {
+      next: {
+        slots: { ...prev.slots, [itemId]: fileId },
+        extras: prev.extras,
+      },
+      superseded,
+    };
+  }
+  return {
+    next: { slots: prev.slots, extras: [...prev.extras, fileId] },
+  };
+}
+
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -95,6 +131,10 @@ export function ShiftPhotos() {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const targetKeyRef = useRef<string | null>(null);
+  const itemsRef = useRef<ChecklistItem[]>([]);
+  const committedRef = useRef<PhotoCommit>({ slots: {}, extras: [] });
+  const persistTail = useRef(Promise.resolve());
+  const cancelledLocals = useRef(new Set<string>());
 
   const [shift, setShift] = useState<Shift | null>(null);
   const [slots, setSlots] = useState<Record<string, string>>({});
@@ -185,6 +225,7 @@ export function ShiftPhotos() {
         setShift(row);
         setItems(parsedItems);
         const parsed = parsePhotoSlots(row.photoFileIds, parsedItems);
+        committedRef.current = parsed;
         setSlots(parsed.slots);
         setExtras(parsed.extras);
         if (row.status !== "draft") {
@@ -253,18 +294,72 @@ export function ShiftPhotos() {
     };
   }, []);
 
-  const persistSlots = useCallback(
-    async (nextSlots: Record<string, string>, nextExtras: string[]) => {
-      if (!shiftId) return;
-      const ids = serializePhotoSlots(items, nextSlots, nextExtras);
-      const updated = await setShiftPhotos(shiftId, ids);
-      setShift(updated);
-      const parsed = parsePhotoSlots(updated.photoFileIds, items);
-      setSlots(parsed.slots);
-      setExtras(parsed.extras);
+  itemsRef.current = items;
+
+  const persistUpdate = useCallback(
+    (updater: (prev: PhotoCommit) => PhotoCommit) => {
+      const run = async () => {
+        if (!shiftId) return;
+        const prev = committedRef.current;
+        const next = updater(prev);
+        const checklist = itemsRef.current;
+        const prevIds = serializePhotoSlots(checklist, prev.slots, prev.extras);
+        const nextIds = serializePhotoSlots(checklist, next.slots, next.extras);
+        if (prevIds.join("\0") === nextIds.join("\0")) return;
+        const updated = await setShiftPhotos(shiftId, nextIds);
+        const parsed = parsePhotoSlots(updated.photoFileIds, checklist);
+        committedRef.current = parsed;
+        setShift(updated);
+        setSlots(parsed.slots);
+        setExtras(parsed.extras);
+      };
+      const p = persistTail.current.then(run, run);
+      persistTail.current = p.then(
+        () => undefined,
+        () => undefined,
+      );
+      return p;
     },
-    [shiftId, items],
+    [shiftId],
   );
+
+  const dropLocal = useCallback((localId: string) => {
+    setLocals((prev) => {
+      const target = prev.find((p) => p.localId === localId);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.localId !== localId);
+    });
+  }, []);
+
+  async function commitUploadedFile(
+    localId: string,
+    itemId: string | null,
+    fileId: string,
+  ) {
+    if (cancelledLocals.current.has(localId)) {
+      cancelledLocals.current.delete(localId);
+      void deleteEvidenceFile(fileId);
+      return;
+    }
+    let applied = false;
+    let superseded: string | undefined;
+    await persistUpdate((prev) => {
+      if (cancelledLocals.current.has(localId)) return prev;
+      const next = applyUploadedFile(prev, itemId, fileId);
+      applied = true;
+      superseded = next.superseded;
+      return next.next;
+    });
+    if (!applied) {
+      cancelledLocals.current.delete(localId);
+      void deleteEvidenceFile(fileId);
+      return;
+    }
+    if (superseded && superseded !== fileId) {
+      void deleteEvidenceFile(superseded);
+    }
+    dropLocal(localId);
+  }
 
   const fileIds = useMemo(
     () => [...Object.values(slots).filter(Boolean), ...extras],
@@ -293,8 +388,10 @@ export function ShiftPhotos() {
 
   async function addFiles(fileList: FileList | null) {
     if (!fileList?.length || !shiftId || shift?.status !== "draft") return;
-    const key = targetKeyRef.current;
+    const key =
+      targetKeyRef.current ?? inputRef.current?.dataset.target ?? null;
     targetKeyRef.current = null;
+    if (inputRef.current) delete inputRef.current.dataset.target;
     setError(null);
 
     const file = fileList[0];
@@ -316,32 +413,23 @@ export function ShiftPhotos() {
     }
 
     const local: LocalPhoto = {
-      localId: crypto.randomUUID(),
+      localId: localPhotoId(),
       file,
       previewUrl: URL.createObjectURL(file),
       uploading: true,
       itemId,
     };
+    cancelledLocals.current.delete(local.localId);
     setLocals((prev) => [...prev, local]);
 
     try {
       const fileId = await uploadEvidence(file);
-      const nextSlots = { ...slots };
-      let nextExtras = [...extras];
-      if (itemId) {
-        const previous = nextSlots[itemId];
-        nextSlots[itemId] = fileId;
-        if (previous) void deleteEvidenceFile(previous);
-      } else {
-        nextExtras = [...nextExtras, fileId];
-      }
-      await persistSlots(nextSlots, nextExtras);
-      setLocals((prev) => {
-        const target = prev.find((p) => p.localId === local.localId);
-        if (target) URL.revokeObjectURL(target.previewUrl);
-        return prev.filter((p) => p.localId !== local.localId);
-      });
+      await commitUploadedFile(local.localId, itemId, fileId);
     } catch (err) {
+      if (cancelledLocals.current.has(local.localId)) {
+        cancelledLocals.current.delete(local.localId);
+        return;
+      }
       setLocals((prev) =>
         prev.map((p) =>
           p.localId === local.localId
@@ -368,23 +456,14 @@ export function ShiftPhotos() {
       ),
     );
     try {
+      cancelledLocals.current.delete(item.localId);
       const fileId = await uploadEvidence(item.file);
-      const nextSlots = { ...slots };
-      let nextExtras = [...extras];
-      if (item.itemId) {
-        const previous = nextSlots[item.itemId];
-        nextSlots[item.itemId] = fileId;
-        if (previous) void deleteEvidenceFile(previous);
-      } else {
-        nextExtras = [...nextExtras, fileId];
-      }
-      await persistSlots(nextSlots, nextExtras);
-      setLocals((prev) => {
-        const target = prev.find((p) => p.localId === item.localId);
-        if (target) URL.revokeObjectURL(target.previewUrl);
-        return prev.filter((p) => p.localId !== item.localId);
-      });
+      await commitUploadedFile(item.localId, item.itemId, fileId);
     } catch (err) {
+      if (cancelledLocals.current.has(item.localId)) {
+        cancelledLocals.current.delete(item.localId);
+        return;
+      }
       setLocals((prev) =>
         prev.map((p) =>
           p.localId === item.localId
@@ -401,13 +480,16 @@ export function ShiftPhotos() {
   }
 
   async function removeSlot(itemId: string) {
-    const fileId = slots[itemId];
+    const fileId = committedRef.current.slots[itemId] ?? slots[itemId];
     if (!fileId) return;
     setError(null);
     try {
-      const next = { ...slots };
-      delete next[itemId];
-      await persistSlots(next, extras);
+      await persistUpdate((prev) => {
+        if (!prev.slots[itemId]) return prev;
+        const nextSlots = { ...prev.slots };
+        delete nextSlots[itemId];
+        return { slots: nextSlots, extras: prev.extras };
+      });
       void deleteEvidenceFile(fileId);
     } catch (err) {
       setError(getErrorMessage(err, "Could not remove photo"));
@@ -417,10 +499,10 @@ export function ShiftPhotos() {
   async function removeExtra(fileId: string) {
     setError(null);
     try {
-      await persistSlots(
-        slots,
-        extras.filter((id) => id !== fileId),
-      );
+      await persistUpdate((prev) => ({
+        slots: prev.slots,
+        extras: prev.extras.filter((id) => id !== fileId),
+      }));
       void deleteEvidenceFile(fileId);
     } catch (err) {
       setError(getErrorMessage(err, "Could not remove photo"));
@@ -428,11 +510,8 @@ export function ShiftPhotos() {
   }
 
   function removeLocal(localId: string) {
-    setLocals((prev) => {
-      const target = prev.find((p) => p.localId === localId);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((p) => p.localId !== localId);
-    });
+    cancelledLocals.current.add(localId);
+    dropLocal(localId);
   }
 
   async function discardDraft() {
@@ -811,7 +890,14 @@ export function ShiftPhotos() {
             const local = locals.find((p) => p.itemId === item.id);
             const ready = fileId ? readyIds.has(fileId) : true;
             return (
-              <li key={item.id} className="item-photo-row">
+              <li
+                key={item.id}
+                className="item-photo-row"
+                data-testid="photo-slot"
+                data-item-id={item.id}
+                data-has-file={fileId ? "true" : "false"}
+                data-uploading={local?.uploading ? "true" : "false"}
+              >
                 <div className="item-photo-copy">
                   <span className="photo-shot-index" aria-hidden>
                     {String(i + 1).padStart(2, "0")}
@@ -821,6 +907,8 @@ export function ShiftPhotos() {
                 {fileId ? (
                   <div
                     className={`item-photo-tile${ready ? "" : " is-loading"}`}
+                    data-file-id={fileId}
+                    data-testid="persisted-slot"
                   >
                     <img
                       ref={bindPhoto(fileId)}
@@ -842,7 +930,11 @@ export function ShiftPhotos() {
                     </button>
                   </div>
                 ) : local ? (
-                  <div className="item-photo-tile">
+                  <div
+                    className="item-photo-tile"
+                    data-testid="local-slot"
+                    data-uploading={local.uploading ? "true" : "false"}
+                  >
                     <img src={local.previewUrl} alt="" className="photo-img is-ready" />
                     {local.uploading ? (
                       <div className="photo-overlay">

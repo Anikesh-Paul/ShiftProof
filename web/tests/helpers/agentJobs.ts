@@ -78,6 +78,32 @@ function sdk() {
   return server;
 }
 
+/** Seed an empty draft Shift owned by the demo staff user. */
+export async function seedDraftShift(): Promise<string> {
+  const { tables } = sdk();
+  const { ID } = require(NODE_APPWRITE);
+  const now = new Date().toISOString();
+  const row = await tables.createRow({
+    databaseId: DB,
+    tableId: "shifts",
+    rowId: ID.unique(),
+    data: {
+      siteId: "demo_cafe",
+      checklistId: "opening_fs",
+      createdBy: STAFF_USER_ID,
+      status: "draft",
+      photoFileIds: "[]",
+      startedAt: now,
+    },
+    permissions: [
+      'read("users")',
+      `update("user:${STAFF_USER_ID}")`,
+      `delete("user:${STAFF_USER_ID}")`,
+    ],
+  });
+  return row.$id as string;
+}
+
 /** Seed a submitted Shift owned by the demo staff user (no photos). */
 export async function seedSubmittedShift(): Promise<string> {
   const { tables } = sdk();
