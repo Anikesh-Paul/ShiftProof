@@ -72,20 +72,10 @@
 
 /* —— Section chrome —— */
 
-.manager-inbox,
-.manager-side-block {
+.manager-inbox {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.manager-side-block > h2 {
-  margin: 0;
-  font-family: var(--font);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--label);
 }
 
 .manager-filter-btn {
@@ -211,6 +201,16 @@
   font-size: 1.05rem;
   letter-spacing: -0.022em;
   line-height: 1.2;
+  min-width: 0;
+}
+
+.manager-row-items {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  color: var(--label-secondary);
 }
 
 .manager-row-meta {
@@ -287,58 +287,53 @@
   letter-spacing: -0.02em;
 }
 
-/* —— Repeat gaps —— */
+/* —— Repeat gaps (chip row under tabs) —— */
 
-.repeat-list {
+.manager-repeat-chips {
   display: flex;
-  flex-direction: column;
-  gap: 0;
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--separator);
-  overflow: hidden;
-}
-
-.repeat-row {
-  display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  font-size: 0.875rem;
-  border-bottom: 1px solid var(--separator);
+  gap: var(--space-2);
 }
 
-.repeat-row-btn {
-  width: 100%;
+.manager-repeat-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
   margin: 0;
-  border: none;
-  background: transparent;
+  padding: 0 0.7rem;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
   font: inherit;
-  color: inherit;
-  text-align: left;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label-secondary);
   cursor: pointer;
 }
 
-.repeat-row-btn:hover,
-.repeat-row-btn.is-active {
-  background: var(--fill);
-}
-
-.repeat-row:last-child {
-  border-bottom: none;
-}
-
-.repeat-label {
-  font-weight: 600;
-  letter-spacing: -0.015em;
-}
-
-.repeat-count {
-  font-weight: 600;
+.manager-repeat-chip.is-active {
+  border-color: transparent;
+  background: var(--danger-soft);
   color: var(--danger);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.8125rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .manager-repeat-chip:hover {
+    border-color: var(--separator-strong);
+    color: var(--label);
+  }
+
+  .manager-repeat-chip.is-active:hover {
+    border-color: transparent;
+    color: var(--danger);
+  }
+}
+
+.manager-repeat-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* —— SOP missing line (no furniture when the PDF is on file) —— */

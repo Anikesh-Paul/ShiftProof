@@ -13,7 +13,6 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
-import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import {
@@ -251,7 +250,7 @@ export function ManagerHome() {
         s.shift.status === "submitted" ||
         s.shift.status === "scoring",
     );
-    return [...todayNeeds, ...stuckOnly];
+    return sortTodayInbox([...todayNeeds, ...stuckOnly]);
   }, [itemFilter, view, items, timeZone, todayItems, stuckItems]);
 
   const sopReady = isSopFileReady(sop?.fileId);
@@ -287,14 +286,17 @@ export function ManagerHome() {
             : "When staff leave open gaps today, they land here first.";
 
   function setView(next: InboxView) {
-    const nextParams = new URLSearchParams();
-    if (next !== "today") nextParams.set("view", next);
+    const nextParams = new URLSearchParams(params);
+    if (next === "today") nextParams.delete("view");
+    else nextParams.set("view", next);
+    nextParams.delete("item");
     setParams(nextParams);
   }
 
   function setItemFilter(itemId: string | null) {
-    const nextParams = new URLSearchParams();
+    const nextParams = new URLSearchParams(params);
     if (itemId) nextParams.set("item", itemId);
+    else nextParams.delete("item");
     setParams(nextParams);
   }
 
@@ -490,33 +492,46 @@ export function ManagerHome() {
 
       <section className="manager-inbox" aria-label="Inbox">
         <div className="manager-view-tabs" role="tablist" aria-label="Inbox">
-          {itemFilter ? (
+          {(["today", "backlog", "all"] as const).map((key) => (
             <button
+              key={key}
               type="button"
-              className="text-btn manager-filter-btn"
-              onClick={() => setItemFilter(null)}
+              role="tab"
+              className={`text-btn manager-filter-btn${view === key ? " is-active" : ""}`}
+              aria-selected={view === key}
+              onClick={() => setView(key)}
             >
-              Clear
+              {key === "today"
+                ? "Today"
+                : key === "backlog"
+                  ? "Backlog"
+                  : "All"}
             </button>
-          ) : (
-            (["today", "backlog", "all"] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                className={`text-btn manager-filter-btn${view === key ? " is-active" : ""}`}
-                aria-selected={view === key}
-                onClick={() => setView(key)}
-              >
-                {key === "today"
-                  ? "Today"
-                  : key === "backlog"
-                    ? "Backlog"
-                    : "All"}
-              </button>
-            ))
-          )}
+          ))}
         </div>
+
+        {!loading && repeatOffenders.length > 0 ? (
+          <div
+            className="manager-repeat-chips"
+            data-testid="repeat-offender"
+            role="group"
+            aria-label="Repeat gaps"
+          >
+            {repeatOffenders.map((r) => (
+              <button
+                key={r.itemId}
+                type="button"
+                className={`manager-repeat-chip${itemFilter === r.itemId ? " is-active" : ""}`}
+                aria-pressed={itemFilter === r.itemId}
+                onClick={() =>
+                  setItemFilter(itemFilter === r.itemId ? null : r.itemId)
+                }
+              >
+                {r.label} {r.count}/{r.of}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {view === "today" && !itemFilter && todayGaps > 0 && !loading ? (
           <div className="manager-today-actions">
@@ -585,101 +600,70 @@ export function ManagerHome() {
           </div>
         ) : (
           <ul className="list-plain manager-list stagger-in">
-            {defaultList.map((row) => (
-              <li key={row.shift.$id}>
-                <Link
-                  to={`/manager/shifts/${row.shift.$id}`}
-                  className="manager-row"
-                >
-                  <div className="manager-row-main">
-                    <div className="manager-row-top">
-                      <StatusChip
-                        status={row.shift.status}
-                        jobFailed={row.latestJob?.status === "failed"}
-                      />
-                      <time className="caption manager-row-when">
-                        {formatWhen(
-                          row.shift.submittedAt || row.shift.startedAt,
+            {defaultList.map((row) => {
+              const itemsPreview = openItemsPreview(row.findings);
+              return (
+                <li key={row.shift.$id}>
+                  <Link
+                    to={`/manager/shifts/${row.shift.$id}`}
+                    className="manager-row"
+                  >
+                    <div className="manager-row-main">
+                      <div className="manager-row-top">
+                        <p className="manager-row-staff">
+                          {inboxStaffLabel(row.staffLabel)}
+                        </p>
+                        <time className="caption manager-row-when">
+                          {formatWhen(
+                            row.shift.submittedAt || row.shift.startedAt,
+                          )}
+                        </time>
+                      </div>
+                      {itemsPreview ? (
+                        <p className="manager-row-items">{itemsPreview}</p>
+                      ) : null}
+                      <div className="manager-row-meta">
+                        {row.latestJob?.status === "failed" ? (
+                          <span className="manager-meta-wait">
+                            Score failed
+                          </span>
+                        ) : isStuckScoring(row.shift, row.latestJob) ? (
+                          <span className="manager-meta-wait">
+                            Scoring stuck — retry from the scoreboard
+                          </span>
+                        ) : row.shift.status === "scoring" ||
+                          row.shift.status === "submitted" ? (
+                          <span className="manager-meta-wait">
+                            {scoringWaitLabel(row)}
+                          </span>
+                        ) : (
+                          <>
+                            {row.gapCount > 0 ? (
+                              <span className="manager-pill is-gap">
+                                {row.gapCount} Gap
+                              </span>
+                            ) : null}
+                            {row.unclearCount > 0 ? (
+                              <span className="manager-pill is-unclear">
+                                {row.unclearCount} Unclear
+                              </span>
+                            ) : null}
+                            {view === "all" && row.passCount > 0 ? (
+                              <span className="manager-pill is-pass">
+                                {row.passCount} Pass
+                              </span>
+                            ) : null}
+                          </>
                         )}
-                      </time>
+                      </div>
                     </div>
-                    <p className="manager-row-staff">{row.staffLabel}</p>
-                    <div className="manager-row-meta">
-                      {row.latestJob?.status === "failed" ? (
-                        <span className="manager-meta-wait">Score failed</span>
-                      ) : isStuckScoring(row.shift, row.latestJob) ? (
-                        <span className="manager-meta-wait">
-                          Scoring stuck — retry from the scoreboard
-                        </span>
-                      ) : row.shift.status === "scoring" ||
-                        row.shift.status === "submitted" ? (
-                        <span className="manager-meta-wait">
-                          {row.findings.length
-                            ? `${row.gapCount} gap · ${row.unclearCount} unclear`
-                            : "Waiting on score…"}
-                        </span>
-                      ) : (
-                        <>
-                          <span
-                            className={`manager-pill${row.gapCount > 0 ? " is-gap" : ""}`}
-                          >
-                            {row.gapCount} Gap
-                          </span>
-                          <span
-                            className={`manager-pill${row.unclearCount > 0 ? " is-unclear" : ""}`}
-                          >
-                            {row.unclearCount} Unclear
-                          </span>
-                          {row.passCount > 0 ? (
-                            <span className="manager-pill is-pass">
-                              {row.passCount} Pass
-                            </span>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <span className="manager-row-go" aria-hidden>
-                    Review
-                  </span>
-                </Link>
-              </li>
-            ))}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
-
-      {!loading && repeatOffenders.length > 0 ? (
-        <section
-          className="manager-side-block"
-          data-testid="repeat-offender"
-          aria-labelledby="repeat-heading"
-        >
-          <h2 id="repeat-heading">Repeat gaps</h2>
-          <p className="caption muted">
-            Failed on this many of the last {repeatOffenders[0]?.of ?? 5}{" "}
-            scored openings
-          </p>
-          <ul className="list-plain repeat-list">
-            {repeatOffenders.map((r) => (
-              <li key={r.itemId}>
-                <button
-                  type="button"
-                  className={`repeat-row repeat-row-btn${itemFilter === r.itemId ? " is-active" : ""}`}
-                  onClick={() =>
-                    setItemFilter(itemFilter === r.itemId ? null : r.itemId)
-                  }
-                >
-                  <span className="repeat-label">{r.label}</span>
-                  <span className="repeat-count">
-                    {r.count}/{r.of}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
 
       {!sopLoading && !sopReady ? (
         <div className="manager-sop-missing" data-testid="sop-upload">
@@ -731,6 +715,49 @@ function openFixTitle(task: Task, finding?: { itemId: string }): string {
   }
   if (isHarnessName(task.title)) return kind;
   return task.title;
+}
+
+function todayInboxRank(row: ManagerShiftSummary): number {
+  if (row.gapCount > 0) return 0;
+  if (row.unclearCount > 0) return 1;
+  if (row.latestJob?.status === "failed") return 3;
+  if (
+    isStuckScoring(row.shift, row.latestJob) ||
+    row.shift.status === "submitted" ||
+    row.shift.status === "scoring"
+  ) {
+    return 2;
+  }
+  return 4;
+}
+
+function sortTodayInbox(
+  rows: ManagerShiftSummary[],
+): ManagerShiftSummary[] {
+  return [...rows].sort((a, b) => todayInboxRank(a) - todayInboxRank(b));
+}
+
+function inboxStaffLabel(label: string): string {
+  return label.replace(/\s*·\s*Opening\s*$/i, "").trim() || label;
+}
+
+function scoringWaitLabel(row: ManagerShiftSummary): string {
+  const parts: string[] = [];
+  if (row.gapCount > 0) parts.push(`${row.gapCount} gap`);
+  if (row.unclearCount > 0) parts.push(`${row.unclearCount} unclear`);
+  return parts.join(" · ") || "Waiting on score…";
+}
+
+function openItemsPreview(
+  findings: { itemId: string; status: string }[],
+): string | null {
+  const open = findings.filter(
+    (f) => f.status === "gap" || f.status === "unclear",
+  );
+  if (open.length === 0) return null;
+  const shown = open.slice(0, 2).map((f) => itemLabel(f.itemId));
+  const extra = open.length - 2;
+  return extra > 0 ? `${shown.join(" · ")} +${extra}` : shown.join(" · ");
 }
 
 function formatWhen(iso: string): string {
