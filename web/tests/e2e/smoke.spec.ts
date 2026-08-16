@@ -635,8 +635,12 @@ test.describe("staff attestation", () => {
   });
 });
 
-function isAgentJobCreate(url: URL): boolean {
+function isAgentJobList(url: URL): boolean {
   return /\/tablesdb\/[^/]+\/tables\/agent_jobs\/rows\/?$/.test(url.pathname);
+}
+
+function isAgentJobCreate(url: URL): boolean {
+  return isAgentJobList(url);
 }
 
 function isEventCreate(url: URL): boolean {
@@ -1100,6 +1104,91 @@ test.describe("manager assign task durability", () => {
     await expect(rowB).toBeVisible();
     await expect(rowA).toHaveCount(1);
     await expect(rowB).toHaveCount(1);
+    assertNoPageErrors(errors);
+  });
+});
+
+/** Hold the next GET of agent_jobs rows until `release` is called. */
+async function holdNextAgentJobList(page: import("@playwright/test").Page) {
+  let continueHeld: (() => Promise<void>) | undefined;
+  let saw!: () => void;
+  const held = new Promise<void>((resolve) => {
+    saw = resolve;
+  });
+  let captured = false;
+  await page.route(
+    (url) => isAgentJobList(new URL(url)),
+    async (route) => {
+      if (route.request().method() !== "GET" || captured) {
+        await route.continue();
+        return;
+      }
+      captured = true;
+      saw();
+      await new Promise<void>((resolve) => {
+        continueHeld = async () => {
+          try {
+            await route.continue();
+          } catch {
+            /* navigated away — request may already be gone */
+          }
+          resolve();
+        };
+      });
+    },
+  );
+  return {
+    held,
+    async release() {
+      await continueHeld?.();
+    },
+  };
+}
+
+test.describe("staff scoring poll abort", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a waiting Agent job",
+    );
+  });
+
+  test("navigating away mid-poll stops further job-status requests", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    await seedAgentJob(shiftId, "waiting");
+
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    await expect(page.locator("[data-job-status]")).toHaveAttribute(
+      "data-job-status",
+      "waiting",
+      { timeout: 25_000 },
+    );
+
+    const hold = await holdNextAgentJobList(page);
+    await expect.poll(() => hold.held.then(() => true), { timeout: 15_000 }).toBe(
+      true,
+    );
+
+    await page.locator("a.back-link").click();
+    await expect(page).toHaveURL(/\/staff\/shifts\/?$/);
+
+    const afterNav: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() !== "GET") return;
+      if (isAgentJobList(new URL(req.url()))) afterNav.push(req.url());
+    });
+
+    await hold.release();
+    // Two poll intervals (2s) plus slack — a live loop would fire again.
+    await page.waitForTimeout(5_000);
+    expect(
+      afterNav,
+      "job-status GETs must stop after navigate-away",
+    ).toEqual([]);
     assertNoPageErrors(errors);
   });
 });

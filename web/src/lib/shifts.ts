@@ -558,17 +558,24 @@ export async function getLatestJob(shiftId: string): Promise<AgentJob | null> {
   return sorted[0] ?? null;
 }
 
-/** Poll until job done/failed or timeout (ms). */
+/** Poll until job done/failed, timeout (ms), or `isCancelled` reports true. */
 export async function pollJobUntilSettled(
   shiftId: string,
-  opts?: { timeoutMs?: number; intervalMs?: number },
+  opts?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    isCancelled?: () => boolean;
+  },
 ): Promise<AgentJob | null> {
   const timeoutMs = opts?.timeoutMs ?? 180_000;
   const intervalMs = opts?.intervalMs ?? 2_000;
+  const isCancelled = opts?.isCancelled ?? (() => false);
   const start = Date.now();
   let last: AgentJob | null = null;
   while (Date.now() - start < timeoutMs) {
+    if (isCancelled()) return last;
     last = await getLatestJob(shiftId);
+    if (isCancelled()) return last;
     if (last && (last.status === "done" || last.status === "failed")) {
       return last;
     }

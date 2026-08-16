@@ -262,7 +262,10 @@ export function ShiftPhotos() {
     if (!shiftId || !shiftStatus) return;
     if (shiftStatus !== "submitted" && shiftStatus !== "scoring") return;
     let cancelled = false;
-    void pollJobUntilSettled(shiftId, { timeoutMs: 180_000 }).then(async () => {
+    void pollJobUntilSettled(shiftId, {
+      timeoutMs: 180_000,
+      isCancelled: () => cancelled,
+    }).then(async () => {
       if (cancelled) return;
       try {
         const [row, scored, job] = await Promise.all([
