@@ -10,9 +10,11 @@ import {
 } from "../helpers/auth";
 import { expect, test } from "../helpers/fixtures";
 import {
+  getShiftStatus,
   hasServerKey,
   latestExecutionId,
   latestJobFor,
+  listJobIdsFor,
   listStaffDraftIds,
   markShiftScored,
   seedAgentJob,
@@ -629,6 +631,150 @@ test.describe("staff attestation", () => {
     );
     await expect(exportSource).toBeVisible();
     await expect(exportSource).toHaveText(/staff attested/i);
+    assertNoPageErrors(errors);
+  });
+});
+
+function isAgentJobCreate(url: URL): boolean {
+  return /\/tablesdb\/[^/]+\/tables\/agent_jobs\/rows\/?$/.test(url.pathname);
+}
+
+function isEventCreate(url: URL): boolean {
+  return /\/tablesdb\/[^/]+\/tables\/events\/rows\/?$/.test(url.pathname);
+}
+
+function isFunctionExecution(url: URL): boolean {
+  return /\/functions\/[^/]+\/executions\/?$/.test(url.pathname);
+}
+
+/** Abort POSTs that create an Agent job or submit event — the mid-submit strand. */
+async function blockJobAndEventCreates(page: import("@playwright/test").Page) {
+  let blocked = true;
+  await page.route(
+    (url) => isAgentJobCreate(new URL(url)) || isEventCreate(new URL(url)),
+    async (route) => {
+      if (blocked && route.request().method() === "POST") {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    },
+  );
+  return {
+    unblock() {
+      blocked = false;
+    },
+  };
+}
+
+test.describe("staff interrupted submission", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a photo-bearing draft",
+    );
+  });
+
+  test("blocked job/event create shows Retry immediately, then Retry recovers", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedDraftShift({
+      photoFileIds: ["e2e_interrupt_a", "e2e_interrupt_b", "e2e_interrupt_c"],
+    });
+    const jobPosts: string[] = [];
+    const executions: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() !== "POST") return;
+      const url = new URL(req.url());
+      if (isAgentJobCreate(url)) jobPosts.push(req.url());
+      if (isFunctionExecution(url)) executions.push(req.url());
+    });
+
+    const gate = await blockJobAndEventCreates(page);
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const submit = page.getByRole("button", { name: /submit proof/i });
+    await expect(submit).toBeEnabled({ timeout: 25_000 });
+    await submit.click();
+
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText(/scoring did not start/i, {
+      timeout: 15_000,
+    });
+    const retry = page.getByRole("button", { name: /try scoring again/i });
+    await expect(retry).toBeVisible();
+    await expect(page.locator("[data-job-status]")).toHaveAttribute(
+      "data-job-status",
+      "none",
+    );
+    expect(await getShiftStatus(shiftId)).toBe("submitted");
+    expect(await listJobIdsFor(shiftId), "aborted job POSTs must not land a row").toEqual(
+      [],
+    );
+    expect(jobPosts.length, "submit did attempt a job create").toBeGreaterThan(0);
+
+    gate.unblock();
+    const execBefore = await latestExecutionId();
+    await retry.click();
+
+    await expect
+      .poll(async () => (await listJobIdsFor(shiftId)).length, {
+        timeout: 15_000,
+      })
+      .toBe(1);
+    await expect
+      .poll(async () => await latestExecutionId(), { timeout: 20_000 })
+      .not.toBe(execBefore);
+    await expect(page.locator("[data-job-status]")).not.toHaveAttribute(
+      "data-job-status",
+      "none",
+      { timeout: 15_000 },
+    );
+
+    const status = await getShiftStatus(shiftId);
+    expect(["submitted", "scoring", "scored"]).toContain(status);
+    expect(status).not.toBe("draft");
+    expect(executions.length).toBeGreaterThan(0);
+
+    await expect
+      .poll(() => page.locator("[data-job-status]").getAttribute("data-job-status"), {
+        timeout: 60_000,
+      })
+      .toMatch(/waiting|running|done|failed/);
+
+    assertNoPageErrors(errors);
+  });
+
+  test("Retry does not create a duplicate when a live job already exists", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedDraftShift({
+      photoFileIds: ["e2e_idem_a", "e2e_idem_b", "e2e_idem_c"],
+    });
+
+    const gate = await blockJobAndEventCreates(page);
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const submit = page.getByRole("button", { name: /submit proof/i });
+    await expect(submit).toBeEnabled({ timeout: 25_000 });
+    await submit.click();
+    const retry = page.getByRole("button", { name: /try scoring again/i });
+    await expect(retry).toBeVisible({ timeout: 15_000 });
+    expect(await listJobIdsFor(shiftId)).toEqual([]);
+
+    gate.unblock();
+    const liveId = await seedAgentJob(shiftId, "waiting");
+    const execBefore = await latestExecutionId();
+    await retry.click();
+
+    await expect
+      .poll(async () => await latestExecutionId(), { timeout: 20_000 })
+      .not.toBe(execBefore);
+    const ids = await listJobIdsFor(shiftId);
+    expect(ids).toEqual([liveId]);
+    expect(await getShiftStatus(shiftId)).not.toBe("draft");
     assertNoPageErrors(errors);
   });
 });

@@ -200,6 +200,31 @@ export async function setAgentJobStatus(
   });
 }
 
+export async function listJobIdsFor(shiftId: string): Promise<string[]> {
+  const { tables } = sdk();
+  const { Query } = require(NODE_APPWRITE);
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: "agent_jobs",
+    queries: [
+      Query.equal("shiftId", shiftId),
+      Query.orderDesc("$createdAt"),
+      Query.limit(25),
+    ],
+  });
+  return (result.rows ?? []).map((row: { $id: string }) => row.$id);
+}
+
+export async function getShiftStatus(shiftId: string): Promise<string> {
+  const { tables } = sdk();
+  const row = await tables.getRow({
+    databaseId: DB,
+    tableId: "shifts",
+    rowId: shiftId,
+  });
+  return row.status as string;
+}
+
 export async function latestJobFor(
   shiftId: string,
 ): Promise<{ id: string; status: SeedJobStatus } | null> {

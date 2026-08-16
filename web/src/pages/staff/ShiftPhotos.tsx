@@ -46,6 +46,7 @@ import {
   retryShiftScore,
   serializePhotoSlots,
   setShiftPhotos,
+  SubmitInterruptedError,
   submitShift,
   uploadEvidence,
   validatePhotoFile,
@@ -118,11 +119,8 @@ function findingRank(status: Finding["status"]) {
 function isStuck(shift: Shift, job: AgentJob | null): boolean {
   // With a job, failure is the job's own status — never an age guess.
   if (job) return job.status === "failed";
-  if (shift.status !== "submitted" && shift.status !== "scoring") return false;
-  const raw = shift.submittedAt || shift.startedAt;
-  const then = Date.parse(raw);
-  if (!Number.isFinite(then)) return false;
-  return Date.now() - then > 90_000;
+  // No job on a submitted/scoring shift is stranded — recover immediately.
+  return shift.status === "submitted" || shift.status === "scoring";
 }
 
 export function ShiftPhotos() {
@@ -550,6 +548,25 @@ export function ShiftPhotos() {
         }
       }
     } catch (err) {
+      if (err instanceof SubmitInterruptedError) {
+        setShift(err.shift);
+        setDone(true);
+        setLatestJob(err.job);
+        setError(err.message);
+        return;
+      }
+      if (shiftId) {
+        try {
+          const row = await getShift(shiftId);
+          if (row.status !== "draft") {
+            setShift(row);
+            setDone(true);
+            setLatestJob(await getLatestJob(shiftId).catch(() => null));
+          }
+        } catch {
+          /* keep local draft */
+        }
+      }
       setError(getErrorMessage(err, "Submit failed"));
     } finally {
       setSubmitting(false);
@@ -644,6 +661,12 @@ export function ShiftPhotos() {
           ? "Scoring"
           : "Submitted";
     const stuck = isStuck(shift, latestJob);
+    const showRetry =
+      Boolean(user) &&
+      (stuck ||
+        (Boolean(error) &&
+          (shift.status === "submitted" || shift.status === "scoring") &&
+          latestJob?.status !== "done"));
     const rejected = latestEventReason(events) === "invalid_evidence";
     const lede = rejected
       ? "Manager rejected this check — submit a real opening."
@@ -700,7 +723,7 @@ export function ShiftPhotos() {
           </div>
         ) : null}
 
-        {stuck && user ? (
+        {showRetry ? (
           <Button
             loading={retrying}
             onClick={() => void onRetryScore()}

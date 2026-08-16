@@ -375,9 +375,28 @@ export async function triggerRunShiftScore(
   }
 }
 
+/** Shift row is submitted but the Agent job / audit event never landed. */
+export class SubmitInterruptedError extends Error {
+  readonly shift: Shift;
+  readonly job: AgentJob | null;
+  constructor(shift: Shift, job: AgentJob | null) {
+    super("Scoring did not start. Try again.");
+    this.name = "SubmitInterruptedError";
+    this.shift = shift;
+    this.job = job;
+  }
+}
+
+function isLiveJob(job: AgentJob | null): job is AgentJob {
+  return job != null && (job.status === "waiting" || job.status === "running");
+}
+
 /**
  * Submit shift: status submitted → agent_jobs waiting → events shift.submitted
  * → best-effort runShiftScore (C3).
+ *
+ * If job/event creation fails after the Shift update, throws
+ * SubmitInterruptedError so Retry can finish the job instead of stranding.
  */
 export async function submitShift(
   shiftId: string,
@@ -398,36 +417,46 @@ export async function submitShift(
       submittedAt: new Date().toISOString(),
     } as RowData,
   });
+  const submitted = shiftRow as unknown as Shift;
 
-  // API.md §3 — agent_jobs waiting
-  const jobRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.agent_jobs,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      status: "waiting",
-      startedAt: null,
-      errorMessage: null,
-      finishedAt: null,
-      traceJson: null,
-    } as RowData,
-  });
+  let job: AgentJob | null = null;
+  let eventRow: unknown;
+  try {
+    // API.md §3 — agent_jobs waiting
+    const jobRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        status: "waiting",
+        startedAt: null,
+        errorMessage: null,
+        finishedAt: null,
+        traceJson: null,
+      } as RowData,
+    });
+    job = jobRow as unknown as AgentJob;
 
-  const eventRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.events,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      type: "shift.submitted",
-      actorUserId: userId,
-      payloadJson: JSON.stringify({ photoCount }),
-      createdAt: new Date().toISOString(),
-    } as RowData,
-  });
+    eventRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.events,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        type: "shift.submitted",
+        actorUserId: userId,
+        payloadJson: JSON.stringify({ photoCount }),
+        createdAt: new Date().toISOString(),
+      } as RowData,
+    });
+  } catch {
+    throw new SubmitInterruptedError(submitted, job);
+  }
+  if (!job || !eventRow) {
+    throw new SubmitInterruptedError(submitted, job);
+  }
 
-  const job = jobRow as unknown as AgentJob;
   // Prefer cloud Function only (Gemini). No silent client stub (ADR 0002 / S1).
   // Explicit emergency: Function env ALLOW_DEMO_STUB_SCORES=1 — not the client.
   const scoreTrigger = await triggerRunShiftScore(shiftId, job.$id);
@@ -458,7 +487,7 @@ export async function submitShift(
   };
 }
 
-/** API.md §4 retry — new waiting job + runShiftScore. Leaves the old job in place. */
+/** API.md §4 retry — ensure a live job + runShiftScore. Leaves any old job in place. */
 export async function retryShiftScore(
   shiftId: string,
   userId: string,
@@ -467,19 +496,26 @@ export async function retryShiftScore(
   job: AgentJob;
   scoreTrigger: { triggered: boolean; error?: string };
 }> {
-  const jobRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.agent_jobs,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      status: "waiting",
-      startedAt: null,
-      errorMessage: null,
-      finishedAt: null,
-      traceJson: null,
-    } as RowData,
-  });
+  const existing = await getLatestJob(shiftId);
+  let job: AgentJob;
+  if (isLiveJob(existing)) {
+    job = existing;
+  } else {
+    const jobRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        status: "waiting",
+        startedAt: null,
+        errorMessage: null,
+        finishedAt: null,
+        traceJson: null,
+      } as RowData,
+    });
+    job = jobRow as unknown as AgentJob;
+  }
 
   try {
     await tables.createRow({
@@ -490,7 +526,7 @@ export async function retryShiftScore(
         shiftId,
         type: "job.retry",
         actorUserId: userId,
-        payloadJson: JSON.stringify({ jobId: jobRow.$id }),
+        payloadJson: JSON.stringify({ jobId: job.$id }),
         createdAt: new Date().toISOString(),
       } as RowData,
     });
@@ -498,7 +534,6 @@ export async function retryShiftScore(
     /* event is best-effort */
   }
 
-  const job = jobRow as unknown as AgentJob;
   const scoreTrigger = await triggerRunShiftScore(shiftId, job.$id);
   let shift = await getShift(shiftId);
   return {
