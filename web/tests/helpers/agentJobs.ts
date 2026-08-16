@@ -123,9 +123,9 @@ export async function listStaffDraftIds(): Promise<string[]> {
   return (result.rows ?? []).map((row: { $id: string }) => row.$id);
 }
 
-/** Seed a submitted Shift owned by the demo staff user (no photos). */
+/** Seed a submitted Shift owned by the demo staff user. */
 export async function seedSubmittedShift(
-  opts: { submittedAt?: string } = {},
+  opts: { submittedAt?: string; photoFileIds?: string[] } = {},
 ): Promise<string> {
   const { tables } = sdk();
   const { ID } = require(NODE_APPWRITE);
@@ -139,7 +139,7 @@ export async function seedSubmittedShift(
       checklistId: "opening_fs",
       createdBy: STAFF_USER_ID,
       status: "submitted",
-      photoFileIds: "[]",
+      photoFileIds: JSON.stringify(opts.photoFileIds ?? []),
       startedAt: submittedAt,
       submittedAt,
     },

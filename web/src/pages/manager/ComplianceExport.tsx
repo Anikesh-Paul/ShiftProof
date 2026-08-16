@@ -2,7 +2,7 @@
  * C8 — 1-page compliance pack (PROJECT.md / APP.md).
  * Print / Save as PDF via browser — no invented REST endpoints.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { FindingChip } from "../../components/FindingChip";
@@ -28,6 +28,10 @@ export function ComplianceExport() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [printReady, setPrintReady] = useState(false);
+  const evidenceRef = useRef<HTMLElement>(null);
+  const photoIds = item ? parsePhotoFileIds(item.shift.photoFileIds) : [];
+  const photoKey = photoIds.join("\0");
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +72,22 @@ export function ComplianceExport() {
     };
   }, [shiftId]);
 
+  useEffect(() => {
+    if (loading || !item) return;
+    if (photoIds.length === 0) {
+      setPrintReady(true);
+      return;
+    }
+    setPrintReady(false);
+    let cancelled = false;
+    void decodeEvidenceImages(evidenceRef.current).then(() => {
+      if (!cancelled) setPrintReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, item, photoKey, photoIds.length]);
+
   if (loading) {
     return (
       <div className="app-page">
@@ -95,7 +115,6 @@ export function ComplianceExport() {
   const passes = findings.filter((f) => f.status === "pass");
   const overrides = findings.filter((f) => f.source === "manager_override");
   const generatedAt = new Date().toISOString();
-  const photoIds = parsePhotoFileIds(shift.photoFileIds);
 
   return (
     <div className="export-shell">
@@ -105,7 +124,12 @@ export function ComplianceExport() {
         </Link>
         <Button
           variant="primary"
-          onClick={() => window.print()}
+          disabled={!printReady}
+          data-print-ready={printReady ? "true" : "false"}
+          onClick={async () => {
+            await decodeEvidenceImages(evidenceRef.current);
+            window.print();
+          }}
         >
           Print / Save PDF
         </Button>
@@ -151,15 +175,21 @@ export function ComplianceExport() {
         </section>
 
         {photoIds.length > 0 ? (
-          <section className="export-section export-photos" aria-label="Evidence">
+          <section
+            ref={evidenceRef}
+            className="export-section export-photos"
+            aria-label="Evidence"
+            data-testid="export-evidence"
+          >
             <h2>Evidence</h2>
             <ul className="list-plain export-photo-grid">
               {photoIds.map((id, i) => (
-                <li key={id} className="export-photo-tile">
+                <li key={id} className="export-photo-tile" data-file-id={id}>
                   <EvidenceImg
                     fileId={id}
                     alt={`Evidence ${i + 1}`}
                     className="export-photo-img"
+                    eager
                   />
                 </li>
               ))}
@@ -264,6 +294,14 @@ export function ComplianceExport() {
       </article>
     </div>
   );
+}
+
+function decodeEvidenceImages(root: HTMLElement | null): Promise<void> {
+  if (!root) return Promise.resolve();
+  const imgs = [...root.querySelectorAll<HTMLImageElement>("img")];
+  return Promise.all(
+    imgs.map((img) => img.decode().catch(() => undefined)),
+  ).then(() => undefined);
 }
 
 function rank(status: string): number {

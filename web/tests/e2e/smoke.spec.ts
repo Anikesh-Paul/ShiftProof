@@ -1278,3 +1278,83 @@ test.describe("staff history discard", () => {
     assertNoPageErrors(errors);
   });
 });
+
+function evidenceDecoded(imgs: import("@playwright/test").Locator) {
+  return imgs.evaluateAll((els) =>
+    els.every(
+      (el) =>
+        el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0,
+    ),
+  );
+}
+
+test.describe("compliance export evidence", () => {
+  test("print waits until evidence images are decoded", async ({ page }) => {
+    const errors = collectPageErrors(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto("/manager/shifts/golden_gap_open/export");
+    await expect(page.getByRole("heading", { name: /compliance pack/i })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const evidence = page.locator('[data-testid="export-evidence"]');
+    await expect(evidence).toBeVisible();
+    const imgs = evidence.locator("img");
+    await expect.poll(async () => imgs.count()).toBeGreaterThan(0);
+    for (const img of await imgs.all()) {
+      await expect(img).toHaveAttribute("loading", "eager");
+    }
+
+    await expect.poll(async () => evidenceDecoded(imgs)).toBe(true);
+
+    const printBtn = page.getByRole("button", { name: /print|save pdf/i });
+    await expect(printBtn).toBeEnabled();
+    await expect(printBtn).toHaveAttribute("data-print-ready", "true");
+
+    await page.evaluate(() => {
+      const w = window as Window & { __exportPrinted?: boolean };
+      w.__exportPrinted = false;
+      w.print = () => {
+        w.__exportPrinted = true;
+      };
+    });
+    await printBtn.click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => Boolean((window as Window & { __exportPrinted?: boolean }).__exportPrinted),
+        ),
+      )
+      .toBe(true);
+    expect(await evidenceDecoded(imgs)).toBe(true);
+
+    await page.goto("/manager/shifts/golden_gap_open");
+    const lazy = page.locator(".evidence-grid img, .finding-photo-img").first();
+    await expect(lazy).toBeVisible({ timeout: 25_000 });
+    await expect(lazy).toHaveAttribute("loading", "lazy");
+    assertNoPageErrors(errors);
+  });
+
+  test("missing evidence files still show Unavailable", async ({ page }) => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a missing-file shift",
+    );
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({
+      photoFileIds: ["e2e_missing_export_evidence"],
+    });
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}/export`);
+    await expect(page.getByRole("heading", { name: /compliance pack/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    const evidence = page.locator('[data-testid="export-evidence"]');
+    await expect(evidence).toBeVisible();
+    await expect(evidence.getByText("Unavailable")).toBeVisible({ timeout: 15_000 });
+    await expect(evidence.locator("img")).toHaveCount(0);
+    await expect(evidence.locator('[data-evidence="missing"]')).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /print|save pdf/i })).toBeEnabled();
+    assertNoPageErrors(errors);
+  });
+});
