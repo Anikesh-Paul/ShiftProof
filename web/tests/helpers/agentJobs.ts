@@ -301,6 +301,20 @@ export async function seedOpenTask(opts: {
   return row.$id as string;
 }
 
+/** Put a Re-check file id on an open Task. Does not write an Attestation. */
+export async function setTaskRecheckFileId(
+  taskId: string,
+  recheckFileId: string,
+): Promise<void> {
+  const { tables } = sdk();
+  await tables.updateRow({
+    databaseId: DB,
+    tableId: "tasks",
+    rowId: taskId,
+    data: { recheckFileId },
+  });
+}
+
 export async function markShiftScored(shiftId: string): Promise<void> {
   const { tables } = sdk();
   await tables.updateRow({

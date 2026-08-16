@@ -10,7 +10,9 @@ import {
   markShiftScored,
   seedAgentJob,
   seedFinding,
+  seedOpenTask,
   seedSubmittedShift,
+  setTaskRecheckFileId,
 } from "../helpers/agentJobs";
 
 test.describe("manager Scoreboard is staff, time, outcome", () => {
@@ -115,6 +117,40 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
       await expect(page.getByText(/mark job done and shift scored/i)).toHaveCount(0);
     }
     await expect(page.getByRole("button", { name: /retry scoring/i })).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+
+  test("Mark done is disabled without a Re-check and enabled once a Re-check file id exists", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({ photoFileIds: [] });
+    const findingId = await seedFinding(shiftId, {
+      itemId: "gloves_worn",
+      status: "gap",
+    });
+    await markShiftScored(shiftId);
+    const taskId = await seedOpenTask({
+      shiftId,
+      findingId,
+      title: "Fix: Gloves at prep",
+    });
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+
+    const markDone = page.getByTestId("task-mark-done");
+    await expect(markDone).toBeVisible({ timeout: 25_000 });
+    await expect(markDone).toBeDisabled();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    await setTaskRecheckFileId(taskId, "seeded_recheck_file");
+    await page.reload();
+
+    await expect(page.getByTestId("task-mark-done")).toBeEnabled({
+      timeout: 25_000,
+    });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     assertNoPageErrors(errors);
   });
 });

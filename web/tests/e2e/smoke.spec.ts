@@ -482,6 +482,10 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     await expect(page.locator(".task-row").first()).toBeVisible({ timeout: 25_000 });
     const markDone = page.locator('[data-testid="task-mark-done"]').first();
     await expect(markDone).toBeVisible();
+    if (await markDone.isDisabled()) {
+      await page.locator('[data-testid="recheck-input"]').first().setInputFiles(TINY_PNG);
+      await expect(markDone).toBeEnabled({ timeout: 15_000 });
+    }
     const before = await page.locator('[data-testid="task-mark-done"]').count();
     await markDone.click();
     await expect

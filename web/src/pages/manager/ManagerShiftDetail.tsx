@@ -1113,6 +1113,7 @@ export function ManagerShiftDetail() {
                           variant={t.recheckFileId ? "primary" : "secondary"}
                           className="task-done-btn"
                           data-testid="task-mark-done"
+                          disabled={!t.recheckFileId}
                           onClick={() => void completeTask(t.$id)}
                         >
                           Mark done
