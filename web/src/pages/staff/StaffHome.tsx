@@ -52,6 +52,10 @@ export function StaffHome() {
   const [recheckTaskId, setRecheckTaskId] = useState<string | null>(null);
   const [fixToast, setFixToast] = useState<string | null>(null);
   const [resumeDraft, setResumeDraft] = useState<Shift | null>(null);
+  const [draftsStatus, setDraftsStatus] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [draftsError, setDraftsError] = useState<string | null>(null);
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixesExpanded, setFixesExpanded] = useState(false);
 
@@ -110,21 +114,26 @@ export function StaffHome() {
     void loadFixTasks(user.$id);
   }, [user, loadFixTasks]);
 
+  const loadDrafts = useCallback(async (userId: string) => {
+    setDraftsStatus("loading");
+    setDraftsError(null);
+    try {
+      const rows = await listMyShifts(userId);
+      setResumeDraft(pickResumableDraft(rows));
+      setDraftsStatus("ready");
+    } catch (err) {
+      setResumeDraft(null);
+      setDraftsError(
+        getErrorMessage(err, "Could not load drafts. Try again."),
+      );
+      setDraftsStatus("error");
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await listMyShifts(user.$id);
-        if (!cancelled) setResumeDraft(pickResumableDraft(rows));
-      } catch {
-        if (!cancelled) setResumeDraft(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+    void loadDrafts(user.$id);
+  }, [user, loadDrafts]);
 
   useEffect(() => {
     if (error) {
@@ -150,7 +159,7 @@ export function StaffHome() {
   }
 
   async function startShift() {
-    if (!user) return;
+    if (!user || draftsStatus !== "ready") return;
     setError(null);
     setStarting(true);
     try {
@@ -216,7 +225,11 @@ export function StaffHome() {
     : 0;
 
   return (
-    <div className="staff-home" data-testid="staff-opening">
+    <div
+      className="staff-home"
+      data-testid="staff-opening"
+      data-drafts-status={draftsStatus}
+    >
       <div className="app-page stack staff-home-page">
         {!showFixes && !fixLoading ? (
           <div
@@ -269,6 +282,19 @@ export function StaffHome() {
             onAnimationEnd={onErrorExitEnd}
           >
             {errorShown}
+          </div>
+        ) : null}
+
+        {draftsError ? (
+          <div className="error-banner" role="alert" data-testid="drafts-error">
+            {draftsError}
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => user && void loadDrafts(user.$id)}
+            >
+              Try again
+            </button>
           </div>
         ) : null}
 
@@ -447,7 +473,11 @@ export function StaffHome() {
             fullWidth
             variant={pendingUnique.length > 0 ? "secondary" : "primary"}
             loading={starting}
-            disabled={loading || (!resumeDraft && items.length === 0)}
+            disabled={
+              loading ||
+              draftsStatus !== "ready" ||
+              (!resumeDraft && items.length === 0)
+            }
             data-testid="start-opening-check"
             onClick={() => void startShift()}
           >

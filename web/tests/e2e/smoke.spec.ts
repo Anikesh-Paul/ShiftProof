@@ -13,8 +13,10 @@ import {
   hasServerKey,
   latestExecutionId,
   latestJobFor,
+  listStaffDraftIds,
   markShiftScored,
   seedAgentJob,
+  seedDraftShift,
   seedFinding,
   seedSubmittedShift,
   setAgentJobStatus,
@@ -125,6 +127,172 @@ test.describe("staff opening", () => {
     await expect(page.locator('[data-testid="start-opening-check"]')).toBeEnabled({
       timeout: 25_000,
     });
+    assertNoPageErrors(errors);
+  });
+});
+
+function isShiftList(url: URL): boolean {
+  return /\/tablesdb\/[^/]+\/tables\/shifts\/rows\/?$/.test(url.pathname);
+}
+
+/** Hold GET /tables/shifts/rows until release — forces the Start gate window. */
+async function holdShiftLists(page: import("@playwright/test").Page) {
+  const waiting: Array<() => Promise<void>> = [];
+  let heldOpen = true;
+  let saw!: () => void;
+  const held = new Promise<void>((resolve) => {
+    saw = resolve;
+  });
+  await page.route(
+    (url) => isShiftList(new URL(url)),
+    async (route) => {
+      if (route.request().method() !== "GET" || !heldOpen) {
+        await route.continue();
+        return;
+      }
+      saw();
+      await new Promise<void>((resolve, reject) => {
+        waiting.push(async () => {
+          try {
+            await route.continue();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    },
+  );
+  return {
+    held,
+    async release() {
+      heldOpen = false;
+      await Promise.all(waiting.map((fn) => fn()));
+    },
+  };
+}
+
+test.describe("staff start draft guard", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a photo-bearing draft",
+    );
+  });
+
+  test("Start while drafts are held resumes the existing draft, never a duplicate", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedDraftShift({
+      photoFileIds: ["e2e_start_guard_photo"],
+    });
+    const beforeIds = await listStaffDraftIds();
+    const creates: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && isShiftList(new URL(req.url()))) {
+        creates.push(req.url());
+      }
+    });
+
+    const hold = await holdShiftLists(page);
+    await login(page, STAFF.email, STAFF.password);
+    await hold.held;
+    await expect(page.locator('[data-testid="staff-opening"]')).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(page.locator('[data-testid="staff-opening"]')).toHaveAttribute(
+      "data-drafts-status",
+      "loading",
+    );
+    const start = page.locator('[data-testid="start-opening-check"]');
+    await expect(start).toBeDisabled();
+
+    const clickWhileHeld = start.click();
+    await expect(page).toHaveURL(/\/staff\/?$/);
+    expect(creates, "no draft create while drafts query is held").toEqual([]);
+
+    await hold.release();
+    await clickWhileHeld;
+    await expect(page).toHaveURL(new RegExp(`/staff/shifts/${shiftId}`), {
+      timeout: 20_000,
+    });
+    expect(creates, "Start must resume, not create").toEqual([]);
+
+    const afterIds = await listStaffDraftIds();
+    expect(afterIds.filter((id) => !beforeIds.includes(id))).toEqual([]);
+    expect(afterIds).toContain(shiftId);
+
+    await page.getByRole("link", { name: /^history$/i }).click();
+    await expect(page.getByRole("heading", { name: /^history$/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(
+      page.locator(`a[href="/staff/shifts/${shiftId}"]`),
+    ).toBeVisible();
+    expect(creates).toEqual([]);
+    assertNoPageErrors(errors);
+  });
+
+  test("a failed drafts query shows retry and does not create", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedDraftShift({
+      photoFileIds: ["e2e_start_guard_retry_photo"],
+    });
+    const creates: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "POST" && isShiftList(new URL(req.url()))) {
+        creates.push(req.url());
+      }
+    });
+
+    let failLists = true;
+    await page.route(
+      (url) => isShiftList(new URL(url)),
+      async (route) => {
+        if (failLists && route.request().method() === "GET") {
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      },
+    );
+
+    await login(page, STAFF.email, STAFF.password);
+    await expect(page.locator('[data-testid="drafts-error"]')).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(
+      page.locator('[data-testid="drafts-error"]').getByRole("button", {
+        name: /try again/i,
+      }),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="staff-opening"]')).toHaveAttribute(
+      "data-drafts-status",
+      "error",
+    );
+    await expect(page.locator('[data-testid="start-opening-check"]')).toBeDisabled();
+    expect(creates).toEqual([]);
+
+    failLists = false;
+    await page
+      .locator('[data-testid="drafts-error"]')
+      .getByRole("button", { name: /try again/i })
+      .click();
+    await expect(page.locator('[data-testid="staff-opening"]')).toHaveAttribute(
+      "data-drafts-status",
+      "ready",
+      { timeout: 20_000 },
+    );
+    const start = page.locator('[data-testid="start-opening-check"]');
+    await expect(start).toBeEnabled();
+    await start.click();
+    await expect(page).toHaveURL(new RegExp(`/staff/shifts/${shiftId}`), {
+      timeout: 20_000,
+    });
+    expect(creates).toEqual([]);
     assertNoPageErrors(errors);
   });
 });

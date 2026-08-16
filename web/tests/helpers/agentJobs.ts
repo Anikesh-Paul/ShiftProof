@@ -78,8 +78,10 @@ function sdk() {
   return server;
 }
 
-/** Seed an empty draft Shift owned by the demo staff user. */
-export async function seedDraftShift(): Promise<string> {
+/** Seed a draft Shift owned by the demo staff user. */
+export async function seedDraftShift(
+  opts: { photoFileIds?: string[] } = {},
+): Promise<string> {
   const { tables } = sdk();
   const { ID } = require(NODE_APPWRITE);
   const now = new Date().toISOString();
@@ -92,7 +94,7 @@ export async function seedDraftShift(): Promise<string> {
       checklistId: "opening_fs",
       createdBy: STAFF_USER_ID,
       status: "draft",
-      photoFileIds: "[]",
+      photoFileIds: JSON.stringify(opts.photoFileIds ?? []),
       startedAt: now,
     },
     permissions: [
@@ -102,6 +104,23 @@ export async function seedDraftShift(): Promise<string> {
     ],
   });
   return row.$id as string;
+}
+
+/** Draft ids for the demo staff user, newest first. */
+export async function listStaffDraftIds(): Promise<string[]> {
+  const { tables } = sdk();
+  const { Query } = require(NODE_APPWRITE);
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: "shifts",
+    queries: [
+      Query.equal("createdBy", STAFF_USER_ID),
+      Query.equal("status", "draft"),
+      Query.orderDesc("startedAt"),
+      Query.limit(100),
+    ],
+  });
+  return (result.rows ?? []).map((row: { $id: string }) => row.$id);
 }
 
 /** Seed a submitted Shift owned by the demo staff user (no photos). */
