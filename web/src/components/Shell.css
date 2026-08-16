@@ -85,6 +85,69 @@
   flex-shrink: 0;
 }
 
+.shell-account {
+  display: block;
+  position: relative;
+}
+
+.shell-account-trigger {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 600;
+  font-size: 1.125rem;
+  letter-spacing: 0.08em;
+  color: var(--label-tertiary);
+  cursor: pointer;
+}
+
+.shell-account-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.shell-account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 50;
+  min-width: 11.5rem;
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.shell-account-role,
+.shell-account-name {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.shell-account-role {
+  color: var(--label-tertiary);
+}
+
+.shell-account-name {
+  margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-account-logout {
+  margin-top: var(--space-2);
+  margin-left: calc(var(--space-3) * -1);
+}
+
 /* Staff nav sits in the same row as brand + account */
 .shell-nav {
   display: flex;

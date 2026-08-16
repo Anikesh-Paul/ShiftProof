@@ -476,6 +476,8 @@ export function ManagerShiftDetail() {
 
   async function runClose() {
     if (!item || !user) return;
+    const ok = window.confirm("Close this opening?");
+    if (!ok) return;
     setError(null);
     setSaving(true);
     try {
@@ -706,37 +708,47 @@ export function ManagerShiftDetail() {
           <Link to="/manager" className="back-link">
             ← Inbox
           </Link>
-          <div className="manager-detail-nav-actions">
-            {item.findings.length > 0 ? (
-              <Link
-                to={`/manager/shifts/${item.shift.$id}/export`}
-                className="text-btn is-accent export-link"
+          {item.findings.length > 0 || item.shift.status !== "closed" ? (
+            <details className="scoreboard-overflow">
+              <summary
+                className="text-btn scoreboard-overflow-trigger"
+                data-testid="scoreboard-overflow"
               >
-                Export pack
-              </Link>
-            ) : null}
-            {item.shift.status !== "closed" ? (
-              <>
-                <Button
-                  variant="quiet"
-                  className="close-opening-btn"
-                  data-testid="reject-check-btn"
-                  disabled={saving}
-                  onClick={() => void runReject()}
-                >
-                  Reject check
-                </Button>
-                <Button
-                  variant="quiet"
-                  className="close-opening-btn"
-                  disabled={saving}
-                  onClick={() => void runClose()}
-                >
-                  Close opening
-                </Button>
-              </>
-            ) : null}
-          </div>
+                More
+              </summary>
+              <div className="scoreboard-overflow-menu">
+                {item.findings.length > 0 ? (
+                  <Link
+                    to={`/manager/shifts/${item.shift.$id}/export`}
+                    className="scoreboard-overflow-item"
+                  >
+                    Export pack
+                  </Link>
+                ) : null}
+                {item.shift.status !== "closed" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="scoreboard-overflow-item"
+                      data-testid="reject-check-btn"
+                      disabled={saving}
+                      onClick={() => void runReject()}
+                    >
+                      Reject check
+                    </button>
+                    <button
+                      type="button"
+                      className="scoreboard-overflow-item"
+                      disabled={saving}
+                      onClick={() => void runClose()}
+                    >
+                      Close opening
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
         </div>
 
         <header className="stack-sm">

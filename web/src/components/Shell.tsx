@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { Button } from "./Button";
@@ -8,9 +9,24 @@ type ShellProps = {
   variant: "staff" | "manager" | "plain";
 };
 
+function useNarrowPhone() {
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia("(max-width: 639px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
+
 export function Shell({ title, variant }: ShellProps) {
   const { user, logout } = useAuth();
+  const narrowPhone = useNarrowPhone();
   const hasStaffNav = variant === "staff";
+  const slimAccount = variant === "manager" && narrowPhone;
 
   return (
     <div className="shell">
@@ -21,8 +37,7 @@ export function Shell({ title, variant }: ShellProps) {
         <div className="shell-chrome-inner">
           <div className="shell-brand">
             <span className="shell-wordmark">ShiftProof</span>
-            {/* Role label only when no inline nav (manager / plain) */}
-            {!hasStaffNav ? (
+            {!hasStaffNav && !slimAccount ? (
               <span className="shell-role">{title}</span>
             ) : null}
           </div>
@@ -39,16 +54,43 @@ export function Shell({ title, variant }: ShellProps) {
           ) : null}
 
           <div className="shell-user">
-            <span className="shell-name" title={user?.email}>
-              {user?.name || user?.email}
-            </span>
-            <Button
-              variant="quiet"
-              onClick={() => void logout()}
-              className="shell-logout"
-            >
-              Log out
-            </Button>
+            {slimAccount ? (
+              <details className="shell-account">
+                <summary
+                  className="shell-account-trigger"
+                  data-testid="shell-overflow"
+                  aria-label="Account"
+                >
+                  ···
+                </summary>
+                <div className="shell-account-menu">
+                  <p className="shell-account-role">{title}</p>
+                  <p className="shell-account-name" title={user?.email}>
+                    {user?.name || user?.email}
+                  </p>
+                  <Button
+                    variant="quiet"
+                    onClick={() => void logout()}
+                    className="shell-account-logout"
+                  >
+                    Log out
+                  </Button>
+                </div>
+              </details>
+            ) : (
+              <>
+                <span className="shell-name" title={user?.email}>
+                  {user?.name || user?.email}
+                </span>
+                <Button
+                  variant="quiet"
+                  onClick={() => void logout()}
+                  className="shell-logout"
+                >
+                  Log out
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
