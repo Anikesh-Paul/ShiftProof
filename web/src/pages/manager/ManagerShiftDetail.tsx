@@ -20,7 +20,7 @@ import {
 import { FindingChip } from "../../components/FindingChip";
 import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
-import { formatEventType } from "../../lib/events";
+import { formatEventType, formatFindingSource } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
 import {
@@ -559,7 +559,7 @@ export function ManagerShiftDetail() {
 
   /**
    * Manager can also attach re-check (backup). Primary path is staff upload.
-   * Re-check re-scores the finding; task stays open until Mark done.
+   * Re-check writes a staff Attestation; task stays open until Mark done.
    */
   async function onRecheckFile(taskId: string, fileList: FileList | null) {
     if (!fileList?.[0] || !item || !user) return;
@@ -569,17 +569,19 @@ export function ManagerShiftDetail() {
     setRecheckTaskId(taskId);
     try {
       if (source === "demo" || taskId.startsWith("local_")) {
+        // Local demo: staff Attestation — not a fake AI score. Override fields stay.
+        const attestedAt = new Date().toISOString();
+        const recheckFileId = `demo_recheck_${Date.now()}`;
         setTasks((prev) =>
           prev.map((t) =>
             t.$id === taskId
               ? {
                   ...t,
-                  recheckFileId: `demo_recheck_${Date.now()}`,
+                  recheckFileId,
                 }
               : t,
           ),
         );
-        // Local demo: flip matching finding to pass after re-check
         setItem((prev) => {
           if (!prev) return prev;
           const findings = prev.findings.map((f) =>
@@ -587,10 +589,8 @@ export function ManagerShiftDetail() {
               ? {
                   ...f,
                   status: "pass" as const,
-                  confidence: 0.91,
-                  evidenceNote: "Re-check photo confirms compliance after fix.",
-                  source: "ai" as const,
-                  overrideReason: undefined,
+                  evidenceNote: `Staff attested after fix. Re-check photo ${recheckFileId} is the basis.`,
+                  source: "staff_recheck" as const,
                 }
               : f,
           );
@@ -606,30 +606,32 @@ export function ManagerShiftDetail() {
         setEvents((prev) => [
           {
             $id: `local_ev_recheck_${Date.now()}`,
-            $createdAt: new Date().toISOString(),
-            $updatedAt: new Date().toISOString(),
+            $createdAt: attestedAt,
+            $updatedAt: attestedAt,
             shiftId: item.shift.$id,
             type: "task.recheck",
             actorUserId: user.$id,
             payloadJson: JSON.stringify({ taskId, findingId: task.findingId }),
-            createdAt: new Date().toISOString(),
+            createdAt: attestedAt,
           },
           {
-            $id: `local_ev_rescore_${Date.now()}`,
-            $createdAt: new Date().toISOString(),
-            $updatedAt: new Date().toISOString(),
+            $id: `local_ev_attest_${Date.now()}`,
+            $createdAt: attestedAt,
+            $updatedAt: attestedAt,
             shiftId: item.shift.$id,
-            type: "finding.rescored",
+            type: "finding.attested",
             actorUserId: user.$id,
             payloadJson: JSON.stringify({
               findingId: task.findingId,
               status: "pass",
+              attestedBy: user.$id,
+              attestedAt,
             }),
-            createdAt: new Date().toISOString(),
+            createdAt: attestedAt,
           },
           ...prev,
         ]);
-        setToast("Re-check attached (sample). AI re-scored Pass — mark done when ready.");
+        setToast("Re-check attached (sample). Staff attested — mark done when ready.");
       } else {
         const fileId = await uploadEvidence(fileList[0]);
         await attachRecheckAndRescore({
@@ -645,7 +647,7 @@ export function ManagerShiftDetail() {
           setSource(refreshed.source);
         }
         await loadExtras(item.shift.$id, false);
-        setToast("Re-check saved. Finding re-scored — mark done when ready.");
+        setToast("Re-check saved. Staff attested — mark done when ready.");
       }
     } catch (err) {
       setError(getErrorMessage(err, "Could not attach re-check photo"));
@@ -1023,7 +1025,7 @@ export function ManagerShiftDetail() {
                     </p>
                     <p className="finding-quote muted">“{f.quote}”</p>
                     <p className="finding-note caption">{f.evidenceNote}</p>
-                    {f.source === "manager_override" && f.overrideReason ? (
+                    {f.overrideReason ? (
                       <p
                         className="override-reason caption"
                         data-testid="override-reason"
@@ -1031,8 +1033,12 @@ export function ManagerShiftDetail() {
                         Override: {f.overrideReason}
                       </p>
                     ) : null}
-                    <p className="finding-conf caption">
-                      {f.source === "manager_override" ? "Manager override" : "AI"}
+                    <p
+                      className="finding-conf caption"
+                      data-testid="finding-source"
+                      data-source={f.source}
+                    >
+                      {formatFindingSource(f.source)}
                     </p>
                   </button>
                 </li>
@@ -1067,7 +1073,7 @@ export function ManagerShiftDetail() {
                           className="caption task-recheck-status"
                           data-testid="task-recheck-status"
                         >
-                          Re-check on file · AI re-scored — close when ready
+                          Re-check on file · staff attested — close when ready
                         </p>
                       ) : t.status === "open" ? (
                         <p className="caption muted">
@@ -1191,7 +1197,7 @@ export function ManagerShiftDetail() {
                 </p>
                 <p className="caption" data-testid="assign-to-staff">
                   To {item ? resolveStaffLabel(item.shift.createdBy) : "staff"}{" "}
-                  — they upload a new photo; AI re-scores; you mark done.
+                  — they upload a new photo; staff attests; you mark done.
                 </p>
                 <div className="manager-sticky-actions">
                   <Button variant="secondary" onClick={() => setMode("idle")}>

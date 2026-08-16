@@ -7,7 +7,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { FindingChip } from "../../components/FindingChip";
 import { EvidenceImg } from "../../components/EvidenceImg";
-import { formatEventType } from "../../lib/events";
+import { formatEventType, formatFindingSource } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import {
   itemLabel,
@@ -213,10 +213,13 @@ export function ComplianceExport() {
                       <td className="export-note">“{f.quote}”</td>
                       <td>{Math.round(f.confidence * 100)}%</td>
                       <td className="export-note">{f.evidenceNote}</td>
-                      <td>
+                      <td
+                        data-testid="export-source"
+                        data-source={f.source}
+                      >
                         {f.source === "manager_override"
                           ? `Override${f.overrideReason ? `: ${f.overrideReason}` : ""}`
-                          : "AI"}
+                          : formatFindingSource(f.source)}
                       </td>
                     </tr>
                   ))}

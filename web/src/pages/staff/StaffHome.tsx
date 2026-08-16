@@ -202,7 +202,7 @@ export function StaffHome() {
         ),
       );
       setFixToast(
-        "Re-check uploaded. AI re-scored this item — manager will close the task.",
+        "Re-check uploaded. Staff attested this item — manager will close the task.",
       );
       await loadFixTasks(user.$id, { silent: true });
     } catch (err) {
@@ -356,6 +356,7 @@ export function StaffHome() {
                   key={t.$id}
                   className="staff-fix-row"
                   data-testid="staff-fix-row"
+                  data-finding-id={t.findingId}
                   data-state={t.recheckFileId ? "sent" : "needs-photo"}
                 >
                   <div className="staff-fix-body">

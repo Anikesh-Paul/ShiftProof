@@ -459,8 +459,8 @@ function byTaskRecency(a: Task, b: Task) {
 }
 
 /**
- * Phase 3 / boost #3 — attach re-check photo, re-score finding, leave task open.
- * Manager marks done after reviewing the re-score.
+ * Attach re-check photo, write a staff Attestation, leave task open.
+ * Manager marks done after reviewing the Attestation.
  */
 export async function attachRecheckAndRescore(opts: {
   taskId: string;

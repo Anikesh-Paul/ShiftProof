@@ -418,7 +418,8 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     const rows = page.locator(".finding-row");
     expect(await rows.count()).toBeGreaterThanOrEqual(5);
 
-    await rows.first().click();
+    const target = rows.filter({ hasNotText: /unclear/i }).first();
+    await target.click();
     await expect(page.locator(".manager-sticky")).toBeVisible();
     const gallery = page.getByRole("region", { name: /shift evidence photos/i });
     await expect(gallery.locator("img.evidence-img, img").first()).toBeVisible();
@@ -436,8 +437,11 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     });
 
     await waitForFindings(page);
-    const assignable = rows.filter({ hasNotText: /unclear/i }).first();
-    await assignable.click();
+    const overridden = page
+      .locator(".finding-row")
+      .filter({ hasText: /Playwright smoke override/i })
+      .first();
+    await overridden.click();
     const assignBtn = page.getByRole("button", { name: /assign fix/i });
     await expect(assignBtn).toBeVisible({ timeout: 10_000 });
     await expect(assignBtn).toBeEnabled({ timeout: 10_000 });
@@ -490,6 +494,141 @@ test.describe("staff scoring + manager golden + fix loop", () => {
       timeout: 20_000,
     });
     await expect(page.getByRole("button", { name: /print|save pdf/i })).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+});
+
+test.describe("demo pack attestation", () => {
+  test("demo-pack re-check is staff-attested and keeps a pre-placed override", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto("/manager/shifts/demo_shift_a");
+    await expect(page.getByText(/sample data/i)).toBeVisible({ timeout: 25_000 });
+    await waitForFindings(page);
+
+    const reason = `Demo pack override ${Date.now()}`;
+    const target = page
+      .locator(".finding-row")
+      .filter({ has: page.locator('.finding-chip[data-status="gap"]') })
+      .first();
+    await target.click();
+    await page.getByRole("button", { name: /^override$/i }).click();
+    await page.locator('input[placeholder*="overriding"]').fill(reason);
+    await page.getByRole("button", { name: /save override/i }).click();
+    await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
+      timeout: 20_000,
+    });
+
+    await waitForFindings(page);
+    const overridden = page.locator(".finding-row").filter({ hasText: reason }).first();
+    await overridden.click();
+    await page.getByRole("button", { name: /assign fix/i }).click();
+    await page.locator('[data-testid="create-task-btn"]').click();
+    await expect(page.locator(".task-row").first()).toBeVisible({ timeout: 20_000 });
+
+    await page.locator('[data-testid="recheck-input"]').first().setInputFiles(TINY_PNG);
+    await expect(page.getByText(/staff attested/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await expect(overridden.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "pass",
+    );
+    await expect(overridden.locator('[data-testid="finding-source"]')).toHaveAttribute(
+      "data-source",
+      "staff_recheck",
+    );
+    await expect(overridden.getByTestId("override-reason")).toContainText(reason);
+    await expect(page.locator('[data-testid="task-mark-done"]').first()).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+});
+
+test.describe("staff attestation", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed a scored Gap",
+    );
+  });
+
+  test("re-check is staff-attested, keeps override, and manager closes the task", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    const findingId = await seedFinding(shiftId, {
+      itemId: "e2e_attestation_gap",
+      status: "gap",
+    });
+    await markShiftScored(shiftId);
+    const reason = `Attestation override ${Date.now()}`;
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    const row = page.locator(`.finding-row[data-finding-id="${findingId}"]`);
+    await expect(row).toBeVisible({ timeout: 25_000 });
+    await row.click();
+    await page.getByRole("button", { name: /^override$/i }).click();
+    await page.locator('input[placeholder*="overriding"]').fill(reason);
+    await page.getByRole("button", { name: /save override/i }).click();
+    await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
+      timeout: 20_000,
+    });
+
+    await page
+      .getByRole("button", { name: /^show all$/i })
+      .click({ timeout: 3_000 })
+      .catch(() => {});
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await row.click();
+    await page.getByRole("button", { name: /assign fix/i }).click();
+    await page.locator('[data-testid="create-task-btn"]').click();
+    await expect(page.locator(".task-row").first()).toBeVisible({ timeout: 20_000 });
+
+    await logout(page);
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const recheck = page.locator('[data-testid="staff-recheck-input"]');
+    await expect(recheck).toBeAttached({ timeout: 25_000 });
+    await recheck.setInputFiles(TINY_PNG);
+    await expect(page.getByText(/re-check sent/i)).toBeVisible({ timeout: 45_000 });
+
+    await logout(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    await page
+      .getByRole("button", { name: /^show all$/i })
+      .click({ timeout: 3_000 })
+      .catch(() => {});
+    await expect(row).toBeVisible({ timeout: 25_000 });
+    await expect(row.locator(".finding-chip")).toHaveAttribute("data-status", "pass");
+    await expect(row.locator('[data-testid="finding-source"]')).toHaveAttribute(
+      "data-source",
+      "staff_recheck",
+    );
+    await expect(row.locator('[data-testid="finding-source"]')).toHaveText(
+      /staff attested/i,
+    );
+    await expect(row.getByTestId("override-reason")).toContainText(reason);
+    await expect(page.getByText(/staff attested — close when ready/i)).toBeVisible();
+    const markDone = page.locator('[data-testid="task-mark-done"]');
+    await expect(markDone).toBeVisible();
+    await markDone.click();
+    await expect(markDone).toBeHidden({ timeout: 20_000 });
+
+    await page.goto(`/manager/shifts/${shiftId}/export`);
+    await expect(page.getByRole("heading", { name: /compliance pack/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    const exportSource = page.locator(
+      '[data-testid="export-source"][data-source="staff_recheck"]',
+    );
+    await expect(exportSource).toBeVisible();
+    await expect(exportSource).toHaveText(/staff attested/i);
     assertNoPageErrors(errors);
   });
 });

@@ -721,7 +721,11 @@ export function ShiftPhotos() {
                 const assigned =
                   openTasks.find((t) => t.findingId === f.$id) ?? null;
                 return (
-                  <li key={f.$id} className="staff-score-row">
+                  <li
+                    key={f.$id}
+                    className="staff-score-row"
+                    data-finding-id={f.$id}
+                  >
                     <FindingChip status={f.status} />
                     <div className="staff-score-copy">
                       <p className="staff-score-label">{itemLabel(f.itemId)}</p>
@@ -740,6 +744,7 @@ export function ShiftPhotos() {
                             type="file"
                             accept={PHOTO_ACCEPT}
                             className="visually-hidden"
+                            data-testid="staff-recheck-input"
                             disabled={recheckFindingId === f.$id}
                             onChange={(e) => {
                               void onFindingRecheck(assigned, e.target.files);
