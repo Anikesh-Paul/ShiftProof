@@ -511,27 +511,6 @@ export async function attachRecheckAndRescore(opts: {
   return row as unknown as Task;
 }
 
-/**
- * @deprecated Prefer attachRecheckAndRescore (leaves task open for manager close).
- * Kept for any callers that expect close-on-upload.
- */
-export async function attachRecheckAndComplete(opts: {
-  taskId: string;
-  recheckFileId: string;
-}): Promise<Task> {
-  const row = await tables.updateRow({
-    databaseId: DB,
-    tableId: T.tasks,
-    rowId: opts.taskId,
-    data: {
-      recheckFileId: opts.recheckFileId,
-      status: "done",
-      doneAt: new Date().toISOString(),
-    } as RowData,
-  });
-  return row as unknown as Task;
-}
-
 /** API.md manager §9 — mark a stale waiting/running job failed. Shift unchanged. */
 export async function failStaleJob(
   jobId: string,
