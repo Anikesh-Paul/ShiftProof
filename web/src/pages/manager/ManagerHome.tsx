@@ -213,7 +213,7 @@ export function ManagerHome() {
   );
 
   const stuckItems = useMemo(
-    () => items.filter((s) => isStuckScoring(s.shift)),
+    () => items.filter((s) => isStuckScoring(s.shift, s.latestJob)),
     [items],
   );
 
@@ -236,7 +236,7 @@ export function ManagerHome() {
         if (isSameLocalDay(s.shift.submittedAt || s.shift.startedAt, timeZone)) {
           return false;
         }
-        if (isStuckScoring(s.shift)) return false;
+        if (isStuckScoring(s.shift, s.latestJob)) return false;
         return s.gapCount > 0 || s.unclearCount > 0;
       });
     }
@@ -613,7 +613,7 @@ export function ManagerHome() {
                     <div className="manager-row-meta">
                       {row.latestJob?.status === "failed" ? (
                         <span className="manager-meta-wait">Score failed</span>
-                      ) : isStuckScoring(row.shift) ? (
+                      ) : isStuckScoring(row.shift, row.latestJob) ? (
                         <span className="manager-meta-wait">
                           Scoring stuck — retry from the scoreboard
                         </span>

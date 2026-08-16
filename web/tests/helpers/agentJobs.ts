@@ -105,10 +105,12 @@ export async function seedDraftShift(): Promise<string> {
 }
 
 /** Seed a submitted Shift owned by the demo staff user (no photos). */
-export async function seedSubmittedShift(): Promise<string> {
+export async function seedSubmittedShift(
+  opts: { submittedAt?: string } = {},
+): Promise<string> {
   const { tables } = sdk();
   const { ID } = require(NODE_APPWRITE);
-  const now = new Date().toISOString();
+  const submittedAt = opts.submittedAt ?? new Date().toISOString();
   const row = await tables.createRow({
     databaseId: DB,
     tableId: "shifts",
@@ -119,8 +121,8 @@ export async function seedSubmittedShift(): Promise<string> {
       createdBy: STAFF_USER_ID,
       status: "submitted",
       photoFileIds: "[]",
-      startedAt: now,
-      submittedAt: now,
+      startedAt: submittedAt,
+      submittedAt,
     },
     permissions: [
       'read("users")',
@@ -195,6 +197,48 @@ export async function latestJobFor(
   });
   const row = result.rows?.[0];
   return row ? { id: row.$id, status: row.status } : null;
+}
+
+/** Seed one Finding so a Scoreboard can appear without live Gemini. */
+export async function seedFinding(
+  shiftId: string,
+  opts: {
+    itemId?: string;
+    status?: "pass" | "gap" | "unclear";
+  } = {},
+): Promise<string> {
+  const { tables } = sdk();
+  const { ID } = require(NODE_APPWRITE);
+  const row = await tables.createRow({
+    databaseId: DB,
+    tableId: "findings",
+    rowId: ID.unique(),
+    data: {
+      shiftId,
+      itemId: opts.itemId ?? "gloves_worn",
+      status: opts.status ?? "gap",
+      clauseId: "FS-01",
+      quote: "Food handlers must wear clean disposable gloves at the prep station.",
+      confidence: 0.86,
+      evidenceNote: "Seeded e2e finding.",
+      source: "ai",
+    },
+    permissions: ['read("users")'],
+  });
+  return row.$id as string;
+}
+
+export async function markShiftScored(shiftId: string): Promise<void> {
+  const { tables } = sdk();
+  await tables.updateRow({
+    databaseId: DB,
+    tableId: "shifts",
+    rowId: shiftId,
+    data: {
+      status: "scored",
+      scoredAt: new Date().toISOString(),
+    },
+  });
 }
 
 /** Newest runShiftScore execution id — proves Retry re-triggered scoring. */

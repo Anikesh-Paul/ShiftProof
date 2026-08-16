@@ -13,7 +13,9 @@ import {
   hasServerKey,
   latestExecutionId,
   latestJobFor,
+  markShiftScored,
   seedAgentJob,
+  seedFinding,
   seedSubmittedShift,
   setAgentJobStatus,
 } from "../helpers/agentJobs";
@@ -479,6 +481,81 @@ test.describe("staff photo upload races", () => {
       "data-has-file",
       "true",
     );
+    assertNoPageErrors(errors);
+  });
+});
+
+test.describe("manager shift detail live", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed agent jobs",
+    );
+  });
+
+  test("stuck banner clears once Retry has a live Agent job", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const submittedAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    const shiftId = await seedSubmittedShift({ submittedAt });
+    await seedAgentJob(shiftId, "failed", {
+      errorMessage: "seeded e2e failure (stuck banner)",
+    });
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    await expect(page.getByRole("heading", { name: /scoreboard/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(page.locator(".status-chip")).toHaveAttribute(
+      "data-status",
+      "failed",
+    );
+    const banner = page.locator('[data-testid="stuck-banner"]');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText(/scoring is stuck/i);
+
+    await page.getByRole("button", { name: /retry scoring/i }).click();
+    await expect(banner).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByText(/scoring started again/i)).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+
+  test("scoreboard updates live when scoring completes, without a reload", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    const jobId = await seedAgentJob(shiftId, "running");
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    await expect(page.getByRole("heading", { name: /scoreboard/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(page.getByRole("heading", { name: /waiting on score/i })).toBeVisible();
+    await expect(page.locator(".status-chip")).toHaveAttribute(
+      "data-status",
+      "submitted",
+    );
+    await expect(page.locator(".finding-row")).toHaveCount(0);
+
+    // Realtime subscribe is created after the live load; give the socket a beat.
+    await page.waitForTimeout(1_500);
+
+    await seedFinding(shiftId, { itemId: "gloves_worn", status: "gap" });
+    await setAgentJobStatus(jobId, "done");
+    await markShiftScored(shiftId);
+
+    await expect(page.locator(".finding-row").first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator(".status-chip")).toHaveAttribute(
+      "data-status",
+      "scored",
+    );
+    await expect(page).toHaveURL(new RegExp(`/manager/shifts/${shiftId}`));
     assertNoPageErrors(errors);
   });
 });

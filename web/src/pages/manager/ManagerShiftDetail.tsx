@@ -38,6 +38,7 @@ import {
   loadManagerShift,
   markTaskDone,
   overrideFinding,
+  subscribeManagerTables,
   sweepStaleJobs,
   type ManagerShiftSummary,
 } from "../../lib/manager";
@@ -207,7 +208,7 @@ export function ManagerShiftDetail() {
           });
         }
         const stuck =
-          isStuckScoring(result.item.shift) ||
+          isStuckScoring(result.item.shift, result.item.latestJob) ||
           result.item.shift.status === "submitted" ||
           result.item.shift.status === "scoring";
         setTraceOpen(stuck);
@@ -237,6 +238,28 @@ export function ManagerShiftDetail() {
       cancelled = true;
     };
   }, [shiftId, loadExtras, user]);
+
+  useEffect(() => {
+    if (source !== "live" || !shiftId) return;
+    let cancelled = false;
+    const unsub = subscribeManagerTables(() => {
+      void (async () => {
+        try {
+          const result = await loadManagerShift(shiftId);
+          if (cancelled || !result) return;
+          setItem(result.item);
+          setSource(result.source);
+          void loadExtras(result.item.shift.$id, result.source === "demo");
+        } catch {
+          /* keep the painted summary */
+        }
+      })();
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [source, shiftId, loadExtras]);
 
   const selected = useMemo(
     () => item?.findings.find((f) => f.$id === selectedId) ?? null,
@@ -725,8 +748,12 @@ export function ManagerShiftDetail() {
           </p>
         </header>
 
-        {isStuckScoring(item.shift) ? (
-          <div className="manager-stuck-banner" role="status">
+        {isStuckScoring(item.shift, item.latestJob) ? (
+          <div
+            className="manager-stuck-banner"
+            role="status"
+            data-testid="stuck-banner"
+          >
             <div>
               <p className="manager-stuck-title">Scoring is stuck</p>
               <p className="caption muted">

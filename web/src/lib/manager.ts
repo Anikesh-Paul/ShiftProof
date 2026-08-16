@@ -59,9 +59,22 @@ export function isSameLocalDay(
   }
 }
 
-/** submitted/scoring longer than 10 minutes — manager can retry or close. */
-export function isStuckScoring(shift: Shift): boolean {
+/**
+ * submitted/scoring longer than 10 minutes — manager can retry or close.
+ * A waiting/running job that is itself not stale means not stuck, even when
+ * submittedAt is old (Retry just created a live job).
+ */
+export function isStuckScoring(
+  shift: Shift,
+  latestJob?: AgentJob | null,
+): boolean {
   if (shift.status !== "submitted" && shift.status !== "scoring") return false;
+  if (
+    latestJob &&
+    (latestJob.status === "waiting" || latestJob.status === "running")
+  ) {
+    return isStaleAgentJob(latestJob);
+  }
   const t = Date.parse(shift.submittedAt || shift.startedAt || "");
   if (Number.isNaN(t)) return true;
   return Date.now() - t > STUCK_MS;
