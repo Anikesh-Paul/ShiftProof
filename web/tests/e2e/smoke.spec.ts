@@ -924,6 +924,95 @@ test.describe("AI re-check", () => {
   });
 });
 
+test.describe("staff Unclear evidence note", () => {
+  test.beforeEach(() => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed scored Findings",
+    );
+  });
+
+  test("Your scores shows the stored Unclear note and hides seeded notes", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const stamp = Date.now();
+    const realNote = `Frame shows the sink drain, not the glove box. ${stamp}`;
+    const passNote = `Gloves visible at the cuff. ${stamp}`;
+    const gapNote = `Bare hands at the prep board. ${stamp}`;
+    const shiftId = await seedSubmittedShift();
+    const unclearId = await seedFinding(shiftId, {
+      itemId: "e2e_unclear_real_note",
+      status: "unclear",
+      evidenceNote: realNote,
+    });
+    const seededUnclearId = await seedFinding(shiftId, {
+      itemId: "e2e_unclear_seeded_note",
+      status: "unclear",
+    });
+    const passId = await seedFinding(shiftId, {
+      itemId: "e2e_pass_hidden_note",
+      status: "pass",
+      evidenceNote: passNote,
+    });
+    const gapId = await seedFinding(shiftId, {
+      itemId: "e2e_gap_hidden_note",
+      status: "gap",
+      evidenceNote: gapNote,
+    });
+    await markShiftScored(shiftId);
+    await seedOpenTask({
+      shiftId,
+      findingId: unclearId,
+      title: "Retake: Gloves at prep",
+    });
+
+    await login(page, STAFF.email, STAFF.password);
+    await page.goto(`/staff/shifts/${shiftId}`);
+    await expect(page.getByRole("heading", { name: /your scores/i })).toBeVisible({
+      timeout: 25_000,
+    });
+
+    const unclearRow = page.locator(`[data-finding-id="${unclearId}"]`);
+    await expect(unclearRow).toBeVisible();
+    await expect(unclearRow.getByTestId("staff-evidence-note")).toHaveText(realNote);
+
+    const seededRow = page.locator(`[data-finding-id="${seededUnclearId}"]`);
+    await expect(seededRow).toBeVisible();
+    await expect(seededRow.getByTestId("staff-evidence-note")).toHaveCount(0);
+    await expect(seededRow.getByText("Seeded e2e finding.")).toHaveCount(0);
+    await expect(page.getByText("Seeded e2e finding.")).toHaveCount(0);
+
+    const passRow = page.locator(`[data-finding-id="${passId}"]`);
+    await expect(passRow).toBeVisible();
+    await expect(passRow.getByTestId("staff-evidence-note")).toHaveCount(0);
+    await expect(passRow.getByText(passNote)).toHaveCount(0);
+
+    const gapRow = page.locator(`[data-finding-id="${gapId}"]`);
+    await expect(gapRow).toBeVisible();
+    await expect(gapRow.getByTestId("staff-evidence-note")).toHaveCount(0);
+    await expect(gapRow.getByText(gapNote)).toHaveCount(0);
+
+    await page.goto("/staff");
+    await expect(page.getByTestId("staff-opening")).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByTestId("open-fixes")).toBeVisible({ timeout: 25_000 });
+    const more = page.getByRole("button", { name: /show \d+ more/i });
+    await more.waitFor({ state: "visible", timeout: 8_000 }).then(
+      () => more.click(),
+      () => undefined,
+    );
+    const homeRow = page.locator(
+      `[data-testid="staff-fix-row"][data-finding-id="${unclearId}"]`,
+    );
+    if ((await homeRow.count()) > 0) {
+      await expect(homeRow.getByTestId("staff-evidence-note")).toHaveCount(0);
+    }
+    await expect(page.getByText(realNote)).toHaveCount(0);
+    await expect(page.getByTestId("staff-evidence-note")).toHaveCount(0);
+    assertNoPageErrors(errors);
+  });
+});
+
 function isAgentJobList(url: URL): boolean {
   return /\/tablesdb\/[^/]+\/tables\/agent_jobs\/rows\/?$/.test(url.pathname);
 }

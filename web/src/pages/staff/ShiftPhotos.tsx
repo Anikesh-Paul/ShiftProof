@@ -27,6 +27,7 @@ import {
   listEvents,
   listTasks,
 } from "../../lib/manager";
+import { displayEvidenceNote } from "../../lib/evidenceNote";
 import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   PHOTO_ACCEPT,
@@ -693,6 +694,10 @@ export function ShiftPhotos() {
               {sortedFindings.map((f) => {
                 const assigned =
                   openTasks.find((t) => t.findingId === f.$id) ?? null;
+                const note =
+                  f.status === "unclear"
+                    ? displayEvidenceNote(f.evidenceNote)
+                    : null;
                 return (
                   <li
                     key={f.$id}
@@ -702,6 +707,14 @@ export function ShiftPhotos() {
                     <FindingChip status={f.status} />
                     <div className="staff-score-copy">
                       <p className="staff-score-label">{itemLabel(f.itemId)}</p>
+                      {note ? (
+                        <p
+                          className="staff-score-quote caption"
+                          data-testid="staff-evidence-note"
+                        >
+                          {note}
+                        </p>
+                      ) : null}
                       {assigned &&
                       (!assigned.recheckFileId || f.status !== "pass") ? (
                         <div className="staff-score-recheck-open">

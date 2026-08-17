@@ -8,6 +8,7 @@ import { Button } from "../../components/Button";
 import { FindingChip } from "../../components/FindingChip";
 import { EvidenceImg } from "../../components/EvidenceImg";
 import { formatEventType, formatFindingSource } from "../../lib/events";
+import { displayEvidenceNote } from "../../lib/evidenceNote";
 import { getErrorMessage } from "../../lib/errors";
 import {
   itemLabel,
@@ -362,13 +363,6 @@ function formatTaskStatus(status: TaskStatus | string): string {
 
 function confidenceLabel(confidence: number): string {
   return `${Math.round(confidence * 100)}% sure`;
-}
-
-function displayEvidenceNote(note: string | undefined): string | null {
-  if (!note?.trim()) return null;
-  if (/seeded e2e finding\.?/i.test(note.trim())) return null;
-  if (/seeded/i.test(note.trim())) return null;
-  return note;
 }
 
 function isHarnessName(text: string): boolean {

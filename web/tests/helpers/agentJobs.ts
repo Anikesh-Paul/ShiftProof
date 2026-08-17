@@ -253,6 +253,7 @@ export async function seedFinding(
     quote?: string;
     confidence?: number;
     source?: "ai" | "manager_override" | "staff_recheck";
+    evidenceNote?: string;
     overrideReason?: string;
     overriddenBy?: string;
     overriddenAt?: string;
@@ -273,7 +274,7 @@ export async function seedFinding(
         opts.quote ??
         "Food handlers must wear clean disposable gloves at the prep station.",
       confidence: opts.confidence ?? 0.86,
-      evidenceNote: "Seeded e2e finding.",
+      evidenceNote: opts.evidenceNote ?? "Seeded e2e finding.",
       source: opts.source ?? "ai",
       overrideReason: opts.overrideReason ?? null,
       overriddenBy: opts.overriddenBy ?? null,
