@@ -17,7 +17,13 @@ import {
   type ManagerShiftSummary,
 } from "../../lib/manager";
 import { getSite, parsePhotoFileIds } from "../../lib/shifts";
-import type { AuditEvent, Task } from "../../types/shiftproof";
+import type {
+  AuditEvent,
+  FindingStatus,
+  ShiftStatus,
+  Task,
+  TaskStatus,
+} from "../../types/shiftproof";
 import "./ComplianceExport.css";
 
 export function ComplianceExport() {
@@ -29,6 +35,7 @@ export function ComplianceExport() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [printReady, setPrintReady] = useState(false);
+  const [generatedAt] = useState(() => new Date().toISOString());
   const evidenceRef = useRef<HTMLElement>(null);
   const photoIds = item ? parsePhotoFileIds(item.shift.photoFileIds) : [];
   const photoKey = photoIds.join("\0");
@@ -114,7 +121,6 @@ export function ComplianceExport() {
   const unclear = findings.filter((f) => f.status === "unclear");
   const passes = findings.filter((f) => f.status === "pass");
   const overrides = findings.filter((f) => f.source === "manager_override");
-  const generatedAt = new Date().toISOString();
 
   return (
     <div className="export-shell">
@@ -162,7 +168,7 @@ export function ComplianceExport() {
           </div>
           <div>
             <span className="export-label">Status</span>
-            <p>{shift.status}</p>
+            <p>{formatShiftStatus(shift.status)}</p>
           </div>
           <div>
             <span className="export-label">Scored</span>
@@ -232,27 +238,37 @@ export function ComplianceExport() {
               </thead>
               <tbody data-testid="export-scoreboard">
                 {[...findings]
-                  .sort((a, b) => rank(a.status) - rank(b.status))
-                  .map((f) => (
-                    <tr key={f.$id}>
-                      <td>
-                        <FindingChip status={f.status} />
-                      </td>
-                      <td>{itemLabel(f.itemId)}</td>
-                      <td>{f.clauseId}</td>
-                      <td className="export-note">“{f.quote}”</td>
-                      <td>{Math.round(f.confidence * 100)}%</td>
-                      <td className="export-note">{f.evidenceNote}</td>
-                      <td
-                        data-testid="export-source"
-                        data-source={f.source}
-                      >
-                        {f.source === "manager_override"
-                          ? `Override${f.overrideReason ? `: ${f.overrideReason}` : ""}`
-                          : formatFindingSource(f.source)}
-                      </td>
-                    </tr>
-                  ))}
+                  .sort((a, b) => findingStatusRank(a.status) - findingStatusRank(b.status))
+                  .map((f) => {
+                    const note = displayEvidenceNote(f.evidenceNote);
+                    return (
+                      <tr key={f.$id} className="export-row">
+                        <td className="export-cell-status">
+                          <FindingChip status={f.status} />
+                        </td>
+                        <td className="export-cell-item">{itemLabel(f.itemId)}</td>
+                        <td className="export-cell-clause">{f.clauseId}</td>
+                        <td className="export-cell-quote export-note">
+                          {f.quote ? `“${f.quote}”` : "—"}
+                        </td>
+                        <td className="export-cell-conf">
+                          {confidenceLabel(f.confidence)}
+                        </td>
+                        <td className="export-cell-evidence export-note">
+                          {note || "—"}
+                        </td>
+                        <td
+                          className="export-cell-source"
+                          data-testid="export-source"
+                          data-source={f.source}
+                        >
+                          {f.source === "manager_override"
+                            ? `Override${f.overrideReason ? `: ${f.overrideReason}` : ""}`
+                            : formatFindingSource(f.source)}
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           )}
@@ -262,13 +278,17 @@ export function ComplianceExport() {
           <section className="export-section">
             <h2>Fix tasks</h2>
             <ul className="export-gaps">
-              {tasks.map((t) => (
-                <li key={t.$id}>
-                  <strong>{t.title}</strong> — {t.status}
-                  {t.recheckFileId ? " · re-check photo on file" : ""}
-                  {t.doneAt ? ` · done ${formatLong(t.doneAt)}` : ""}
-                </li>
-              ))}
+              {tasks.map((t) => {
+                const f = findings.find((find) => find.$id === t.findingId);
+                return (
+                  <li key={t.$id}>
+                    <strong>{openFixTitle(t, f)}</strong> —{" "}
+                    {formatTaskStatus(t.status)}
+                    {t.recheckFileId ? " · re-check photo on file" : ""}
+                    {t.doneAt ? ` · done ${formatLong(t.doneAt)}` : ""}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ) : null}
@@ -288,8 +308,7 @@ export function ComplianceExport() {
         ) : null}
 
         <footer className="export-footer caption">
-          ShiftProof · clause-cited opening proof · not a certification claim ·
-          demo / operational record only
+          ShiftProof · clause-cited opening proof · operational record only
         </footer>
       </article>
     </div>
@@ -304,10 +323,57 @@ function decodeEvidenceImages(root: HTMLElement | null): Promise<void> {
   ).then(() => undefined);
 }
 
-function rank(status: string): number {
+function findingStatusRank(status: FindingStatus | string): number {
   if (status === "gap") return 0;
   if (status === "unclear") return 1;
   return 2;
+}
+
+const SHIFT_STATUS_LABELS: Record<ShiftStatus, string> = {
+  draft: "Draft",
+  submitted: "Submitted",
+  scoring: "Scoring",
+  scored: "Scored",
+  closed: "Closed",
+};
+
+function formatShiftStatus(status: ShiftStatus | string): string {
+  return (
+    SHIFT_STATUS_LABELS[status as ShiftStatus] ??
+    (status ? status.charAt(0).toUpperCase() + status.slice(1) : "—")
+  );
+}
+
+function formatTaskStatus(status: TaskStatus | string): string {
+  return status === "done" ? "Done" : "Open";
+}
+
+function confidenceLabel(confidence: number): string {
+  return `${Math.round(confidence * 100)}% sure`;
+}
+
+function displayEvidenceNote(note: string | undefined): string | null {
+  if (!note?.trim()) return null;
+  if (/seeded e2e finding\.?/i.test(note.trim())) return null;
+  if (/seeded/i.test(note.trim())) return null;
+  return note;
+}
+
+function isHarnessName(text: string): boolean {
+  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
+}
+
+function openFixTitle(task: Task, finding?: { itemId: string }): string {
+  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
+  if (finding) {
+    const label = itemLabel(finding.itemId);
+    if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
+      return `${kind}: ${label}`;
+    }
+    return kind;
+  }
+  if (isHarnessName(task.title)) return kind;
+  return task.title;
 }
 
 function formatLong(iso: string): string {
