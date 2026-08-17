@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   assertNoPageErrors,
   collectPageErrors,
@@ -24,32 +22,13 @@ import {
   setAgentJobStatus,
 } from "../helpers/agentJobs";
 import {
-  addPhotoToSlot,
+  addPhotoToPool,
   holdNextEvidenceUpload,
-  isEvidenceDelete,
-  isEvidenceUpload,
-  isShiftWrite,
   openSeededDraft,
-  replaceSlotPhoto,
+  removePersistedPhoto,
+  TINY_PNG,
   waitUploadIdle,
 } from "../helpers/photos";
-
-const REPO_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../..",
-);
-const GAP_PHOTOS = ["01-bare-hands.jpg", "02-dirty-counter.jpg", "03-open-waste-bin.jpg"].map(
-  (name) => path.join(REPO_ROOT, "demo/photos/gap", name),
-);
-
-const TINY_PNG = {
-  name: "recheck.png",
-  mimeType: "image/png",
-  buffer: Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  ),
-};
 
 async function openGoldenScoreboard(page: import("@playwright/test").Page) {
   await page.getByRole("tab", { name: /^all$/i }).click().catch(() => {});
@@ -394,10 +373,10 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     const submit = page.getByRole("button", { name: /submit proof/i });
     const input = page.locator('[data-testid="staff-evidence-input"]');
     const hint = page.locator(".photo-hint");
-    for (const file of GAP_PHOTOS) {
+    for (let i = 0; i < 3; i++) {
       if (await submit.isEnabled()) break;
       const before = (await hint.textContent()) ?? "";
-      await input.setInputFiles(file);
+      await input.setInputFiles(TINY_PNG);
       await expect(hint).not.toHaveText(before, { timeout: 45_000 });
       await expect(hint).not.toContainText(/Uploading/i, { timeout: 45_000 });
     }
@@ -815,131 +794,175 @@ test.describe("staff photo upload races", () => {
     );
   });
 
+  test("Evidence lists Checklist items as cover-only rows: no per-item Add, no photo owned by a row", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+
+    const coverItems = page.locator('[data-testid="cover-item"]');
+    await expect(coverItems.first()).toBeVisible({ timeout: 20_000 });
+    expect(await coverItems.count()).toBeGreaterThanOrEqual(3);
+
+    // No per-item Add buttons or slots
+    await expect(page.locator(".item-photo-add, [data-testid=\"photo-slot\"]")).toHaveCount(0);
+    await expect(coverItems.first().locator("button, img")).toHaveCount(0);
+
+    // Single Add control
+    await expect(page.locator('[data-testid="add-photo-btn"]')).toBeVisible();
+    await expect(page.locator('[data-testid="add-photo-btn"]')).toHaveText(/add photos/i);
+
+    // Hint & submit
+    await expect(page.locator(".photo-hint")).toHaveText("0 / 3");
+    await expect(page.getByRole("button", { name: /submit proof/i })).toBeDisabled();
+    assertNoPageErrors(errors);
+  });
+
+  test("Staff add and remove photos from a single pool; a ninth photo is refused; Submit enables at 3 and stays enabled through 8", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    const submit = page.getByRole("button", { name: /submit proof/i });
+    const photos = page.locator('[data-testid="persisted-photo"]');
+
+    // Add 1 photo
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(photos).toHaveCount(1);
+    await expect(page.locator(".photo-hint")).toHaveText("1 / 3");
+    await expect(submit).toBeDisabled();
+
+    // Add 2nd photo
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(photos).toHaveCount(2);
+    await expect(page.locator(".photo-hint")).toHaveText("2 / 3");
+    await expect(submit).toBeDisabled();
+
+    // Add 3rd photo -> enables submit!
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(photos).toHaveCount(3);
+    await expect(page.locator(".photo-hint")).toHaveText("3 photos · min 3");
+    await expect(submit).toBeEnabled();
+
+    // Add 4th, 5th, 6th, 7th, 8th photos -> stays enabled
+    for (let i = 4; i <= 8; i++) {
+      await addPhotoToPool(page);
+      await waitUploadIdle(page);
+      await expect(photos).toHaveCount(i);
+      await expect(page.locator(".photo-hint")).toHaveText(`${i} photos · min 3`);
+      await expect(submit).toBeEnabled();
+    }
+
+    // Attempt 9th photo -> refused with Maximum 8 photos
+    await addPhotoToPool(page);
+    await expect(page.locator(".error-banner")).toContainText(/Maximum 8 photos/i);
+    await expect(photos).toHaveCount(8);
+    await expect(submit).toBeEnabled();
+
+    // Remove 1 photo -> count is 7, still enabled
+    await removePersistedPhoto(page, 0);
+    await expect(photos).toHaveCount(7);
+    await expect(page.locator(".photo-hint")).toHaveText("7 photos · min 3");
+    await expect(submit).toBeEnabled();
+
+    assertNoPageErrors(errors);
+  });
+
+  test("While count is under 3 the hint is count / 3; at 3 and above the bar stays full and hint is N photos · min 3", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await openSeededDraft(page);
+    const fill = page.locator(".photo-progress-fill");
+    const hint = page.locator(".photo-hint");
+
+    await expect(hint).toHaveText("0 / 3");
+    await expect(fill).toHaveCSS("transform", "matrix(0, 0, 0, 1, 0, 0)");
+
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(hint).toHaveText("1 / 3");
+
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(hint).toHaveText("2 / 3");
+
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(hint).toHaveText("3 photos · min 3");
+    await expect(hint).not.toHaveText("3 / 3");
+    await expect(fill).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+
+    await addPhotoToPool(page);
+    await waitUploadIdle(page);
+    await expect(hint).toHaveText("4 photos · min 3");
+    await expect(hint).not.toHaveText("4 / 3");
+    // Bar stays full (scaleX(1))
+    await expect(fill).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+
+    assertNoPageErrors(errors);
+  });
+
   test("remove during an in-flight upload does not resurrect the removed photo", async ({
     page,
   }) => {
     const errors = collectPageErrors(page);
     await openSeededDraft(page);
-    const slots = page.locator('[data-testid="photo-slot"]');
+    const photos = page.locator('[data-testid="persisted-photo"]');
 
-    await addPhotoToSlot(page, 0);
+    await addPhotoToPool(page);
     await waitUploadIdle(page);
-    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "true");
+    await expect(photos).toHaveCount(1);
+    const firstId = await photos.first().getAttribute("data-file-id");
 
     const hold = await holdNextEvidenceUpload(page);
-    await addPhotoToSlot(page, 1);
+    await addPhotoToPool(page);
     await hold.held;
     await expect(page.locator(".photo-hint")).toContainText(/Uploading/i);
 
-    const removeFirst = slots.nth(0).locator(".photo-remove");
-    const removeLocal = slots.nth(1).locator(".photo-remove");
+    const removeFirst = photos.first().locator(".photo-remove");
     await expect(removeFirst).toBeEnabled();
-    await expect(removeLocal).toBeEnabled();
-
     await removeFirst.click();
-    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "false", {
-      timeout: 20_000,
-    });
+    await expect(photos).toHaveCount(0, { timeout: 20_000 });
 
     await hold.release();
     await waitUploadIdle(page);
 
-    await expect(slots.nth(0)).toHaveAttribute("data-has-file", "false");
-    await expect(slots.nth(1)).toHaveAttribute("data-has-file", "true");
-    await expect(slots.nth(0).locator('[data-testid="persisted-slot"]')).toHaveCount(0);
-    await expect(slots.nth(0).locator("img")).toHaveCount(0);
+    await expect(photos).toHaveCount(1);
+    const secondId = await photos.first().getAttribute("data-file-id");
+    expect(secondId).toBeTruthy();
+    expect(secondId).not.toBe(firstId);
 
     await page.reload();
     await expect(page.getByRole("heading", { name: /evidence/i })).toBeVisible({
       timeout: 20_000,
     });
-    const after = page.locator('[data-testid="photo-slot"]');
-    await expect(after.nth(0)).toHaveAttribute("data-has-file", "false");
-    await expect(after.nth(1)).toHaveAttribute("data-has-file", "true");
-    await expect(after.nth(0).locator("img")).toHaveCount(0);
+    const afterReload = page.locator('[data-testid="persisted-photo"]');
+    await expect(afterReload).toHaveCount(1);
+    expect(await afterReload.first().getAttribute("data-file-id")).toBe(secondId);
     assertNoPageErrors(errors);
   });
 
-  test("replace persists the new reference before deleting the old file", async ({
+  test("a draft with old empty-slot sentinels loads as a pool of non-empty files", async ({
     page,
   }) => {
     const errors = collectPageErrors(page);
-    await openSeededDraft(page);
-    const slot = page.locator('[data-testid="photo-slot"]').nth(0);
-
-    await addPhotoToSlot(page, 0);
-    await waitUploadIdle(page);
-    await expect(slot).toHaveAttribute("data-has-file", "true");
-    const oldId = await slot.locator("[data-file-id]").getAttribute("data-file-id");
-    expect(oldId).toBeTruthy();
-
-    const order: string[] = [];
-    page.on("request", (req) => {
-      const url = new URL(req.url());
-      const method = req.method();
-      if (method === "POST" && isEvidenceUpload(url)) order.push("upload");
-      if ((method === "PATCH" || method === "PUT") && isShiftWrite(url)) {
-        order.push("persist");
-      }
-      if (method === "DELETE" && isEvidenceDelete(url)) order.push("delete");
+    await openSeededDraft(page, {
+      photoFileIds: ["seeded_p1", "", "seeded_p2", "", "seeded_p3"],
     });
 
-    await replaceSlotPhoto(page, 0);
-    await waitUploadIdle(page);
+    const photos = page.locator('[data-testid="persisted-photo"]');
+    await expect(photos).toHaveCount(3);
+    await expect(page.locator(".photo-hint")).toHaveText("3 photos · min 3");
+    await expect(page.getByRole("button", { name: /submit proof/i })).toBeEnabled();
 
-    await expect(slot).toHaveAttribute("data-has-file", "true");
-    await expect
-      .poll(async () => slot.locator("[data-file-id]").getAttribute("data-file-id"), {
-        timeout: 20_000,
-      })
-      .not.toBe(oldId);
-
-    const fromReplace = order.slice(order.lastIndexOf("upload"));
-    expect(fromReplace, fromReplace.join(" → ")).toContain("persist");
-    expect(fromReplace, fromReplace.join(" → ")).toContain("delete");
-    expect(fromReplace.indexOf("persist")).toBeLessThan(fromReplace.indexOf("delete"));
-    assertNoPageErrors(errors);
-  });
-
-  test("a failed replace persist keeps the old file referenced", async ({
-    page,
-  }) => {
-    const errors = collectPageErrors(page);
-    await openSeededDraft(page);
-    const slot = page.locator('[data-testid="photo-slot"]').nth(0);
-
-    await addPhotoToSlot(page, 0);
-    await waitUploadIdle(page);
-    const oldId = await slot.locator("[data-file-id]").getAttribute("data-file-id");
-    expect(oldId).toBeTruthy();
-
-    let blockPersist = false;
-    const deletes: string[] = [];
-    await page.route(
-      (url) => isShiftWrite(url),
-      async (route) => {
-        const method = route.request().method();
-        if (blockPersist && (method === "PATCH" || method === "PUT")) {
-          await route.abort("failed");
-          return;
-        }
-        await route.continue();
-      },
-    );
-    page.on("request", (req) => {
-      if (req.method() === "DELETE" && isEvidenceDelete(new URL(req.url()))) {
-        deletes.push(req.url());
-      }
-    });
-
-    blockPersist = true;
-    await replaceSlotPhoto(page, 0);
-    await expect(page.locator(".error-banner")).toBeVisible({ timeout: 20_000 });
-    await expect(slot.locator("[data-file-id]")).toHaveAttribute(
-      "data-file-id",
-      oldId!,
-    );
-    expect(deletes, "old evidence must not be deleted when persist fails").toEqual([]);
+    // Verify empty slot sentinels are not in the DOM or state
+    expect(await photos.nth(0).getAttribute("data-file-id")).toBe("seeded_p1");
+    expect(await photos.nth(1).getAttribute("data-file-id")).toBe("seeded_p2");
+    expect(await photos.nth(2).getAttribute("data-file-id")).toBe("seeded_p3");
     assertNoPageErrors(errors);
   });
 
@@ -956,12 +979,9 @@ test.describe("staff photo upload races", () => {
     });
     const errors = collectPageErrors(page);
     await openSeededDraft(page);
-    await addPhotoToSlot(page, 0);
+    await addPhotoToPool(page);
     await waitUploadIdle(page);
-    await expect(page.locator('[data-testid="photo-slot"]').nth(0)).toHaveAttribute(
-      "data-has-file",
-      "true",
-    );
+    await expect(page.locator('[data-testid="persisted-photo"]')).toHaveCount(1);
     assertNoPageErrors(errors);
   });
 });

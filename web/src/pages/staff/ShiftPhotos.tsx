@@ -5,7 +5,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type AnimationEvent,
@@ -41,10 +40,8 @@ import {
   listFindingsForShift,
   parseChecklistItems,
   parsePhotoFileIds,
-  parsePhotoSlots,
   pollJobUntilSettled,
   retryShiftScore,
-  serializePhotoSlots,
   setShiftPhotos,
   SubmitInterruptedError,
   submitShift,
@@ -67,12 +64,6 @@ type LocalPhoto = {
   previewUrl: string;
   uploading: boolean;
   error?: string;
-  itemId: string | null;
-};
-
-type PhotoCommit = {
-  slots: Record<string, string>;
-  extras: string[];
 };
 
 function localPhotoId(): string {
@@ -84,26 +75,6 @@ function localPhotoId(): string {
     /* insecure context — fall through */
   }
   return `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
-function applyUploadedFile(
-  prev: PhotoCommit,
-  itemId: string | null,
-  fileId: string,
-): { next: PhotoCommit; superseded?: string } {
-  if (itemId) {
-    const superseded = prev.slots[itemId] || undefined;
-    return {
-      next: {
-        slots: { ...prev.slots, [itemId]: fileId },
-        extras: prev.extras,
-      },
-      superseded,
-    };
-  }
-  return {
-    next: { slots: prev.slots, extras: [...prev.extras, fileId] },
-  };
 }
 
 function prefersReducedMotion() {
@@ -128,15 +99,12 @@ export function ShiftPhotos() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
-  const targetKeyRef = useRef<string | null>(null);
-  const itemsRef = useRef<ChecklistItem[]>([]);
-  const committedRef = useRef<PhotoCommit>({ slots: {}, extras: [] });
+  const committedRef = useRef<string[]>([]);
   const persistTail = useRef(Promise.resolve());
   const cancelledLocals = useRef(new Set<string>());
 
   const [shift, setShift] = useState<Shift | null>(null);
-  const [slots, setSlots] = useState<Record<string, string>>({});
-  const [extras, setExtras] = useState<string[]>([]);
+  const [fileIds, setFileIds] = useState<string[]>([]);
   const [locals, setLocals] = useState<LocalPhoto[]>([]);
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -222,10 +190,9 @@ export function ShiftPhotos() {
         const parsedItems = checklist ? parseChecklistItems(checklist) : [];
         setShift(row);
         setItems(parsedItems);
-        const parsed = parsePhotoSlots(row.photoFileIds, parsedItems);
-        committedRef.current = parsed;
-        setSlots(parsed.slots);
-        setExtras(parsed.extras);
+        const pool = parsePhotoFileIds(row.photoFileIds);
+        committedRef.current = pool;
+        setFileIds(pool);
         if (row.status !== "draft") {
           setDone(true);
           try {
@@ -295,24 +262,18 @@ export function ShiftPhotos() {
     };
   }, []);
 
-  itemsRef.current = items;
-
   const persistUpdate = useCallback(
-    (updater: (prev: PhotoCommit) => PhotoCommit) => {
+    (updater: (prev: string[]) => string[]) => {
       const run = async () => {
         if (!shiftId) return;
         const prev = committedRef.current;
         const next = updater(prev);
-        const checklist = itemsRef.current;
-        const prevIds = serializePhotoSlots(checklist, prev.slots, prev.extras);
-        const nextIds = serializePhotoSlots(checklist, next.slots, next.extras);
-        if (prevIds.join("\0") === nextIds.join("\0")) return;
-        const updated = await setShiftPhotos(shiftId, nextIds);
-        const parsed = parsePhotoSlots(updated.photoFileIds, checklist);
+        if (prev.join("\0") === next.join("\0")) return;
+        const updated = await setShiftPhotos(shiftId, next);
+        const parsed = parsePhotoFileIds(updated.photoFileIds);
         committedRef.current = parsed;
         setShift(updated);
-        setSlots(parsed.slots);
-        setExtras(parsed.extras);
+        setFileIds(parsed);
       };
       const p = persistTail.current.then(run, run);
       persistTail.current = p.then(
@@ -332,117 +293,106 @@ export function ShiftPhotos() {
     });
   }, []);
 
-  async function commitUploadedFile(
-    localId: string,
-    itemId: string | null,
-    fileId: string,
-  ) {
+  async function commitUploadedFile(localId: string, fileId: string) {
     if (cancelledLocals.current.has(localId)) {
       cancelledLocals.current.delete(localId);
       void deleteEvidenceFile(fileId);
       return;
     }
     let applied = false;
-    let superseded: string | undefined;
     await persistUpdate((prev) => {
       if (cancelledLocals.current.has(localId)) return prev;
-      const next = applyUploadedFile(prev, itemId, fileId);
       applied = true;
-      superseded = next.superseded;
-      return next.next;
+      return [...prev, fileId];
     });
     if (!applied) {
       cancelledLocals.current.delete(localId);
       void deleteEvidenceFile(fileId);
       return;
     }
-    if (superseded && superseded !== fileId) {
-      void deleteEvidenceFile(superseded);
-    }
     dropLocal(localId);
   }
 
-  const fileIds = useMemo(
-    () => [...Object.values(slots).filter(Boolean), ...extras],
-    [slots, extras],
-  );
   const totalCount = fileIds.length;
-  const uploading = locals.some((p) => p.uploading);
+  const inFlightCount = locals.filter((p) => p.uploading).length;
+  const uploading = inFlightCount > 0;
   const canSubmit =
     shift?.status === "draft" &&
     !uploading &&
     totalCount >= PHOTO_MIN &&
     totalCount <= PHOTO_MAX &&
     !submitting;
+  const canAddPhoto =
+    shift?.status === "draft" &&
+    totalCount + inFlightCount < PHOTO_MAX &&
+    !uploading &&
+    !submitting;
 
   const progress = Math.min(1, totalCount / PHOTO_MIN);
+  const hint = uploading
+    ? "Uploading…"
+    : totalCount < PHOTO_MIN
+      ? `${totalCount} / ${PHOTO_MIN}`
+      : `${totalCount} photos · min ${PHOTO_MIN}`;
 
   const itemLabel = useCallback(
     (itemId: string) => items.find((i) => i.id === itemId)?.label ?? itemId,
     [items],
   );
 
-  function pickFiles(key: string) {
-    targetKeyRef.current = key;
-    inputRef.current?.click();
-  }
-
   async function addFiles(fileList: FileList | null) {
     if (!fileList?.length || !shiftId || shift?.status !== "draft") return;
-    const key =
-      targetKeyRef.current ?? inputRef.current?.dataset.target ?? null;
-    targetKeyRef.current = null;
-    if (inputRef.current) delete inputRef.current.dataset.target;
     setError(null);
 
-    const file = fileList[0];
-    if (!file) return;
-    const validation = validatePhotoFile(file);
-    if (validation) {
-      setError(validation);
-      return;
-    }
+    const files = Array.from(fileList);
+    const inFlights = locals.filter((p) => p.uploading).length;
+    const currentTotal = committedRef.current.length + inFlights;
 
-    const itemId = key && key !== "extra" ? key : null;
-    if (!itemId && totalCount >= PHOTO_MAX) {
-      setError(`Maximum ${PHOTO_MAX} photos.`);
-      return;
-    }
-    if (itemId && !slots[itemId] && totalCount >= PHOTO_MAX) {
+    if (currentTotal + files.length > PHOTO_MAX) {
       setError(`Maximum ${PHOTO_MAX} photos.`);
       return;
     }
 
-    const local: LocalPhoto = {
+    for (const file of files) {
+      const validation = validatePhotoFile(file);
+      if (validation) {
+        setError(validation);
+        return;
+      }
+    }
+
+    const newLocals: LocalPhoto[] = files.map((file) => ({
       localId: localPhotoId(),
       file,
       previewUrl: URL.createObjectURL(file),
       uploading: true,
-      itemId,
-    };
-    cancelledLocals.current.delete(local.localId);
-    setLocals((prev) => [...prev, local]);
+    }));
 
-    try {
-      const fileId = await uploadEvidence(file);
-      await commitUploadedFile(local.localId, itemId, fileId);
-    } catch (err) {
-      if (cancelledLocals.current.has(local.localId)) {
-        cancelledLocals.current.delete(local.localId);
-        return;
+    newLocals.forEach((l) => cancelledLocals.current.delete(l.localId));
+    setLocals((prev) => [...prev, ...newLocals]);
+
+    for (const local of newLocals) {
+      try {
+        const fileId = await uploadEvidence(local.file);
+        await commitUploadedFile(local.localId, fileId);
+      } catch (err) {
+        if (cancelledLocals.current.has(local.localId)) {
+          cancelledLocals.current.delete(local.localId);
+          continue;
+        }
+        setLocals((prev) =>
+          prev.map((p) =>
+            p.localId === local.localId
+              ? {
+                  ...p,
+                  uploading: false,
+                  error: getErrorMessage(err, "Upload failed"),
+                }
+              : p,
+          ),
+        );
+        setError(getErrorMessage(err, "Upload failed"));
       }
-      setLocals((prev) =>
-        prev.map((p) =>
-          p.localId === local.localId
-            ? {
-                ...p,
-                uploading: false,
-                error: getErrorMessage(err, "Upload failed"),
-              }
-            : p,
-        ),
-      );
-      setError(getErrorMessage(err, "Upload failed"));
     }
   }
 
@@ -459,7 +409,7 @@ export function ShiftPhotos() {
     try {
       cancelledLocals.current.delete(item.localId);
       const fileId = await uploadEvidence(item.file);
-      await commitUploadedFile(item.localId, item.itemId, fileId);
+      await commitUploadedFile(item.localId, fileId);
     } catch (err) {
       if (cancelledLocals.current.has(item.localId)) {
         cancelledLocals.current.delete(item.localId);
@@ -480,30 +430,10 @@ export function ShiftPhotos() {
     }
   }
 
-  async function removeSlot(itemId: string) {
-    const fileId = committedRef.current.slots[itemId] ?? slots[itemId];
-    if (!fileId) return;
+  async function removePhoto(fileId: string) {
     setError(null);
     try {
-      await persistUpdate((prev) => {
-        if (!prev.slots[itemId]) return prev;
-        const nextSlots = { ...prev.slots };
-        delete nextSlots[itemId];
-        return { slots: nextSlots, extras: prev.extras };
-      });
-      void deleteEvidenceFile(fileId);
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not remove photo"));
-    }
-  }
-
-  async function removeExtra(fileId: string) {
-    setError(null);
-    try {
-      await persistUpdate((prev) => ({
-        slots: prev.slots,
-        extras: prev.extras.filter((id) => id !== fileId),
-      }));
+      await persistUpdate((prev) => prev.filter((id) => id !== fileId));
       void deleteEvidenceFile(fileId);
     } catch (err) {
       setError(getErrorMessage(err, "Could not remove photo"));
@@ -845,9 +775,6 @@ export function ShiftPhotos() {
     );
   }
 
-  const canAddExtra = totalCount < PHOTO_MAX && !uploading;
-  const extraLocals = locals.filter((p) => !p.itemId);
-
   return (
     <div className="app-page stack photos-page">
       <div className="photo-toolbar">
@@ -883,9 +810,7 @@ export function ShiftPhotos() {
               style={{ transform: `scaleX(${progress})` }}
             />
           </div>
-          <p className="photo-hint">
-            {uploading ? "Uploading…" : `${totalCount} / ${PHOTO_MIN}`}
-          </p>
+          <p className="photo-hint">{hint}</p>
         </div>
       </div>
 
@@ -906,6 +831,7 @@ export function ShiftPhotos() {
         type="file"
         accept={PHOTO_ACCEPT}
         capture="environment"
+        multiple
         className="visually-hidden"
         data-testid="staff-evidence-input"
         onChange={(e) => {
@@ -915,115 +841,38 @@ export function ShiftPhotos() {
       />
 
       {items.length > 0 ? (
-        <ol className="item-photo-list">
-          {items.map((item, i) => {
-            const fileId = slots[item.id];
-            const local = locals.find((p) => p.itemId === item.id);
-            const ready = fileId ? readyIds.has(fileId) : true;
-            return (
-              <li
-                key={item.id}
-                className="item-photo-row"
-                data-testid="photo-slot"
-                data-item-id={item.id}
-                data-has-file={fileId ? "true" : "false"}
-                data-uploading={local?.uploading ? "true" : "false"}
-              >
-                <div className="item-photo-copy">
-                  <span className="photo-shot-index" aria-hidden>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="item-photo-label">{item.label}</span>
-                </div>
-                {fileId ? (
-                  <div
-                    className={`item-photo-tile${ready ? "" : " is-loading"}`}
-                    data-file-id={fileId}
-                    data-testid="persisted-slot"
-                  >
-                    <img
-                      ref={bindPhoto(fileId)}
-                      src={getEvidencePreviewUrl(fileId)}
-                      alt={item.label}
-                      className={`photo-img${ready ? " is-ready" : ""}`}
-                      onLoad={() => markReady(fileId)}
-                      onError={(e) =>
-                        onPreviewError(fileId, e.target as HTMLImageElement)
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="photo-remove"
-                      onClick={() => void removeSlot(item.id)}
-                      aria-label={`Remove photo for ${item.label}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : local ? (
-                  <div
-                    className="item-photo-tile"
-                    data-testid="local-slot"
-                    data-uploading={local.uploading ? "true" : "false"}
-                  >
-                    <img src={local.previewUrl} alt="" className="photo-img is-ready" />
-                    {local.uploading ? (
-                      <div className="photo-overlay">
-                        <span className="spinner" />
-                      </div>
-                    ) : null}
-                    {local.error ? (
-                      <div className="photo-overlay photo-error">
-                        <span>{local.error}</span>
-                        <button
-                          type="button"
-                          className="photo-retry"
-                          onClick={() => void retryLocal(local)}
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="photo-remove"
-                      onClick={() => removeLocal(local.localId)}
-                      aria-label="Remove photo"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="item-photo-add"
-                    disabled={!canAddExtra}
-                    onClick={() => pickFiles(item.id)}
-                  >
-                    Add photo
-                  </button>
-                )}
+        <section className="photo-shot-list stack-sm" aria-label="What to cover">
+          <h2 className="photo-shot-heading">What to cover</h2>
+          <ol>
+            {items.map((item, i) => (
+              <li key={item.id} data-testid="cover-item" data-item-id={item.id}>
+                <span className="photo-shot-index" aria-hidden>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span>{item.label}</span>
               </li>
-            );
-          })}
-        </ol>
+            ))}
+          </ol>
+        </section>
       ) : null}
 
-      {extras.length > 0 || extraLocals.length > 0 ? (
-        <section className="stack-sm" aria-label="Other photos">
-          <h2 className="photo-shot-heading">Other photos</h2>
-          <div className="photo-grid">
-            {extras.map((id) => {
+      {fileIds.length > 0 || locals.length > 0 ? (
+        <section className="stack-sm" aria-label="Evidence photos">
+          <div className="photo-grid" data-testid="photo-grid">
+            {fileIds.map((id, i) => {
               const ready = readyIds.has(id);
+              const label = `Evidence ${i + 1}`;
               return (
                 <div
                   key={id}
                   className={`photo-tile${ready ? "" : " is-loading"}`}
+                  data-file-id={id}
+                  data-testid="persisted-photo"
                 >
                   <img
                     ref={bindPhoto(id)}
                     src={getEvidencePreviewUrl(id)}
-                    alt=""
+                    alt={label}
                     className={`photo-img${ready ? " is-ready" : ""}`}
                     onLoad={() => markReady(id)}
                     onError={(e) =>
@@ -1033,16 +882,17 @@ export function ShiftPhotos() {
                   <button
                     type="button"
                     className="photo-remove"
-                    onClick={() => void removeExtra(id)}
-                    aria-label="Remove photo"
+                    onClick={() => void removePhoto(id)}
+                    aria-label={`Remove photo ${i + 1}`}
                   >
                     ×
                   </button>
+                  <div className="photo-badge caption">{i + 1}</div>
                 </div>
               );
             })}
-            {extraLocals.map((p) => (
-              <div key={p.localId} className="photo-tile">
+            {locals.map((p) => (
+              <div key={p.localId} className="photo-tile" data-testid="local-photo">
                 <img src={p.previewUrl} alt="" className="photo-img is-ready" />
                 {p.uploading ? (
                   <div className="photo-overlay">
@@ -1075,13 +925,14 @@ export function ShiftPhotos() {
         </section>
       ) : null}
 
-      {canAddExtra ? (
+      {canAddPhoto ? (
         <button
           type="button"
           className="text-btn"
-          onClick={() => pickFiles("extra")}
+          data-testid="add-photo-btn"
+          onClick={() => inputRef.current?.click()}
         >
-          Add extra photo
+          Add photos
         </button>
       ) : null}
 

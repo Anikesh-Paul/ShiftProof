@@ -24,44 +24,30 @@ export function isShiftWrite(url: URL): boolean {
   return /\/(tables|collections)\/shifts\//.test(url.pathname);
 }
 
-export async function openSeededDraft(page: Page): Promise<string> {
-  const shiftId = await seedDraftShift();
+export async function openSeededDraft(
+  page: Page,
+  opts?: { photoFileIds?: string[] | string },
+): Promise<string> {
+  const shiftId = await seedDraftShift(opts);
   await login(page, STAFF.email, STAFF.password);
   await page.goto(`/staff/shifts/${shiftId}`);
   await expect(page.getByRole("heading", { name: /evidence/i })).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.locator('[data-testid="photo-slot"]').first()).toBeVisible({
-    timeout: 20_000,
-  });
   return shiftId;
 }
 
-export async function addPhotoToSlot(
+export async function addPhotoToPool(
   page: Page,
-  slotIndex: number,
   file: { name: string; mimeType: string; buffer: Buffer } = TINY_PNG,
 ) {
-  const slot = page.locator('[data-testid="photo-slot"]').nth(slotIndex);
-  const [chooser] = await Promise.all([
-    page.waitForEvent("filechooser"),
-    slot.getByRole("button", { name: /add photo/i }).click(),
-  ]);
-  await chooser.setFiles(file);
+  const input = page.locator('[data-testid="staff-evidence-input"]');
+  await input.setInputFiles(file);
 }
 
-export async function replaceSlotPhoto(
-  page: Page,
-  slotIndex: number,
-  file: { name: string; mimeType: string; buffer: Buffer } = TINY_PNG,
-) {
-  const slot = page.locator('[data-testid="photo-slot"]').nth(slotIndex);
-  const itemId = await slot.getAttribute("data-item-id");
-  const input = page.locator('[data-testid="staff-evidence-input"]');
-  await input.evaluate((el, id) => {
-    (el as HTMLInputElement).dataset.target = id ?? "";
-  }, itemId);
-  await input.setInputFiles(file);
+export async function removePersistedPhoto(page: Page, index = 0) {
+  const tile = page.locator('[data-testid="persisted-photo"]').nth(index);
+  await tile.locator(".photo-remove").click();
 }
 
 export async function waitUploadIdle(page: Page) {
