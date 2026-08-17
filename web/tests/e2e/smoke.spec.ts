@@ -12,6 +12,7 @@ import {
   hasServerKey,
   latestExecutionId,
   latestJobFor,
+  listEventTypesFor,
   listJobIdsFor,
   listStaffDraftIds,
   markShiftScored,
@@ -21,6 +22,7 @@ import {
   seedSubmittedShift,
   setAgentJobStatus,
 } from "../helpers/agentJobs";
+import { stubRecheckFunctionPass } from "../helpers/recheck";
 import {
   addPhotoToPool,
   holdNextEvidenceUpload,
@@ -470,6 +472,7 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     await expect(page.locator('[data-testid="staff-fix-row"]').first()).toBeVisible();
     const more = page.getByRole("button", { name: /show \d+ more/i });
     if ((await more.count()) > 0) await more.click();
+    await stubRecheckFunctionPass(page, { delayMs: 0 });
     const recheck = page.locator('[data-testid="staff-recheck-input"]').first();
     await expect(recheck).toBeAttached({ timeout: 15_000 });
     await recheck.setInputFiles(TINY_PNG);
@@ -487,6 +490,7 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     const markDone = page.locator('[data-testid="task-mark-done"]').first();
     await expect(markDone).toBeVisible();
     if (await markDone.isDisabled()) {
+      await stubRecheckFunctionPass(page, { delayMs: 0 });
       await page.locator('[data-testid="recheck-input"]').first().setInputFiles(TINY_PNG);
       await expect(markDone).toBeEnabled({ timeout: 15_000 });
     }
@@ -554,7 +558,7 @@ test.describe("demo pack attestation", () => {
   });
 });
 
-test.describe("staff attestation", () => {
+test.describe("AI re-check", () => {
   test.beforeEach(() => {
     test.skip(
       !hasServerKey(),
@@ -562,17 +566,18 @@ test.describe("staff attestation", () => {
     );
   });
 
-  test("re-check is staff-attested, keeps override, and manager closes the task", async ({
+  test("re-check is scored as AI Pass, clears leftover Override columns, and manager closes the task", async ({
     page,
   }) => {
     const errors = collectPageErrors(page);
     const shiftId = await seedSubmittedShift();
+    const jobsBefore = await listJobIdsFor(shiftId);
     const findingId = await seedFinding(shiftId, {
-      itemId: "e2e_attestation_gap",
+      itemId: "e2e_recheck_gap",
       status: "gap",
     });
     await markShiftScored(shiftId);
-    const reason = `Attestation override ${Date.now()}`;
+    const reason = `Recheck leftover override ${Date.now()}`;
 
     await login(page, MANAGER.email, MANAGER.password);
     await page.goto(`/manager/shifts/${shiftId}`);
@@ -596,11 +601,30 @@ test.describe("staff attestation", () => {
 
     await logout(page);
     await login(page, STAFF.email, STAFF.password);
+    await stubRecheckFunctionPass(page);
     await page.goto(`/staff/shifts/${shiftId}`);
     const recheck = page.locator('[data-testid="staff-recheck-input"]');
     await expect(recheck).toBeAttached({ timeout: 25_000 });
     await recheck.setInputFiles(TINY_PNG);
-    await expect(page.getByText(/re-check sent/i)).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText(/scoring re-check/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/re-check sent · waiting on manager/i)).toBeVisible({
+      timeout: 45_000,
+    });
+    const staffRow = page.locator(`[data-finding-id="${findingId}"]`);
+    await expect(staffRow.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "pass",
+    );
+    await expect(staffRow.getByTestId("recheck-photo")).toBeVisible();
+
+    expect(await getShiftStatus(shiftId)).toBe("scored");
+    expect(await listJobIdsFor(shiftId)).toEqual(jobsBefore);
+    const eventTypes = await listEventTypesFor(shiftId);
+    expect(eventTypes).toContain("finding.rescored");
+    expect(eventTypes).toContain("finding.overridden");
+    expect(eventTypes).not.toContain("finding.attested");
 
     await logout(page);
     await login(page, MANAGER.email, MANAGER.password);
@@ -611,17 +635,14 @@ test.describe("staff attestation", () => {
       .catch(() => {});
     await expect(row).toBeVisible({ timeout: 25_000 });
     await expect(row.locator(".finding-chip")).toHaveAttribute("data-status", "pass");
-    await expect(row.locator('[data-testid="finding-source"]')).toHaveAttribute(
-      "data-source",
-      "staff_recheck",
-    );
-    await expect(row.locator('[data-testid="finding-source"]')).toHaveText(
-      /staff attested/i,
-    );
-    await expect(row.getByTestId("override-reason")).toContainText(reason);
-    await expect(page.getByText(/staff attested — close when ready/i)).toBeVisible();
+    await expect(row).toHaveAttribute("data-source", "ai");
+    await expect(row.getByText(/staff attested/i)).toHaveCount(0);
+    await expect(row.getByTestId("override-reason")).toHaveCount(0);
+    await expect(page.getByText(/staff attested/i)).toHaveCount(0);
+    await expect(page.getByTestId("recheck-photo")).toBeVisible();
+    await expect(page.getByText(/^Re-scored$/)).toBeVisible();
     const markDone = page.locator('[data-testid="task-mark-done"]');
-    await expect(markDone).toBeVisible();
+    await expect(markDone).toBeEnabled();
     await markDone.click();
     await expect(markDone).toBeHidden({ timeout: 20_000 });
 
@@ -630,10 +651,11 @@ test.describe("staff attestation", () => {
       timeout: 20_000,
     });
     const exportSource = page.locator(
-      '[data-testid="export-source"][data-source="staff_recheck"]',
+      `[data-testid="export-source"][data-source="ai"]`,
     );
     await expect(exportSource).toBeVisible();
-    await expect(exportSource).toHaveText(/staff attested/i);
+    await expect(exportSource).toHaveText(/^AI$/);
+    await expect(page.getByTestId("recheck-photo")).toBeVisible();
     assertNoPageErrors(errors);
   });
 });

@@ -281,11 +281,23 @@ export function ComplianceExport() {
               {tasks.map((t) => {
                 const f = findings.find((find) => find.$id === t.findingId);
                 return (
-                  <li key={t.$id}>
-                    <strong>{openFixTitle(t, f)}</strong> —{" "}
-                    {formatTaskStatus(t.status)}
-                    {t.recheckFileId ? " · re-check photo on file" : ""}
-                    {t.doneAt ? ` · done ${formatLong(t.doneAt)}` : ""}
+                  <li key={t.$id} className="export-task-row">
+                    <div>
+                      <strong>{openFixTitle(t, f)}</strong> —{" "}
+                      {formatTaskStatus(t.status)}
+                      {t.recheckFileId ? " · re-check photo on file" : ""}
+                      {t.doneAt ? ` · done ${formatLong(t.doneAt)}` : ""}
+                    </div>
+                    {t.recheckFileId ? (
+                      <span data-testid="recheck-photo">
+                        <EvidenceImg
+                          fileId={t.recheckFileId}
+                          alt="Re-check photo"
+                          className="export-recheck-img"
+                          eager
+                        />
+                      </span>
+                    ) : null}
                   </li>
                 );
               })}

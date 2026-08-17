@@ -13,6 +13,7 @@ import {
   seedOpenTask,
   seedSubmittedShift,
   setTaskRecheckFileId,
+  updateFinding,
 } from "../helpers/agentJobs";
 
 test.describe("manager Scoreboard is staff, time, outcome", () => {
@@ -175,7 +176,7 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     assertNoPageErrors(errors);
   });
 
-  test("Mark done is disabled without a Re-check and enabled once a Re-check file id exists", async ({
+  test("Mark done stays off with only a Re-check file id and turns on when the Finding is Pass", async ({
     page,
   }) => {
     const errors = collectPageErrors(page);
@@ -200,6 +201,13 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
     await setTaskRecheckFileId(taskId, "seeded_recheck_file");
+    await page.reload();
+
+    await expect(page.getByTestId("task-mark-done")).toBeDisabled({
+      timeout: 25_000,
+    });
+
+    await updateFinding(findingId, { status: "pass" });
     await page.reload();
 
     await expect(page.getByTestId("task-mark-done")).toBeEnabled({

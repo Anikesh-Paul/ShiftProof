@@ -269,6 +269,15 @@
   letter-spacing: -0.015em;
 }
 
+.task-recheck-img {
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  display: block;
+}
+
 .task-done-btn {
   min-height: 44px;
   padding-inline: var(--space-3);

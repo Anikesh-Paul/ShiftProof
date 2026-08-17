@@ -1,6 +1,7 @@
 /**
  * Appwrite Function: runShiftScore
- * Contract: docs/API.md — input { shiftId, jobId } or { action: "extract" }
+ * Contract: docs/API.md — input { shiftId, jobId }, { action: "extract" },
+ * or { action: "recheck", taskId }
  *
  * Default: Gemini Flash (Google AI Studio) scores Storage photos + checklist
  * → FINDINGS_SCHEMA → findings / job / events.
@@ -30,6 +31,7 @@ const {
   photoIdsForScore,
   normalizeFindings,
 } = require(__dirname.endsWith("src") ? "./findings" : "./src/findings");
+const { runRecheck } = require(__dirname.endsWith("src") ? "./recheck" : "./src/recheck");
 
 const DB = "shiftproof";
 const EVIDENCE_BUCKET = "evidence";
@@ -575,6 +577,44 @@ async function handleExtract({ tables, storage, res, log, error }) {
   }
 }
 
+/**
+ * One Task photo, one live Clause. Sync. No Agent job. Shift stays scored.
+ * ALLOW_DEMO_STUB_SCORES is ignored — a Gemini throw writes nothing.
+ */
+async function handleRecheckAction({ tables, storage, body, res, log, error }) {
+  const taskId = String((body && body.taskId) || "").trim();
+  if (!taskId) {
+    error("Missing taskId");
+    return res.json({ ok: false, error: "taskId required" }, 400);
+  }
+  try {
+    const result = await runRecheck({
+      tables,
+      taskId,
+      scoreOneItem: async ({ item, photoFileId }) => {
+        const scored = await scoreWithGemini({
+          storage,
+          items: [item],
+          photoFileIds: [photoFileId],
+          log,
+        });
+        if (scored.photoCountUsed < 1) {
+          throw new Error("Re-check photo could not be loaded");
+        }
+        return scored.scored[0];
+      },
+      newRowId: () => ID.unique(),
+      now: () => new Date().toISOString(),
+      log,
+    });
+    return res.json(result);
+  } catch (e) {
+    const message = String(e.message || e);
+    error(`recheck failed: ${message}`);
+    return res.json({ ok: false, error: message }, 500);
+  }
+}
+
 module.exports = async ({ req, res, log, error }) => {
   const client = new Client()
     .setEndpoint(
@@ -604,6 +644,10 @@ module.exports = async ({ req, res, log, error }) => {
 
   if (body.action === "extract") {
     return handleExtract({ tables, storage, res, log, error });
+  }
+
+  if (body.action === "recheck") {
+    return handleRecheckAction({ tables, storage, body, res, log, error });
   }
 
   const shiftId = body.shiftId;

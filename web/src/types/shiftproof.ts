@@ -180,7 +180,8 @@ export interface CreateAgentJobInput {
 
 export type RunShiftScoreRequest =
   | { shiftId: string; jobId: string }
-  | { action: "extract" };
+  | { action: "extract" }
+  | { action: "recheck"; taskId: string };
 
 /** Constants matching live Appwrite project Jammu */
 export const APPWRITE_IDS = {

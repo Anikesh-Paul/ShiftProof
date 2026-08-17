@@ -252,6 +252,10 @@ export async function seedFinding(
     clauseId?: string;
     quote?: string;
     confidence?: number;
+    source?: "ai" | "manager_override" | "staff_recheck";
+    overrideReason?: string;
+    overriddenBy?: string;
+    overriddenAt?: string;
   } = {},
 ): Promise<string> {
   const { tables } = sdk();
@@ -270,11 +274,90 @@ export async function seedFinding(
         "Food handlers must wear clean disposable gloves at the prep station.",
       confidence: opts.confidence ?? 0.86,
       evidenceNote: "Seeded e2e finding.",
-      source: "ai",
+      source: opts.source ?? "ai",
+      overrideReason: opts.overrideReason ?? null,
+      overriddenBy: opts.overriddenBy ?? null,
+      overriddenAt: opts.overriddenAt ?? null,
     },
     permissions: ['read("users")'],
   });
   return row.$id as string;
+}
+
+export async function updateFinding(
+  findingId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const { tables } = sdk();
+  await tables.updateRow({
+    databaseId: DB,
+    tableId: "findings",
+    rowId: findingId,
+    data,
+  });
+}
+
+export async function listEventTypesFor(shiftId: string): Promise<string[]> {
+  const { tables } = sdk();
+  const { Query } = require(NODE_APPWRITE);
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: "events",
+    queries: [
+      Query.equal("shiftId", shiftId),
+      Query.orderDesc("createdAt"),
+      Query.limit(50),
+    ],
+  });
+  return (result.rows ?? []).map((row: { type: string }) => row.type);
+}
+
+/** Write the Function’s successful one-item Pass as the execution stub. */
+export async function applyAiRecheckPass(
+  taskId: string,
+  opts: { evidenceNote?: string; confidence?: number } = {},
+): Promise<void> {
+  const { tables } = sdk();
+  const { ID } = require(NODE_APPWRITE);
+  const task = await tables.getRow({
+    databaseId: DB,
+    tableId: "tasks",
+    rowId: taskId,
+  });
+  const evidenceNote =
+    opts.evidenceNote ?? "Gloves visible at the prep line.";
+  await tables.updateRow({
+    databaseId: DB,
+    tableId: "findings",
+    rowId: task.findingId,
+    data: {
+      status: "pass",
+      source: "ai",
+      confidence: opts.confidence ?? 0.93,
+      evidenceNote,
+      overrideReason: null,
+      overriddenBy: null,
+      overriddenAt: null,
+    },
+  });
+  await tables.createRow({
+    databaseId: DB,
+    tableId: "events",
+    rowId: ID.unique(),
+    data: {
+      shiftId: task.shiftId,
+      type: "finding.rescored",
+      actorUserId: "function:runShiftScore",
+      payloadJson: JSON.stringify({
+        findingId: task.findingId,
+        taskId,
+        status: "pass",
+        source: "ai",
+      }),
+      createdAt: new Date().toISOString(),
+    },
+    permissions: ['read("users")'],
+  });
 }
 
 /** Seed an open Task so the Inbox Open fixes line can be asserted. */

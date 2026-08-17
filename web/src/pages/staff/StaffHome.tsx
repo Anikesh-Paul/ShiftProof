@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
@@ -201,9 +202,7 @@ export function StaffHome() {
           t.$id === task.$id ? { ...t, recheckFileId: fileId } : t,
         ),
       );
-      setFixToast(
-        "Re-check uploaded. Staff attested this item — manager will close the task.",
-      );
+      setFixToast("Re-check sent · waiting on manager");
       await loadFixTasks(user.$id, { silent: true });
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
@@ -368,7 +367,7 @@ export function StaffHome() {
                     </Link>
                     {t.recheckFileId ? (
                       <p className="caption staff-fix-status">
-                        Waiting on manager
+                        Re-check sent · waiting on manager
                       </p>
                     ) : null}
                   </div>
@@ -376,7 +375,7 @@ export function StaffHome() {
                     <label className="staff-recheck-upload">
                       <span>
                         {recheckTaskId === t.$id
-                          ? "Uploading…"
+                          ? "Scoring re-check…"
                           : "Re-check photo"}
                       </span>
                       <input
@@ -392,12 +391,21 @@ export function StaffHome() {
                       />
                     </label>
                   ) : (
-                    <span
-                      className="staff-fix-done-chip"
-                      data-testid="staff-recheck-done"
-                    >
-                      Sent
-                    </span>
+                    <>
+                      <span data-testid="recheck-photo">
+                        <EvidenceImg
+                          fileId={t.recheckFileId}
+                          alt="Re-check photo"
+                          className="staff-fix-thumb"
+                        />
+                      </span>
+                      <span
+                        className="staff-fix-done-chip"
+                        data-testid="staff-recheck-done"
+                      >
+                        Sent
+                      </span>
+                    </>
                   )}
                 </li>
               ))}

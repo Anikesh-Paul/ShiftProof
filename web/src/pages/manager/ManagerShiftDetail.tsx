@@ -566,7 +566,7 @@ export function ManagerShiftDetail() {
 
   /**
    * Manager can also attach re-check (backup). Primary path is staff upload.
-   * Re-check writes a staff Attestation; task stays open until Mark done.
+   * Live path scores via the Function; sample rows stay Attestation.
    */
   async function onRecheckFile(taskId: string, fileList: FileList | null) {
     if (!fileList?.[0] || !item || !user) return;
@@ -654,7 +654,7 @@ export function ManagerShiftDetail() {
           setSource(refreshed.source);
         }
         await loadExtras(item.shift.$id, false);
-        setToast("Re-check saved. Staff attested — mark done when ready.");
+        setToast("Re-check scored — mark done when ready.");
       }
     } catch (err) {
       setError(getErrorMessage(err, "Could not attach re-check photo"));
@@ -985,6 +985,7 @@ export function ManagerShiftDetail() {
                 <li key={f.$id}>
                   <article
                     data-finding-id={f.$id}
+                    data-source={f.source}
                     data-testid="finding-row"
                     className={`finding-row card ${isSelected ? "is-selected" : ""}`}
                   >
@@ -1075,7 +1076,14 @@ export function ManagerShiftDetail() {
               </p>
             ) : (
               <ul className="list-plain task-list">
-                {openTasks.map((t) => (
+                {openTasks.map((t) => {
+                  const linked = item.findings.find(
+                    (f) => f.$id === t.findingId,
+                  );
+                  const canMarkDone =
+                    Boolean(t.recheckFileId) && linked?.status === "pass";
+                  const attested = linked?.source === "staff_recheck";
+                  return (
                   <li key={t.$id} className="task-row" data-testid="fix-row">
                     <div className="stack-sm">
                       <p className="task-title">{t.title}</p>
@@ -1087,12 +1095,23 @@ export function ManagerShiftDetail() {
                         {t.createdAt ? ` · ${formatWhen(t.createdAt)}` : ""}
                       </p>
                       {t.recheckFileId ? (
-                        <p
-                          className="caption task-recheck-status"
-                          data-testid="task-recheck-status"
-                        >
-                          Re-check on file · staff attested — close when ready
-                        </p>
+                        <>
+                          <p
+                            className="caption task-recheck-status"
+                            data-testid="task-recheck-status"
+                          >
+                            {attested
+                              ? "Re-check on file · staff attested — close when ready"
+                              : "Re-check on file"}
+                          </p>
+                          <span data-testid="recheck-photo">
+                            <EvidenceImg
+                              fileId={t.recheckFileId}
+                              alt="Re-check photo"
+                              className="task-recheck-img"
+                            />
+                          </span>
+                        </>
                       ) : t.status === "open" ? (
                         <p className="caption muted">
                           Waiting for staff re-check photo
@@ -1104,7 +1123,7 @@ export function ManagerShiftDetail() {
                         <label className="recheck-upload">
                           <span className="caption">
                             {recheckTaskId === t.$id
-                              ? "Uploading…"
+                              ? "Scoring re-check…"
                               : t.recheckFileId
                                 ? "Replace re-check"
                                 : "Re-check photo"}
@@ -1122,10 +1141,10 @@ export function ManagerShiftDetail() {
                           />
                         </label>
                         <Button
-                          variant={t.recheckFileId ? "primary" : "secondary"}
+                          variant={canMarkDone ? "primary" : "secondary"}
                           className="task-done-btn"
                           data-testid="task-mark-done"
-                          disabled={!t.recheckFileId}
+                          disabled={!canMarkDone}
                           onClick={() => void completeTask(t.$id)}
                         >
                           Mark done
@@ -1133,7 +1152,8 @@ export function ManagerShiftDetail() {
                       </div>
                     ) : null}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </section>

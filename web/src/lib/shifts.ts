@@ -136,6 +136,34 @@ export async function extractSopLiveSet(): Promise<ChecklistItem[]> {
   return Array.isArray(payload.items) ? payload.items : [];
 }
 
+/**
+ * Score one Re-check photo against that Task’s Finding (sync wait).
+ * Function writes the Finding. Client must persist task.recheckFileId first.
+ */
+export async function runRecheckScore(taskId: string): Promise<void> {
+  const execution = await functions.createExecution({
+    functionId: APPWRITE_IDS.functions.runShiftScore,
+    body: JSON.stringify({ action: "recheck", taskId }),
+    async: false,
+  });
+  let payload: { ok?: boolean; error?: string } = {};
+  try {
+    payload = JSON.parse(execution.responseBody || "{}") as {
+      ok?: boolean;
+      error?: string;
+    };
+  } catch {
+    payload = {};
+  }
+  const failed =
+    execution.status === "failed" ||
+    execution.responseStatusCode >= 400 ||
+    payload.ok === false;
+  if (failed) {
+    throw new Error(payload.error || "Re-check score did not run");
+  }
+}
+
 /** View/download URL for an SOP PDF in `sop_files`. */
 export function getSopFileUrl(fileId: string): string {
   return storage.getFileView({

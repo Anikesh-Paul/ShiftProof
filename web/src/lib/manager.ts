@@ -459,8 +459,8 @@ function byTaskRecency(a: Task, b: Task) {
 }
 
 /**
- * Attach re-check photo, write a staff Attestation, leave task open.
- * Manager marks done after reviewing the Attestation.
+ * Persist the Re-check file on the Task, then score it via runShiftScore.
+ * Function writes the Finding (AI Pass / Gap / Unclear). Task stays open.
  */
 export async function attachRecheckAndRescore(opts: {
   taskId: string;
@@ -469,8 +469,6 @@ export async function attachRecheckAndRescore(opts: {
   recheckFileId: string;
   userId: string;
 }): Promise<Task> {
-  const finding = await getFinding(opts.findingId);
-
   const row = await tables.updateRow({
     databaseId: DB,
     tableId: T.tasks,
@@ -499,14 +497,21 @@ export async function attachRecheckAndRescore(opts: {
     } as RowData,
   });
 
-  const { rescoreFindingAfterRecheck } = await import("./scoreShift");
-  await rescoreFindingAfterRecheck({
-    findingId: opts.findingId,
-    shiftId: opts.shiftId,
-    itemId: finding.itemId,
-    recheckFileId: opts.recheckFileId,
-    actorUserId: opts.userId,
-  });
+  if (opts.shiftId.startsWith("demo_shift_")) {
+    const finding = await getFinding(opts.findingId);
+    const { rescoreFindingAfterRecheck } = await import("./scoreShift");
+    await rescoreFindingAfterRecheck({
+      findingId: opts.findingId,
+      shiftId: opts.shiftId,
+      itemId: finding.itemId,
+      recheckFileId: opts.recheckFileId,
+      actorUserId: opts.userId,
+    });
+    return row as unknown as Task;
+  }
+
+  const { runRecheckScore } = await import("./shifts");
+  await runRecheckScore(opts.taskId);
 
   return row as unknown as Task;
 }

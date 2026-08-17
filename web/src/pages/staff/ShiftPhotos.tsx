@@ -15,6 +15,7 @@ import {
   EvidenceLightbox,
   type EvidenceSlide,
 } from "../../components/EvidenceLightbox";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import { FindingChip } from "../../components/FindingChip";
 import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
@@ -548,6 +549,10 @@ export function ShiftPhotos() {
           t.$id === task.$id ? { ...t, recheckFileId: fileId } : t,
         ),
       );
+      const scored = await listFindingsForShift(task.shiftId).catch(
+        () => null,
+      );
+      if (scored) setFindings(scored);
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
     } finally {
@@ -694,7 +699,7 @@ export function ShiftPhotos() {
                           }
                         >
                           {recheckFindingId === f.$id
-                            ? "Uploading…"
+                            ? "Scoring re-check…"
                             : "Re-check photo"}
                           <input
                             type="file"
@@ -709,7 +714,18 @@ export function ShiftPhotos() {
                           />
                         </label>
                       ) : assigned?.recheckFileId ? (
-                        <p className="caption">Re-check sent · waiting on manager</p>
+                        <div className="staff-score-recheck-sent">
+                          <p className="caption">
+                            Re-check sent · waiting on manager
+                          </p>
+                          <span data-testid="recheck-photo">
+                            <EvidenceImg
+                              fileId={assigned.recheckFileId}
+                              alt="Re-check photo"
+                              className="staff-recheck-thumb"
+                            />
+                          </span>
+                        </div>
                       ) : null}
                     </div>
                   </li>
