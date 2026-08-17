@@ -56,9 +56,9 @@
   background:
     linear-gradient(
       to top,
-      oklch(0.14 0.04 28 / 0.86) 0%,
-      oklch(0.16 0.03 32 / 0.5) 44%,
-      oklch(0.22 0.02 40 / 0.1) 100%
+      oklch(0.14 0.04 28 / 0.62) 0%,
+      oklch(0.16 0.03 32 / 0.28) 45%,
+      oklch(0.22 0.02 40 / 0.02) 100%
     );
   pointer-events: none;
 }
@@ -261,10 +261,10 @@
     background:
       linear-gradient(
         to top,
-        oklch(0.12 0.045 28 / 0.9) 0%,
-        oklch(0.15 0.03 32 / 0.58) 30%,
-        oklch(0.2 0.02 40 / 0.16) 58%,
-        oklch(0.22 0.015 40 / 0.06) 100%
+        oklch(0.12 0.045 28 / 0.68) 0%,
+        oklch(0.15 0.03 32 / 0.32) 32%,
+        oklch(0.2 0.02 40 / 0.08) 65%,
+        transparent 100%
       );
   }
 

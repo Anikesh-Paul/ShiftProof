@@ -81,13 +81,38 @@ async function waitForFindings(page: import("@playwright/test").Page) {
 }
 
 test.describe("login", () => {
-  test("login page renders", async ({ page }) => {
+  test("login page renders with normal password placeholder and primary Sign in when idle", async ({
+    page,
+  }) => {
     const errors = collectPageErrors(page);
     await page.goto("/login");
+
     await expect(page.locator("#email")).toBeVisible();
-    await expect(page.locator("#password")).toBeVisible();
-    await expect(page.getByRole("button", { name: /sign in/i })).toBeVisible();
-    await expect(page.locator("h1, h2").first()).toBeVisible();
+    const passwordInput = page.locator("#password");
+    await expect(passwordInput).toBeVisible();
+
+    // Defect 1: Password placeholder is ordinary hint text, not a long dotted rule
+    const placeholder = await passwordInput.getAttribute("placeholder");
+    expect(placeholder).toBeTruthy();
+    expect(placeholder).not.toMatch(/^\.{3,}$/);
+    expect(placeholder).toMatch(/password/i);
+
+    // Defect 2: Sign in is enabled and interactive when idle
+    const signInBtn = page.getByRole("button", { name: /^sign in$/i });
+    await expect(signInBtn).toBeVisible();
+    await expect(signInBtn).toBeEnabled();
+
+    // Unchanged elements: brand name, promise, demo chips
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("ShiftProof");
+    await expect(page.getByText("Prove the café opened ready.")).toBeVisible();
+    const demoGroup = page.getByRole("group", { name: /demo accounts/i });
+    const staffChip = demoGroup.getByRole("button", { name: /staff/i });
+    const managerChip = demoGroup.getByRole("button", { name: /manager/i });
+    await expect(staffChip).toBeVisible();
+    await expect(staffChip).toBeEnabled();
+    await expect(managerChip).toBeVisible();
+    await expect(managerChip).toBeEnabled();
+
     assertNoPageErrors(errors);
   });
 
