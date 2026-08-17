@@ -23,6 +23,13 @@ const {
   toChecklistItems,
   bumpVersion,
 } = require(__dirname.endsWith("src") ? "./liveSet" : "./src/liveSet");
+const {
+  LOW_CONFIDENCE,
+  quoteForItem,
+  clauseIdForItem,
+  photoIdsForScore,
+  normalizeFindings,
+} = require(__dirname.endsWith("src") ? "./findings" : "./src/findings");
 
 const DB = "shiftproof";
 const EVIDENCE_BUCKET = "evidence";
@@ -38,10 +45,6 @@ const T = {
   sops: "sops",
 };
 
-/** Low confidence cannot be silent pass/gap (TC-C3-05). */
-const LOW_CONFIDENCE = 0.55;
-/** Cap photos sent to the model (timeout + payload). */
-const MAX_PHOTOS = 5;
 /** Cap base64 chars per image (~1.2MB decoded). Phone originals are compressed on upload. */
 const MAX_B64_CHARS = 1_600_000;
 /** One Gemini attempt must finish in time to allow a retry inside the Function timeout. */
@@ -49,26 +52,11 @@ const GEMINI_ATTEMPT_MS = 60_000;
 /** Leave headroom under Appwrite Function timeout (120s default; set 170000 after raising to 180s). */
 const SCORING_DEADLINE_MS = Number(process.env.SCORING_DEADLINE_MS || 110_000);
 
-const CLAUSE_QUOTES = {
-  "FS-01": "Food handlers must wear clean disposable gloves at the prep station.",
-  "FS-02": "Handwash station must be stocked and accessible before service.",
-  "FS-03": "Sanitizer must be available and filled at open.",
-  "FS-04": "Food-prep surfaces must be clean and free of debris before service.",
-  "FS-05": "Cold storage must show temperature within safe range at open.",
-  "FS-06": "Hair restraint must be worn at the food-prep station.",
-  "FS-07": "Service floor should be clear of slip hazards at open.",
-  "FS-08": "Waste bins must be covered before service.",
-};
-
-const ALLOWED_STATUS = new Set(["pass", "gap", "unclear"]);
-
 /** Deterministic stub — only when ALLOW_DEMO_STUB_SCORES=1 (never silent default). */
 function scoreItemsStub(items, photoCount) {
   return items.map((item, i) => {
-    const clauseId =
-      (item.relatedClauseIds && item.relatedClauseIds[0]) ||
-      `FS-${String(i + 1).padStart(2, "0")}`;
-    const quote = CLAUSE_QUOTES[clauseId] || `Clause ${clauseId} must be met.`;
+    const clauseId = clauseIdForItem(item, i);
+    const quote = quoteForItem(item, clauseId);
     let status = "pass";
     let confidence = 0.88;
     let evidence_note = `Photo set (${photoCount}) consistent with ${item.label}.`;
@@ -128,7 +116,7 @@ function parseChecklistItems(checklist) {
  */
 async function loadPhotoParts(storage, photoFileIds, log) {
   const parts = [];
-  const limited = photoFileIds.slice(0, MAX_PHOTOS);
+  const limited = photoIdsForScore(photoFileIds);
   for (const fileId of limited) {
     try {
       let mime = "image/jpeg";
@@ -168,13 +156,15 @@ async function loadPhotoParts(storage, photoFileIds, log) {
 }
 
 function buildScoringPrompt(items) {
-  const checklistForModel = items.map((item, i) => ({
-    id: item.id,
-    label: item.label || item.id,
-    relatedClauseIds: item.relatedClauseIds || [
-      `FS-${String(i + 1).padStart(2, "0")}`,
-    ],
-  }));
+  const checklistForModel = items.map((item, i) => {
+    const clauseId = clauseIdForItem(item, i);
+    return {
+      id: item.id,
+      label: item.label || item.id,
+      relatedClauseIds: item.relatedClauseIds || [clauseId],
+      quote: quoteForItem(item, clauseId),
+    };
+  });
 
   return `You are a food-safety compliance scorer for a single café opening checklist.
 Score EVERY checklist item using ONLY the attached evidence photos.
@@ -199,14 +189,11 @@ Rules:
 3. gap — photos clearly show non-compliance for that item.
 4. unclear — evidence missing, ambiguous, dark, cropped, glare, wrong subject, or tiny/placeholder images; also when you are not confident.
 5. confidence is honest in [0, 1]. If confidence < ${LOW_CONFIDENCE}, status MUST be "unclear".
-6. Prefer clause_id from relatedClauseIds; use the known quotes below when they match.
+6. Prefer clause_id from relatedClauseIds; use that item's quote from the live checklist.
 7. Do not invent objects that are not visible. Prefer unclear over guessing pass.
 8. evidence_note must mention what is (or is not) visible — vary notes per item.
 
-Known SOP quotes:
-${JSON.stringify(CLAUSE_QUOTES, null, 2)}
-
-Checklist items to score:
+Live checklist (labels, Clause ids, quotes):
 ${JSON.stringify(checklistForModel, null, 2)}
 `;
 }
@@ -277,81 +264,6 @@ function extractJsonObject(text) {
     return JSON.parse(raw.slice(start, end + 1));
   }
   throw new Error("Model response is not valid JSON");
-}
-
-function clamp01(n) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return 0;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
-}
-
-/**
- * Parse Gemini JSON → FINDINGS_SCHEMA items; fill missing checklist rows; force low conf → unclear.
- */
-function normalizeFindings(payload, items) {
-  const byId = new Map();
-  const list =
-    payload && Array.isArray(payload.items)
-      ? payload.items
-      : Array.isArray(payload)
-        ? payload
-        : [];
-
-  for (const row of list) {
-    if (!row || typeof row !== "object") continue;
-    const id = String(row.id || "").trim();
-    if (!id) continue;
-    let status = String(row.status || "unclear").toLowerCase();
-    if (!ALLOWED_STATUS.has(status)) status = "unclear";
-    let confidence = clamp01(row.confidence);
-    if (confidence < LOW_CONFIDENCE) status = "unclear";
-    const idx = items.findIndex((it) => it.id === id);
-    const item = idx >= 0 ? items[idx] : null;
-    const clauseId =
-      String(row.clause_id || "").trim() ||
-      (item && item.relatedClauseIds && item.relatedClauseIds[0]) ||
-      `FS-${String(Math.max(1, idx + 1)).padStart(2, "0")}`;
-    let quote = String(row.quote || "").trim();
-    if (!quote) quote = CLAUSE_QUOTES[clauseId] || `Clause ${clauseId} must be met.`;
-    let evidence_note = String(row.evidence_note || "").trim();
-    if (!evidence_note) {
-      evidence_note =
-        status === "unclear"
-          ? "Insufficient visual evidence to score this item."
-          : `Scored from evidence photos for ${item ? item.label : id}.`;
-    }
-    // Cap lengths to Appwrite column limits
-    quote = quote.slice(0, 1000);
-    evidence_note = evidence_note.slice(0, 1000);
-    byId.set(id, {
-      id,
-      status,
-      clause_id: clauseId.slice(0, 32),
-      quote,
-      confidence,
-      evidence_note,
-    });
-  }
-
-  // Ensure every checklist item has a finding
-  const scored = items.map((item, i) => {
-    if (byId.has(item.id)) return byId.get(item.id);
-    const clauseId =
-      (item.relatedClauseIds && item.relatedClauseIds[0]) ||
-      `FS-${String(i + 1).padStart(2, "0")}`;
-    return {
-      id: item.id,
-      status: "unclear",
-      clause_id: clauseId,
-      quote: CLAUSE_QUOTES[clauseId] || `Clause ${clauseId} must be met.`,
-      confidence: 0.3,
-      evidence_note: "Model omitted this item; marked unclear.",
-    };
-  });
-
-  return scored;
 }
 
 function sleep(ms) {
@@ -474,13 +386,20 @@ async function callGeminiFlashOnce({
  * burns the same empty bucket). Drop thinking config once if Gemini 400s it.
  * Still fails cleanly if exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
  */
-async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
+async function callGeminiFlash({
+  apiKey,
+  model,
+  prompt,
+  imageParts,
+  log,
+  thinkingLevel,
+}) {
   const maxAttempts = 3;
   const started = Date.now();
   const models = fallbackModels(model);
   let modelIdx = 0;
   let currentModel = models[0];
-  let thinkingConfig = thinkingConfigFor(currentModel);
+  let thinkingConfig = thinkingConfigFor(currentModel, thinkingLevel);
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const elapsed = Date.now() - started;
@@ -523,7 +442,7 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
         if (status === 503 && modelIdx + 1 < models.length) {
           modelIdx += 1;
           currentModel = models[modelIdx];
-          thinkingConfig = thinkingConfigFor(currentModel);
+          thinkingConfig = thinkingConfigFor(currentModel, thinkingLevel);
           log(`Gemini HTTP 503; fallback model=${currentModel}`);
           continue;
         }
@@ -560,13 +479,11 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
     prompt,
     imageParts,
     log,
+    thinkingLevel: "MEDIUM",
   });
   log(`Gemini response chars=${textOut.length}`);
   const payload = extractJsonObject(textOut);
   const scored = normalizeFindings(payload, items);
-  if (scored.length < 5) {
-    throw new Error(`Need ≥5 findings, got ${scored.length}`);
-  }
   return { scored, model: usedModel, photoCountUsed: imageParts.length };
 }
 
@@ -753,10 +670,6 @@ module.exports = async ({ req, res, log, error }) => {
       scored = scoreItemsStub(items, photoCount);
       mode = "stub-explicit";
       photoCountUsed = 0;
-    }
-
-    if (scored.length < 5) {
-      throw new Error("Need ≥5 findings");
     }
 
     // Clear prior AI findings for this shift (re-run safe)

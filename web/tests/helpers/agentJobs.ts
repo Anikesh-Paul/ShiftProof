@@ -249,6 +249,9 @@ export async function seedFinding(
   opts: {
     itemId?: string;
     status?: "pass" | "gap" | "unclear";
+    clauseId?: string;
+    quote?: string;
+    confidence?: number;
   } = {},
 ): Promise<string> {
   const { tables } = sdk();
@@ -261,9 +264,11 @@ export async function seedFinding(
       shiftId,
       itemId: opts.itemId ?? "gloves_worn",
       status: opts.status ?? "gap",
-      clauseId: "FS-01",
-      quote: "Food handlers must wear clean disposable gloves at the prep station.",
-      confidence: 0.86,
+      clauseId: opts.clauseId ?? "FS-01",
+      quote:
+        opts.quote ??
+        "Food handlers must wear clean disposable gloves at the prep station.",
+      confidence: opts.confidence ?? 0.86,
       evidenceNote: "Seeded e2e finding.",
       source: "ai",
     },

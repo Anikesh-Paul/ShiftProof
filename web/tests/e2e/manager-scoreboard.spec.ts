@@ -120,6 +120,61 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     assertNoPageErrors(errors);
   });
 
+  test("a three-item live set shows one Finding per item with live Clause quotes", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({ photoFileIds: [] });
+    await seedFinding(shiftId, {
+      itemId: "gloves_worn",
+      status: "gap",
+      clauseId: "FS-01",
+      quote: "Wear clean disposable gloves at the food-prep station.",
+    });
+    await seedFinding(shiftId, {
+      itemId: "handwash_station",
+      status: "pass",
+      clauseId: "FS-02",
+      quote: "Handwash must be stocked before service.",
+      confidence: 0.91,
+    });
+    await seedFinding(shiftId, {
+      itemId: "floor_clear",
+      status: "unclear",
+      clauseId: "FS-07",
+      quote: "Service floor should be clear of slip hazards at open.",
+      confidence: 0.42,
+    });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+
+    const rows = page.getByTestId("finding-row");
+    await expect(rows.first()).toBeVisible({ timeout: 25_000 });
+    await page.getByRole("button", { name: /show all/i }).click();
+    await expect(rows).toHaveCount(3);
+
+    const gloves = rows.filter({ hasText: "FS-01" });
+    await expect(gloves).toContainText(
+      "Wear clean disposable gloves at the food-prep station.",
+    );
+    await expect(gloves).toContainText(/86% sure/i);
+
+    const handwash = rows.filter({ hasText: "FS-02" });
+    await expect(handwash).toContainText("Handwash must be stocked before service.");
+    await expect(handwash).toContainText(/91% sure/i);
+
+    const floor = rows.filter({ hasText: "FS-07" });
+    await expect(floor).toContainText(
+      "Service floor should be clear of slip hazards at open.",
+    );
+    await expect(floor).toContainText(/42% sure/i);
+
+    await expect(page.getByText(/Food handlers must wear clean/i)).toHaveCount(0);
+    assertNoPageErrors(errors);
+  });
+
   test("Mark done is disabled without a Re-check and enabled once a Re-check file id exists", async ({
     page,
   }) => {

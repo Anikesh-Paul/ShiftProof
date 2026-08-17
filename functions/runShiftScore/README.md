@@ -21,10 +21,10 @@ Extract uses `thinkingLevel: HIGH`, one attempt, no 2.x fallback, no MEDIUM retr
 ## Default path (Gemini Flash)
 
 1. Job → `running`; shift → `scoring`
-2. Load checklist items + evidence photos from Storage bucket `evidence` (`photoFileIds` is a JSON string array; empty slots are skipped)
-3. Call **Gemini Flash** via Google AI Studio (`GOOGLE_AI_API_KEY`)
-4. Parse JSON → normalize to FINDINGS_SCHEMA (low confidence → `unclear`)
-5. Write ≥5 `findings` (`source: "ai"`)
+2. Load the live Checklist + every evidence photo from Storage bucket `evidence` (up to eight; empty slots are skipped). Photos only — not the SOP PDF.
+3. Call **Gemini Flash** at `thinkingLevel: MEDIUM` via Google AI Studio (`GOOGLE_AI_API_KEY`)
+4. Parse JSON → normalize to FINDINGS_SCHEMA (low confidence → `unclear`). Clause id + quote come from the live Checklist item, not a hardcoded café map.
+5. Write one `findings` row per live Checklist item (`source: "ai"`). Count follows the live set (3–8), not a floor of five.
 6. Job → `done` (`traceJson.mode: "gemini"`), shift → `scored`, event `job.done`
 7. On Gemini/API/parse failure (default): job → `failed`, event `job.failed` — **no silent stub**
 
@@ -54,5 +54,5 @@ $env:APPWRITE_API_KEY = "..."
 
 1. Staff submit opening proof in the web app
 2. Job: `waiting` → `running` → `done`
-3. Manager scoreboard shows ≥5 findings with clause quotes
+3. Manager scoreboard shows one clause-cited Finding per live Checklist item
 4. Function logs / `agent_jobs.traceJson` show `mode: "gemini"` (not stub)
