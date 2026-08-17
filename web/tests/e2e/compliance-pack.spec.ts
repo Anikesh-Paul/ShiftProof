@@ -144,4 +144,76 @@ test.describe("Compliance pack is an operational proof", () => {
 
     assertNoPageErrors(errors);
   });
+
+  test("pack header names this Shift’s two Gaps and omits Unclear", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({
+      submittedAt: "2026-08-17T12:00:00.000Z",
+      photoFileIds: [],
+    });
+    await seedFinding(shiftId, { itemId: "gloves_worn", status: "gap" });
+    await seedFinding(shiftId, { itemId: "fridge_temp", status: "gap" });
+    await seedFinding(shiftId, { itemId: "handwash_station", status: "unclear" });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}/export`);
+
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({
+      timeout: 25_000,
+    });
+
+    const line = page.getByTestId("pack-gap-sentence");
+    await expect(line).toBeVisible();
+    await expect(line).toHaveText(/^17 Aug: 2 Gaps — /);
+    await expect(line).toContainText(/glove/i);
+    await expect(line).toContainText(/cold storage|fridge/i);
+    await expect(line).not.toContainText(/handwash|Unclear/i);
+
+    const tally = page.locator(".export-tally");
+    await expect(tally).toContainText("2");
+    await expect(tally).toContainText("Gap");
+    await expect(tally).toContainText("1");
+    await expect(tally).toContainText("Unclear");
+
+    const scoreboard = page.getByTestId("export-scoreboard");
+    await expect(scoreboard).toContainText(/Handwash/i);
+    await expect(scoreboard).toContainText(/Unclear/i);
+
+    assertNoPageErrors(errors);
+  });
+
+  test("pack header says no Gaps when this Shift has none", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({
+      submittedAt: "2026-08-17T12:00:00.000Z",
+      photoFileIds: [],
+    });
+    await seedFinding(shiftId, { itemId: "gloves_worn", status: "pass" });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}/export`);
+
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible({
+      timeout: 25_000,
+    });
+
+    const line = page.getByTestId("pack-gap-sentence");
+    await expect(line).toBeVisible();
+    await expect(line).toHaveText("17 Aug: no Gaps");
+    await expect(line).not.toContainText(/Gloves|—/);
+
+    const tally = page.locator(".export-tally");
+    await expect(tally).toContainText("1");
+    await expect(tally).toContainText("Pass");
+    await expect(tally).toContainText("0");
+    await expect(tally).toContainText("Gap");
+
+    assertNoPageErrors(errors);
+  });
 });

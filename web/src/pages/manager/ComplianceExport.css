@@ -36,11 +36,21 @@
 
 .export-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-5);
   padding-bottom: var(--space-4);
   border-bottom: 2px solid var(--label);
+}
+
+.export-gap-line {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label);
 }
 
 .export-brand {

@@ -20,6 +20,7 @@ import {
 import { getSite, parsePhotoFileIds } from "../../lib/shifts";
 import type {
   AuditEvent,
+  Finding,
   FindingStatus,
   ShiftStatus,
   Task,
@@ -152,6 +153,9 @@ export function ComplianceExport() {
             <p>{siteName}</p>
             <p>Generated {formatLong(generatedAt)}</p>
           </div>
+          <p className="export-gap-line" data-testid="pack-gap-sentence">
+            {packGapSentence(findings, shift.submittedAt || shift.startedAt)}
+          </p>
         </header>
 
         <section className="export-summary" data-testid="export-meta">
@@ -380,6 +384,28 @@ function openFixTitle(task: Task, finding?: { itemId: string }): string {
   }
   if (isHarnessName(task.title)) return kind;
   return task.title;
+}
+
+function formatPackDay(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+  }).format(date);
+}
+
+/** This Shift’s stored Gaps only — Unclear stays in the tally, not this line. */
+function packGapSentence(
+  findings: Finding[],
+  submittedAt?: string,
+): string {
+  const date = formatPackDay(submittedAt ?? "");
+  const gaps = findings.filter((f) => f.status === "gap");
+  if (gaps.length === 0) return `${date}: no Gaps`;
+  const labels = gaps.map((f) => itemLabel(f.itemId)).join(", ");
+  const noun = gaps.length === 1 ? "Gap" : "Gaps";
+  return `${date}: ${gaps.length} ${noun} — ${labels}`;
 }
 
 function formatLong(iso: string): string {
