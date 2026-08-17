@@ -63,17 +63,13 @@ async function runRecheck({
   const [scored] = normalizeFindings(
     {
       items: [
-        {
-          id: item.id,
-          status: modelItem && modelItem.status,
-          clause_id: modelItem && modelItem.clause_id,
-          quote: modelItem && modelItem.quote,
-          confidence: modelItem && modelItem.confidence,
-          evidence_note: modelItem && modelItem.evidence_note,
-        },
+        modelItem && typeof modelItem === "object"
+          ? { ...modelItem, id: item.id }
+          : { id: item.id },
       ],
     },
     [item],
+    1,
   );
 
   const createdAt = now();

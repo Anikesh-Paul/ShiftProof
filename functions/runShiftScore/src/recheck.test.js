@@ -121,6 +121,7 @@ test("recheck writes an AI Pass on that Finding and records finding.rescored", a
         quote: "",
         confidence: 0.93,
         evidence_note: "Gloves visible at the prep line.",
+        photo_indexes: [1],
       };
     },
     newRowId: () => "event_rescored",
@@ -164,6 +165,7 @@ test("recheck does not flip Shift status or delete other Findings", async () => 
       quote: item.quote,
       confidence: 0.9,
       evidence_note: "Gloves on.",
+      photo_indexes: [1],
     }),
     newRowId: () => "event_rescored",
     now: () => "2026-08-17T09:00:00.000Z",
@@ -184,6 +186,62 @@ test("recheck does not flip Shift status or delete other Findings", async () => 
   );
   assert.equal(
     data._updates.some((u) => u.tableId === "agent_jobs"),
+    false,
+  );
+});
+
+test("a Re-check cite other than photo 1 is not valid", async () => {
+  const { data, tables } = store();
+
+  await runRecheck({
+    tables,
+    taskId: "task_gloves",
+    scoreOneItem: async ({ item }) => ({
+      id: item.id,
+      status: "pass",
+      clause_id: "FS-01",
+      quote: item.quote,
+      confidence: 0.93,
+      evidence_note: "Gloves visible at the prep line.",
+      photo_indexes: [2],
+    }),
+    newRowId: () => "event_rescored",
+    now: () => "2026-08-17T09:00:00.000Z",
+  });
+
+  const finding = data.findings.finding_gloves;
+  assert.equal(finding.status, "unclear");
+  assert.ok(finding.confidence <= 0.5);
+});
+
+test("a model Re-check Pass at 0.72 becomes Unclear and leaves the Task open", async () => {
+  const { data, tables } = store();
+
+  await runRecheck({
+    tables,
+    taskId: "task_gloves",
+    scoreOneItem: async ({ item }) => ({
+      id: item.id,
+      status: "pass",
+      clause_id: "FS-01",
+      quote: item.quote,
+      confidence: 0.72,
+      evidence_note: "Gloves look present at prep.",
+      subject: 0.8,
+      visibility: 0.72,
+      photo_indexes: [1],
+    }),
+    newRowId: () => "event_rescored",
+    now: () => "2026-08-17T09:00:00.000Z",
+  });
+
+  const finding = data.findings.finding_gloves;
+  assert.equal(finding.status, "unclear");
+  assert.equal(finding.confidence, 0.72);
+  assert.equal(finding.source, "ai");
+  assert.equal(data.tasks.task_gloves.status, "open");
+  assert.equal(
+    data._updates.some((u) => u.tableId === "tasks"),
     false,
   );
 });

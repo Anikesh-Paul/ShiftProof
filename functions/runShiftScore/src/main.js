@@ -26,6 +26,7 @@ const {
 } = require(__dirname.endsWith("src") ? "./liveSet" : "./src/liveSet");
 const {
   LOW_CONFIDENCE,
+  PASS_CONFIDENCE,
   quoteForItem,
   clauseIdForItem,
   photoIdsForScore,
@@ -180,20 +181,25 @@ Return ONLY valid JSON (no markdown fences) matching this shape:
       "clause_id": "FS-XX",
       "quote": "short SOP clause quote",
       "confidence": 0.0,
-      "evidence_note": "what you observe in the photos"
+      "subject": 0.8,
+      "visibility": 0.8,
+      "photo_indexes": [1],
+      "evidence_note": "what is visible, then the judgment"
     }
   ]
 }
 
 Rules:
 1. Include exactly one object per checklist item; use the exact "id" values given.
-2. pass — photos clearly support compliance for that item.
-3. gap — photos clearly show non-compliance for that item.
-4. unclear — evidence missing, ambiguous, dark, cropped, glare, wrong subject, or tiny/placeholder images; also when you are not confident.
-5. confidence is honest in [0, 1]. If confidence < ${LOW_CONFIDENCE}, status MUST be "unclear".
-6. Prefer clause_id from relatedClauseIds; use that item's quote from the live checklist.
-7. Do not invent objects that are not visible. Prefer unclear over guessing pass.
-8. evidence_note must mention what is (or is not) visible — vary notes per item.
+2. evidence_note describes what is visible in the photos first, then judges the item. Vary notes per item.
+3. pass — only if the live quote's claim for that item is visible. Do not pass on a related object that is not the in-use check. Derive that near-miss from this item's label and quote; do not use a fixed object list.
+4. gap — photos clearly show the quote's claim is not met.
+5. unclear — evidence missing, ambiguous, dark, cropped, glare, wrong subject, or tiny/placeholder images; also when the photos cannot support a judgment.
+6. subject and visibility are evidence-sufficiency factors in [0, 1]. subject = the clause's actual check is in frame; visibility = it can be seen. Optionally add lighting and coverage when you can score them. Omit any factor you cannot score — do not send 0 as a placeholder.
+7. photo_indexes are 1-based indexes into the attached photo list that support this item. Cite only photos you actually used.
+8. confidence is the fallback sufficiency in [0, 1] when you omit factors. If it would be < ${LOW_CONFIDENCE}, status MUST be "unclear".
+9. Prefer clause_id from relatedClauseIds; use that item's quote from the live checklist.
+10. Do not invent objects that are not visible. Prefer unclear over guessing pass.
 
 Live checklist (labels, Clause ids, quotes):
 ${JSON.stringify(checklistForModel, null, 2)}
@@ -500,8 +506,13 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
   });
   log(`Gemini response chars=${textOut.length}`);
   const payload = extractJsonObject(textOut);
-  const scored = normalizeFindings(payload, items);
-  return { scored, model: usedModel, photoCountUsed: imageParts.length };
+  const scored = normalizeFindings(payload, items, imageParts.length);
+  return {
+    scored,
+    payload,
+    model: usedModel,
+    photoCountUsed: imageParts.length,
+  };
 }
 
 async function extractWithGemini({ storage, fileId, log }) {
@@ -601,7 +612,13 @@ async function handleRecheckAction({ tables, storage, body, res, log, error }) {
         if (scored.photoCountUsed < 1) {
           throw new Error("Re-check photo could not be loaded");
         }
-        return scored.scored[0];
+        const list =
+          scored.payload && Array.isArray(scored.payload.items)
+            ? scored.payload.items
+            : Array.isArray(scored.payload)
+              ? scored.payload
+              : [];
+        return list.find((row) => row && String(row.id) === item.id) || list[0];
       },
       newRowId: () => ID.unique(),
       now: () => new Date().toISOString(),
@@ -724,7 +741,11 @@ module.exports = async ({ req, res, log, error }) => {
         throw new Error(msg);
       }
       log("ALLOW_DEMO_STUB_SCORES=1 — using explicit stub after Gemini failure");
-      scored = scoreItemsStub(items, photoCount);
+      scored = normalizeFindings(
+        { items: scoreItemsStub(items, photoCount) },
+        items,
+        photoCount,
+      );
       mode = "stub-explicit";
       photoCountUsed = 0;
     }
@@ -774,6 +795,7 @@ module.exports = async ({ req, res, log, error }) => {
       photoCountUsed,
       findingCount: scored.length,
       lowConfidenceThreshold: LOW_CONFIDENCE,
+      passConfidenceThreshold: PASS_CONFIDENCE,
     };
 
     await tables.updateRow({
