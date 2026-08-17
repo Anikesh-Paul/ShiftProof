@@ -312,26 +312,38 @@ export async function listEventTypesFor(shiftId: string): Promise<string[]> {
   return (result.rows ?? []).map((row: { type: string }) => row.type);
 }
 
-/** Write the Function’s successful one-item Pass as the execution stub. */
-export async function applyAiRecheckPass(
+export type RecheckScoreStatus = "pass" | "gap" | "unclear";
+
+/** Write the Function’s successful one-item score as the execution stub. */
+export async function applyAiRecheck(
   taskId: string,
-  opts: { evidenceNote?: string; confidence?: number } = {},
+  opts: {
+    status?: RecheckScoreStatus;
+    evidenceNote?: string;
+    confidence?: number;
+  } = {},
 ): Promise<void> {
   const { tables } = sdk();
   const { ID } = require(NODE_APPWRITE);
+  const status = opts.status ?? "pass";
   const task = await tables.getRow({
     databaseId: DB,
     tableId: "tasks",
     rowId: taskId,
   });
   const evidenceNote =
-    opts.evidenceNote ?? "Gloves visible at the prep line.";
+    opts.evidenceNote ??
+    (status === "pass"
+      ? "Gloves visible at the prep line."
+      : status === "gap"
+        ? "No gloves visible at the prep line."
+        : "Frame too dark to judge gloves.");
   await tables.updateRow({
     databaseId: DB,
     tableId: "findings",
     rowId: task.findingId,
     data: {
-      status: "pass",
+      status,
       source: "ai",
       confidence: opts.confidence ?? 0.93,
       evidenceNote,
@@ -351,13 +363,55 @@ export async function applyAiRecheckPass(
       payloadJson: JSON.stringify({
         findingId: task.findingId,
         taskId,
-        status: "pass",
+        status,
         source: "ai",
       }),
       createdAt: new Date().toISOString(),
     },
     permissions: ['read("users")'],
   });
+}
+
+/** Write the Function’s successful one-item Pass as the execution stub. */
+export async function applyAiRecheckPass(
+  taskId: string,
+  opts: { evidenceNote?: string; confidence?: number } = {},
+): Promise<void> {
+  await applyAiRecheck(taskId, { ...opts, status: "pass" });
+}
+
+export async function getFindingRow(findingId: string): Promise<{
+  status: RecheckScoreStatus;
+  source: string;
+  evidenceNote: string;
+}> {
+  const { tables } = sdk();
+  const row = await tables.getRow({
+    databaseId: DB,
+    tableId: "findings",
+    rowId: findingId,
+  });
+  return {
+    status: row.status,
+    source: row.source,
+    evidenceNote: row.evidenceNote,
+  };
+}
+
+export async function getTaskRow(taskId: string): Promise<{
+  status: string;
+  recheckFileId: string | null;
+}> {
+  const { tables } = sdk();
+  const row = await tables.getRow({
+    databaseId: DB,
+    tableId: "tasks",
+    rowId: taskId,
+  });
+  return {
+    status: row.status,
+    recheckFileId: row.recheckFileId ?? null,
+  };
 }
 
 /** Seed an open Task so the Inbox Open fixes line can be asserted. */

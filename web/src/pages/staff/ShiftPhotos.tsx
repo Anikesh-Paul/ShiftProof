@@ -618,7 +618,9 @@ export function ShiftPhotos() {
     const nextRecheckFindingId =
       sortedFindings.find((f) => {
         const task = openTasks.find((t) => t.findingId === f.$id);
-        return Boolean(task && !task.recheckFileId);
+        return Boolean(
+          task && (!task.recheckFileId || f.status !== "pass"),
+        );
       })?.$id ?? null;
     const slides: EvidenceSlide[] = savedIds.map((fid, j) => ({
       src: getEvidenceFileUrl(fid),
@@ -690,29 +692,41 @@ export function ShiftPhotos() {
                     <FindingChip status={f.status} />
                     <div className="staff-score-copy">
                       <p className="staff-score-label">{itemLabel(f.itemId)}</p>
-                      {assigned && !assigned.recheckFileId ? (
-                        <label
-                          className={
-                            f.$id === nextRecheckFindingId
-                              ? "staff-score-recheck"
-                              : "staff-score-recheck is-quiet"
-                          }
-                        >
-                          {recheckFindingId === f.$id
-                            ? "Scoring re-check…"
-                            : "Re-check photo"}
-                          <input
-                            type="file"
-                            accept={PHOTO_ACCEPT}
-                            className="visually-hidden"
-                            data-testid="staff-recheck-input"
-                            disabled={recheckFindingId === f.$id}
-                            onChange={(e) => {
-                              void onFindingRecheck(assigned, e.target.files);
-                              e.target.value = "";
-                            }}
-                          />
-                        </label>
+                      {assigned &&
+                      (!assigned.recheckFileId || f.status !== "pass") ? (
+                        <div className="staff-score-recheck-open">
+                          {assigned.recheckFileId ? (
+                            <span data-testid="recheck-photo">
+                              <EvidenceImg
+                                fileId={assigned.recheckFileId}
+                                alt="Re-check photo"
+                                className="staff-recheck-thumb"
+                              />
+                            </span>
+                          ) : null}
+                          <label
+                            className={
+                              f.$id === nextRecheckFindingId
+                                ? "staff-score-recheck"
+                                : "staff-score-recheck is-quiet"
+                            }
+                          >
+                            {recheckFindingId === f.$id
+                              ? "Scoring re-check…"
+                              : "Re-check photo"}
+                            <input
+                              type="file"
+                              accept={PHOTO_ACCEPT}
+                              className="visually-hidden"
+                              data-testid="staff-recheck-input"
+                              disabled={recheckFindingId === f.$id}
+                              onChange={(e) => {
+                                void onFindingRecheck(assigned, e.target.files);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        </div>
                       ) : assigned?.recheckFileId ? (
                         <div className="staff-score-recheck-sent">
                           <p className="caption">

@@ -8,7 +8,9 @@ import {
 } from "../helpers/auth";
 import { expect, test } from "../helpers/fixtures";
 import {
+  getFindingRow,
   getShiftStatus,
+  getTaskRow,
   hasServerKey,
   latestExecutionId,
   latestJobFor,
@@ -19,10 +21,14 @@ import {
   seedAgentJob,
   seedDraftShift,
   seedFinding,
+  seedOpenTask,
   seedSubmittedShift,
   setAgentJobStatus,
 } from "../helpers/agentJobs";
-import { stubRecheckFunctionPass } from "../helpers/recheck";
+import {
+  stubRecheckFunction,
+  stubRecheckFunctionPass,
+} from "../helpers/recheck";
 import {
   addPhotoToPool,
   holdNextEvidenceUpload,
@@ -656,6 +662,178 @@ test.describe("AI re-check", () => {
     await expect(exportSource).toBeVisible();
     await expect(exportSource).toHaveText(/^AI$/);
     await expect(page.getByTestId("recheck-photo")).toBeVisible();
+    assertNoPageErrors(errors);
+  });
+
+  test("Gap re-check stays open, Mark done stays off, and staff can upload again", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    const findingId = await seedFinding(shiftId, {
+      itemId: "e2e_recheck_gap_open",
+      status: "gap",
+    });
+    await markShiftScored(shiftId);
+    const taskId = await seedOpenTask({
+      shiftId,
+      findingId,
+      title: "Fix: Gloves at prep",
+    });
+
+    await login(page, STAFF.email, STAFF.password);
+    await stubRecheckFunction(page, { status: "gap" });
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const staffRow = page.locator(`[data-finding-id="${findingId}"]`);
+    const recheck = staffRow.getByTestId("staff-recheck-input");
+    await expect(recheck).toBeAttached({ timeout: 25_000 });
+    await recheck.setInputFiles(TINY_PNG);
+    await expect(page.getByText(/scoring re-check/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/scoring re-check/i)).toBeHidden({
+      timeout: 45_000,
+    });
+    await expect(staffRow.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "gap",
+    );
+    await expect(staffRow.getByText(/re-check sent · waiting on manager/i)).toHaveCount(
+      0,
+    );
+    await expect(staffRow.getByTestId("recheck-photo")).toBeVisible();
+    await expect(staffRow.getByTestId("staff-recheck-input")).toBeEnabled();
+    const afterFirst = await getTaskRow(taskId);
+    expect(afterFirst.status).toBe("open");
+    expect(afterFirst.recheckFileId).toBeTruthy();
+    await staffRow.getByTestId("staff-recheck-input").setInputFiles(TINY_PNG);
+    await expect(page.getByText(/scoring re-check/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/scoring re-check/i)).toBeHidden({
+      timeout: 45_000,
+    });
+    await expect(staffRow.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "gap",
+    );
+    await expect(staffRow.getByTestId("staff-recheck-input")).toBeEnabled();
+
+    const afterSecond = await getTaskRow(taskId);
+    expect(afterSecond.status).toBe("open");
+    expect(afterSecond.recheckFileId).toBeTruthy();
+    expect(afterSecond.recheckFileId).not.toBe(afterFirst.recheckFileId);
+    const scored = await getFindingRow(findingId);
+    expect(scored.status).toBe("gap");
+    expect(scored.source).toBe("ai");
+
+    await logout(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    const row = page.locator(`.finding-row[data-finding-id="${findingId}"]`);
+    await page
+      .getByRole("button", { name: /^show all$/i })
+      .click({ timeout: 3_000 })
+      .catch(() => {});
+    await expect(row).toBeVisible({ timeout: 25_000 });
+    await expect(row.locator(".finding-chip")).toHaveAttribute("data-status", "gap");
+    await expect(row).toHaveAttribute("data-source", "ai");
+    const markDone = page.locator('[data-testid="task-mark-done"]');
+    await expect(markDone).toBeVisible();
+    await expect(markDone).toBeDisabled();
+
+    await page.getByTestId("recheck-input").setInputFiles(TINY_PNG);
+    await expect(page.getByText(/scoring re-check/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/scoring re-check/i)).toBeHidden({
+      timeout: 45_000,
+    });
+    await expect(row.locator(".finding-chip")).toHaveAttribute("data-status", "gap");
+    await expect(markDone).toBeDisabled();
+    await expect(page.getByTestId("recheck-photo")).toBeVisible();
+    expect((await getTaskRow(taskId)).status).toBe("open");
+    assertNoPageErrors(errors);
+  });
+
+  test("Unclear re-check stays open; Override to Pass enables Mark done", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift();
+    const findingId = await seedFinding(shiftId, {
+      itemId: "e2e_recheck_unclear_open",
+      status: "gap",
+    });
+    await markShiftScored(shiftId);
+    const taskId = await seedOpenTask({
+      shiftId,
+      findingId,
+      title: "Fix: Gloves at prep",
+    });
+    const note = "Frame too dark to judge gloves.";
+
+    await login(page, STAFF.email, STAFF.password);
+    await stubRecheckFunction(page, {
+      status: "unclear",
+      evidenceNote: note,
+    });
+    await page.goto(`/staff/shifts/${shiftId}`);
+    const staffRow = page.locator(`[data-finding-id="${findingId}"]`);
+    await expect(staffRow.getByTestId("staff-recheck-input")).toBeAttached({
+      timeout: 25_000,
+    });
+    await staffRow.getByTestId("staff-recheck-input").setInputFiles(TINY_PNG);
+    await expect(page.getByText(/scoring re-check/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/scoring re-check/i)).toBeHidden({
+      timeout: 45_000,
+    });
+    await expect(staffRow.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "unclear",
+    );
+    await expect(staffRow.getByTestId("staff-recheck-input")).toBeEnabled();
+    await expect(staffRow.getByText(/re-check sent · waiting on manager/i)).toHaveCount(
+      0,
+    );
+
+    const scored = await getFindingRow(findingId);
+    expect(scored.status).toBe("unclear");
+    expect(scored.source).toBe("ai");
+    expect(scored.evidenceNote).toBe(note);
+    expect((await getTaskRow(taskId)).status).toBe("open");
+
+    await logout(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+    const row = page.locator(`.finding-row[data-finding-id="${findingId}"]`);
+    await page
+      .getByRole("button", { name: /^show all$/i })
+      .click({ timeout: 3_000 })
+      .catch(() => {});
+    await expect(row).toBeVisible({ timeout: 25_000 });
+    await expect(row.locator(".finding-chip")).toHaveAttribute(
+      "data-status",
+      "unclear",
+    );
+    await expect(row).toHaveAttribute("data-source", "ai");
+    const markDone = page.locator('[data-testid="task-mark-done"]');
+    await expect(markDone).toBeDisabled();
+
+    await row.getByRole("button", { name: /^override$/i }).click();
+    await page.getByLabel(/set status/i).selectOption("pass");
+    await page.getByLabel(/reason/i).fill("Manager judged the frame a Pass");
+    await page.getByRole("button", { name: /save override/i }).click();
+    await expect(page.getByRole("button", { name: /save override/i })).toBeHidden({
+      timeout: 20_000,
+    });
+    await expect(row.locator(".finding-chip")).toHaveAttribute("data-status", "pass");
+    await expect(markDone).toBeEnabled();
+    await markDone.click();
+    await expect(markDone).toBeHidden({ timeout: 20_000 });
+    expect((await getTaskRow(taskId)).status).toBe("done");
     assertNoPageErrors(errors);
   });
 });

@@ -1,5 +1,8 @@
 import type { Page, Request } from "@playwright/test";
-import { applyAiRecheckPass } from "./agentJobs";
+import {
+  applyAiRecheck,
+  type RecheckScoreStatus,
+} from "./agentJobs";
 
 function isFunctionExecution(url: URL): boolean {
   return /\/functions\/[^/]+\/executions\/?$/.test(url.pathname);
@@ -31,13 +34,19 @@ function parseExecutionBody(request: Request): {
 }
 
 /**
- * Intercept runShiftScore { action: "recheck" } as a successful one-item Pass.
+ * Intercept runShiftScore { action: "recheck" } as a successful one-item score.
  * Writes the Finding the Function would have written, then returns ok.
  */
-export async function stubRecheckFunctionPass(
+export async function stubRecheckFunction(
   page: Page,
-  opts: { evidenceNote?: string; confidence?: number; delayMs?: number } = {},
+  opts: {
+    status?: RecheckScoreStatus;
+    evidenceNote?: string;
+    confidence?: number;
+    delayMs?: number;
+  } = {},
 ): Promise<void> {
+  const status = opts.status ?? "pass";
   await page.route(
     (url) => isFunctionExecution(new URL(url)),
     async (route) => {
@@ -50,7 +59,8 @@ export async function stubRecheckFunctionPass(
         await route.continue();
         return;
       }
-      await applyAiRecheckPass(payload.taskId, {
+      await applyAiRecheck(payload.taskId, {
+        status,
         evidenceNote: opts.evidenceNote,
         confidence: opts.confidence,
       });
@@ -72,7 +82,7 @@ export async function stubRecheckFunctionPass(
           status: "completed",
           statusCode: 200,
           responseStatusCode: 200,
-          responseBody: JSON.stringify({ ok: true, status: "pass" }),
+          responseBody: JSON.stringify({ ok: true, status }),
           logs: "",
           errors: "",
           duration: 0.2,
@@ -80,4 +90,12 @@ export async function stubRecheckFunctionPass(
       });
     },
   );
+}
+
+/** Intercept runShiftScore { action: "recheck" } as a successful one-item Pass. */
+export async function stubRecheckFunctionPass(
+  page: Page,
+  opts: { evidenceNote?: string; confidence?: number; delayMs?: number } = {},
+): Promise<void> {
+  await stubRecheckFunction(page, { ...opts, status: "pass" });
 }

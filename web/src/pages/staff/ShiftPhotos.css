@@ -113,7 +113,8 @@
   line-height: 1.3;
 }
 
-.staff-score-recheck-sent {
+.staff-score-recheck-sent,
+.staff-score-recheck-open {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
