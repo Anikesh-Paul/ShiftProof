@@ -25,12 +25,14 @@ function thinkingConfigFor(model, level) {
   return { thinkingLevel: "MEDIUM" };
 }
 
-/** One HIGH attempt. No MEDIUM retry, no 2.x fallback, no thinking-off retry. */
-function extractCallPolicy(model) {
+/** Same Flash ladder as scoring. Thinking stays HIGH; never MEDIUM or 2.x. */
+const EXTRACT_MODEL = "gemini-3.7-flash";
+
+function extractCallPolicy() {
   return {
-    thinkingConfig: thinkingConfigFor(model, "HIGH"),
-    maxAttempts: 1,
-    allowModelFallback: false,
+    model: EXTRACT_MODEL,
+    thinkingConfig: thinkingConfigFor(EXTRACT_MODEL, "HIGH"),
+    models: fallbackModels(EXTRACT_MODEL),
     allowThinkingDowngrade: false,
   };
 }

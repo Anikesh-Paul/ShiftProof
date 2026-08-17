@@ -400,6 +400,7 @@ async function callGeminiFlash({
   let modelIdx = 0;
   let currentModel = models[0];
   let thinkingConfig = thinkingConfigFor(currentModel, thinkingLevel);
+  const allowThinkingDowngrade = thinkingLevel !== "HIGH";
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const elapsed = Date.now() - started;
@@ -424,7 +425,11 @@ async function callGeminiFlash({
       const timedOut =
         e && (e.name === "TimeoutError" || e.name === "AbortError");
 
-      if (thinkingConfig && isThinkingConfigRejected(status, body)) {
+      if (
+        allowThinkingDowngrade &&
+        thinkingConfig &&
+        isThinkingConfigRejected(status, body)
+      ) {
         log("Gemini rejected thinkingConfig; retrying without it");
         thinkingConfig = null;
         attempt -= 1;
@@ -437,13 +442,23 @@ async function callGeminiFlash({
         );
       }
 
-      const retryable = timedOut || isRetryableGeminiHttp(status);
+      const noAnswer = /empty text|no candidates|not JSON|not valid JSON/i.test(
+        String((e && e.message) || ""),
+      );
+      const retryable =
+        timedOut || isRetryableGeminiHttp(status) || (thinkingLevel === "HIGH" && noAnswer);
       if (attempt < maxAttempts && retryable) {
-        if (status === 503 && modelIdx + 1 < models.length) {
+        const switchModel =
+          thinkingLevel === "HIGH"
+            ? modelIdx + 1 < models.length
+            : status === 503 && modelIdx + 1 < models.length;
+        if (switchModel) {
           modelIdx += 1;
           currentModel = models[modelIdx];
           thinkingConfig = thinkingConfigFor(currentModel, thinkingLevel);
-          log(`Gemini HTTP 503; fallback model=${currentModel}`);
+          log(
+            `Gemini ${timedOut ? "timeout" : status ? `HTTP ${status}` : "no answer"}; fallback model=${currentModel} think=${thinkingLevel || "MEDIUM"}`,
+          );
           continue;
         }
         const delayMs = retryDelayMs(status || 503, attempt);
@@ -494,8 +509,7 @@ async function extractWithGemini({ storage, fileId, log }) {
       "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
     );
   }
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
-  const policy = extractCallPolicy(model);
+  const policy = extractCallPolicy();
   const buf = await storage.getFileDownload({
     bucketId: SOP_BUCKET,
     fileId,
@@ -504,10 +518,9 @@ async function extractWithGemini({ storage, fileId, log }) {
   if (!b64.length) {
     throw new Error("SOP file is empty");
   }
-  const { thinkingConfig } = policy;
-  const textOut = await callGeminiFlashOnce({
+  const { textOut } = await callGeminiFlash({
     apiKey,
-    model,
+    model: policy.model,
     prompt: buildExtractPrompt(),
     imageParts: [
       {
@@ -518,7 +531,7 @@ async function extractWithGemini({ storage, fileId, log }) {
       },
     ],
     log,
-    thinkingConfig,
+    thinkingLevel: "HIGH",
   });
   return textOut;
 }

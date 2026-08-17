@@ -44,10 +44,14 @@ test("extract refuses 2.x so HIGH cannot become thinking off", () => {
   );
 });
 
-test("extract is one HIGH attempt with no MEDIUM retry or 2.x fallback", () => {
-  const policy = extractCallPolicy("gemini-flash-latest");
+test("extract starts on 3.7 HIGH and falls back to 3.6 then 3.5-lite", () => {
+  const policy = extractCallPolicy();
+  assert.equal(policy.model, "gemini-3.7-flash");
   assert.deepEqual(policy.thinkingConfig, { thinkingLevel: "HIGH" });
-  assert.equal(policy.maxAttempts, 1);
-  assert.equal(policy.allowModelFallback, false);
+  assert.deepEqual(policy.models, [
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+  ]);
   assert.equal(policy.allowThinkingDowngrade, false);
 });
