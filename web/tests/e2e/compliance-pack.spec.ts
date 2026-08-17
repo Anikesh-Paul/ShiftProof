@@ -66,7 +66,9 @@ test.describe("Compliance pack is an operational proof", () => {
     await expect(scoreboard).toContainText(/gloves/i);
     await expect(scoreboard).toContainText(/FS-01/);
     await expect(scoreboard).toContainText(/handlers must wear clean/i);
-    await expect(scoreboard).toContainText(/86% sure/i);
+    await expect(scoreboard).toContainText(/High/);
+    await expect(scoreboard).not.toContainText(/% sure/i);
+    await expect(scoreboard).not.toContainText(/conf\s*86%/i);
 
     assertNoPageErrors(errors);
   });

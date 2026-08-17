@@ -7,6 +7,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { FindingChip } from "../../components/FindingChip";
 import { EvidenceImg } from "../../components/EvidenceImg";
+import { confidenceBand } from "../../lib/confidence";
 import { formatEventType, formatFindingSource } from "../../lib/events";
 import { displayEvidenceNote } from "../../lib/evidenceNote";
 import { getErrorMessage } from "../../lib/errors";
@@ -257,7 +258,7 @@ export function ComplianceExport() {
                           {f.quote ? `“${f.quote}”` : "—"}
                         </td>
                         <td className="export-cell-conf">
-                          {confidenceLabel(f.confidence)}
+                          {confidenceBand(f.confidence)}
                         </td>
                         <td className="export-cell-evidence export-note">
                           {note || "—"}
@@ -363,10 +364,6 @@ function formatShiftStatus(status: ShiftStatus | string): string {
 
 function formatTaskStatus(status: TaskStatus | string): string {
   return status === "done" ? "Done" : "Open";
-}
-
-function confidenceLabel(confidence: number): string {
-  return `${Math.round(confidence * 100)}% sure`;
 }
 
 function isHarnessName(text: string): boolean {

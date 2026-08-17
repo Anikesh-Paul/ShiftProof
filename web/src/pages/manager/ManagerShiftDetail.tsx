@@ -19,6 +19,7 @@ import {
 } from "../../components/EvidenceLightbox";
 import { FindingChip } from "../../components/FindingChip";
 import { useAuth } from "../../lib/auth";
+import { confidenceBand } from "../../lib/confidence";
 import { formatEventType, formatFindingSource } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
@@ -1023,7 +1024,7 @@ export function ManagerShiftDetail() {
                       className="citation-bar caption"
                       data-testid="citation"
                     >
-                      {f.clauseId} · {confidenceLabel(f.confidence)}
+                      {f.clauseId} · {confidenceBand(f.confidence)}
                     </p>
                     <p className="finding-quote muted">“{f.quote}”</p>
                     {note ? (
@@ -1365,6 +1366,3 @@ function displayEvidenceNote(note: string | undefined): string | null {
   return note;
 }
 
-function confidenceLabel(confidence: number): string {
-  return `${Math.round(confidence * 100)}% sure`;
-}

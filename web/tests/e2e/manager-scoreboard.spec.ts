@@ -61,8 +61,9 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await expect(
       page.getByText("All findings carry clause · quote · confidence."),
     ).toHaveCount(0);
-    await expect(row.getByText(/86% sure/i)).toHaveCount(1);
-    await expect(row.getByText(/FS-01/)).toHaveCount(1);
+    await expect(row.getByTestId("citation")).toHaveText(/FS-01\s*·\s*High/);
+    await expect(row.getByText(/86% sure/i)).toHaveCount(0);
+    await expect(row.getByText(/% sure/i)).toHaveCount(0);
     await expect(row.getByText(/conf\s*86%/i)).toHaveCount(0);
 
     const how = page.getByRole("button", { name: /how this was scored/i });
@@ -160,17 +161,20 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await expect(gloves).toContainText(
       "Wear clean disposable gloves at the food-prep station.",
     );
-    await expect(gloves).toContainText(/86% sure/i);
+    await expect(gloves).toContainText(/High/);
+    await expect(gloves).not.toContainText(/% sure/i);
 
     const handwash = rows.filter({ hasText: "FS-02" });
     await expect(handwash).toContainText("Handwash must be stocked before service.");
-    await expect(handwash).toContainText(/91% sure/i);
+    await expect(handwash).toContainText(/High/);
+    await expect(handwash).not.toContainText(/% sure/i);
 
     const floor = rows.filter({ hasText: "FS-07" });
     await expect(floor).toContainText(
       "Service floor should be clear of slip hazards at open.",
     );
-    await expect(floor).toContainText(/42% sure/i);
+    await expect(floor).toContainText(/Low/);
+    await expect(floor).not.toContainText(/% sure/i);
 
     await expect(page.getByText(/Food handlers must wear clean/i)).toHaveCount(0);
     assertNoPageErrors(errors);
