@@ -42,6 +42,7 @@ import {
   sweepStaleJobs,
   type ManagerShiftSummary,
 } from "../../lib/manager";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   getChecklist,
   getEvidenceFileUrl,
@@ -641,7 +642,7 @@ export function ManagerShiftDetail() {
         setToast("Re-check attached (sample). Staff attested — mark done when ready.");
       } else {
         const fileId = await uploadEvidence(fileList[0]);
-        await attachRecheckAndRescore({
+        const result = await attachRecheckAndRescore({
           taskId,
           shiftId: item.shift.$id,
           findingId: task.findingId,
@@ -654,7 +655,11 @@ export function ManagerShiftDetail() {
           setSource(refreshed.source);
         }
         await loadExtras(item.shift.$id, false);
-        setToast("Re-check scored — mark done when ready.");
+        setToast(
+          result.fallback
+            ? RECHECK_FALLBACK_TOAST
+            : "Re-check scored — mark done when ready.",
+        );
       }
     } catch (err) {
       setError(getErrorMessage(err, "Could not attach re-check photo"));

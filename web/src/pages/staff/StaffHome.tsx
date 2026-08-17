@@ -19,6 +19,7 @@ import {
   getFinding,
   listOpenFixTasksForStaff,
 } from "../../lib/manager";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   createDraftShift,
   getChecklist,
@@ -206,7 +207,7 @@ export function StaffHome() {
     setRecheckTaskId(task.$id);
     try {
       const fileId = await uploadEvidence(file);
-      await attachRecheckAndRescore({
+      const result = await attachRecheckAndRescore({
         taskId: task.$id,
         shiftId: task.shiftId,
         findingId: task.findingId,
@@ -218,13 +219,16 @@ export function StaffHome() {
           t.$id === task.$id ? { ...t, recheckFileId: fileId } : t,
         ),
       );
+      if (result.fallback) {
+        setFixToast(RECHECK_FALLBACK_TOAST);
+      }
       const scored = await getFinding(task.findingId).catch(() => null);
       if (scored) {
         setFixFindings((prev) => [
           ...prev.filter((f) => f.$id !== scored.$id),
           scored,
         ]);
-        if (scored.status === "pass") {
+        if (!result.fallback && scored.status === "pass") {
           setFixToast("Re-check sent · waiting on manager");
         }
       }

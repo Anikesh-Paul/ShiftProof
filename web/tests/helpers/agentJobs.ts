@@ -384,6 +384,8 @@ export async function getFindingRow(findingId: string): Promise<{
   status: RecheckScoreStatus;
   source: string;
   evidenceNote: string;
+  overrideReason: string | null;
+  overriddenBy: string | null;
 }> {
   const { tables } = sdk();
   const row = await tables.getRow({
@@ -395,6 +397,8 @@ export async function getFindingRow(findingId: string): Promise<{
     status: row.status,
     source: row.source,
     evidenceNote: row.evidenceNote,
+    overrideReason: row.overrideReason ?? null,
+    overriddenBy: row.overriddenBy ?? null,
   };
 }
 

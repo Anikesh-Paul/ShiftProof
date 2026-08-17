@@ -27,6 +27,7 @@ import {
   listEvents,
   listTasks,
 } from "../../lib/manager";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   PHOTO_ACCEPT,
   PHOTO_MAX,
@@ -118,6 +119,7 @@ export function ShiftPhotos() {
   const [discarding, setDiscarding] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [recheckFindingId, setRecheckFindingId] = useState<string | null>(null);
+  const [recheckToast, setRecheckToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [readyIds, setReadyIds] = useState<Set<string>>(() => new Set());
@@ -535,9 +537,10 @@ export function ShiftPhotos() {
     }
     setRecheckFindingId(task.findingId);
     setError(null);
+    setRecheckToast(null);
     try {
       const fileId = await uploadEvidence(file);
-      await attachRecheckAndRescore({
+      const result = await attachRecheckAndRescore({
         taskId: task.$id,
         shiftId: task.shiftId,
         findingId: task.findingId,
@@ -553,6 +556,7 @@ export function ShiftPhotos() {
         () => null,
       );
       if (scored) setFindings(scored);
+      if (result.fallback) setRecheckToast(RECHECK_FALLBACK_TOAST);
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
     } finally {
@@ -661,6 +665,12 @@ export function ShiftPhotos() {
           >
             {errorShown}
           </div>
+        ) : null}
+
+        {recheckToast ? (
+          <p className="success-banner" role="status" data-testid="recheck-toast">
+            {recheckToast}
+          </p>
         ) : null}
 
         {showRetry ? (

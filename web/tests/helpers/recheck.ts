@@ -99,3 +99,47 @@ export async function stubRecheckFunctionPass(
 ): Promise<void> {
   await stubRecheckFunction(page, { ...opts, status: "pass" });
 }
+
+/**
+ * Intercept runShiftScore { action: "recheck" } as a Function-execution failure.
+ * Writes nothing to the Finding — the client must fall back to Attestation.
+ */
+export async function stubRecheckFunctionFailure(page: Page): Promise<void> {
+  await page.route(
+    (url) => isFunctionExecution(new URL(url)),
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      const payload = parseExecutionBody(route.request());
+      if (payload.action !== "recheck" || !payload.taskId) {
+        await route.continue();
+        return;
+      }
+      const now = new Date().toISOString();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          $id: `exec_recheck_fail_${payload.taskId}`,
+          $createdAt: now,
+          $updatedAt: now,
+          $permissions: [],
+          functionId: "runShiftScore",
+          trigger: "http",
+          status: "failed",
+          statusCode: 500,
+          responseStatusCode: 500,
+          responseBody: JSON.stringify({
+            ok: false,
+            error: "Gemini HTTP 429",
+          }),
+          logs: "",
+          errors: "Gemini HTTP 429",
+          duration: 0.2,
+        }),
+      });
+    },
+  );
+}

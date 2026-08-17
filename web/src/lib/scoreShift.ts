@@ -11,8 +11,12 @@ const T = APPWRITE_IDS.tables;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RowData = Record<string, any>;
 
+/** Staff toast when Gemini does not score the Re-check (ADR 0005). */
+export const RECHECK_FALLBACK_TOAST =
+  "AI could not re-score — sent as staff attestation.";
+
 /**
- * Staff Attestation after a Re-check photo (ADR 0003).
+ * Staff Attestation after a Re-check photo (ADR 0005 fallback).
  * Flips the Finding to Pass with source staff_recheck. Keeps clause, quote,
  * confidence, and any manager Override fields. Records who attested and when
  * on the finding.attested event — no invented confidence.

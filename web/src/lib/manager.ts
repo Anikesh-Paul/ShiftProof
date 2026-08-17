@@ -458,9 +458,16 @@ function byTaskRecency(a: Task, b: Task) {
   return (b.createdAt || b.$createdAt).localeCompare(a.createdAt || a.$createdAt);
 }
 
+export type RecheckAttachResult = {
+  task: Task;
+  /** True when the Function or wait failed and the client wrote Attestation. */
+  fallback: boolean;
+};
+
 /**
  * Persist the Re-check file on the Task, then score it via runShiftScore.
  * Function writes the Finding (AI Pass / Gap / Unclear). Task stays open.
+ * Function or wait failure: client writes Attestation; Function wrote nothing.
  */
 export async function attachRecheckAndRescore(opts: {
   taskId: string;
@@ -468,7 +475,7 @@ export async function attachRecheckAndRescore(opts: {
   findingId: string;
   recheckFileId: string;
   userId: string;
-}): Promise<Task> {
+}): Promise<RecheckAttachResult> {
   const row = await tables.updateRow({
     databaseId: DB,
     tableId: T.tasks,
@@ -497,23 +504,38 @@ export async function attachRecheckAndRescore(opts: {
     } as RowData,
   });
 
+  const task = row as unknown as Task;
+
   if (opts.shiftId.startsWith("demo_shift_")) {
-    const finding = await getFinding(opts.findingId);
-    const { rescoreFindingAfterRecheck } = await import("./scoreShift");
-    await rescoreFindingAfterRecheck({
-      findingId: opts.findingId,
-      shiftId: opts.shiftId,
-      itemId: finding.itemId,
-      recheckFileId: opts.recheckFileId,
-      actorUserId: opts.userId,
-    });
-    return row as unknown as Task;
+    await writeStaffAttestation(opts);
+    return { task, fallback: false };
   }
 
   const { runRecheckScore } = await import("./shifts");
-  await runRecheckScore(opts.taskId);
+  try {
+    await runRecheckScore(opts.taskId);
+    return { task, fallback: false };
+  } catch {
+    await writeStaffAttestation(opts);
+    return { task, fallback: true };
+  }
+}
 
-  return row as unknown as Task;
+async function writeStaffAttestation(opts: {
+  findingId: string;
+  shiftId: string;
+  recheckFileId: string;
+  userId: string;
+}): Promise<void> {
+  const finding = await getFinding(opts.findingId);
+  const { rescoreFindingAfterRecheck } = await import("./scoreShift");
+  await rescoreFindingAfterRecheck({
+    findingId: opts.findingId,
+    shiftId: opts.shiftId,
+    itemId: finding.itemId,
+    recheckFileId: opts.recheckFileId,
+    actorUserId: opts.userId,
+  });
 }
 
 /** API.md manager §9 — mark a stale waiting/running job failed. Shift unchanged. */
