@@ -336,16 +336,33 @@
   outline-offset: 2px;
 }
 
-/* —— SOP missing line (no furniture when the PDF is on file) —— */
+/* —— SOP: Missing + Upload, or live clause set + Replace —— */
 
-.manager-sop-missing {
+.manager-sop-missing,
+.manager-sop-panel {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--label-secondary);
+}
+
+.manager-sop-missing {
+  align-items: center;
+}
+
+.manager-sop-clauses {
+  flex: 1 1 16rem;
+  margin: 0;
+  padding-left: 1.25rem;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+.manager-sop-clauses li + li {
+  margin-top: 0.15rem;
 }
 
 .manager-sop-file {

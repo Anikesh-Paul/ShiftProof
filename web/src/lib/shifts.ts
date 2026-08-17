@@ -97,6 +97,45 @@ export async function uploadSopPdf(file: File): Promise<Sop> {
   return row as unknown as Sop;
 }
 
+const EXTRACT_KEEP_PREVIOUS =
+  "The new file was not read. The previous opening check is still in force.";
+
+/**
+ * Extract the live clause set from the SOP file now on record.
+ * Waits on the Function. Writes nothing on the client — the Function
+ * rewrites the Checklist only after a successful extract.
+ */
+export async function extractSopLiveSet(): Promise<ChecklistItem[]> {
+  let execution;
+  try {
+    execution = await functions.createExecution({
+      functionId: APPWRITE_IDS.functions.runShiftScore,
+      body: JSON.stringify({ action: "extract" }),
+      async: false,
+    });
+  } catch {
+    throw new Error(EXTRACT_KEEP_PREVIOUS);
+  }
+  let payload: { ok?: boolean; items?: ChecklistItem[]; error?: string } = {};
+  try {
+    payload = JSON.parse(execution.responseBody || "{}") as {
+      ok?: boolean;
+      items?: ChecklistItem[];
+      error?: string;
+    };
+  } catch {
+    payload = {};
+  }
+  const failed =
+    execution.status === "failed" ||
+    execution.responseStatusCode >= 400 ||
+    payload.ok === false;
+  if (failed) {
+    throw new Error(EXTRACT_KEEP_PREVIOUS);
+  }
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
 /** View/download URL for an SOP PDF in `sop_files`. */
 export function getSopFileUrl(fileId: string): string {
   return storage.getFileView({

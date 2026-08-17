@@ -31,13 +31,16 @@ import {
 } from "../../lib/manager";
 import { useSlowLoading } from "../../lib/loading";
 import {
+  extractSopLiveSet,
+  getChecklist,
   getSite,
   getSop,
   isSopFileReady,
+  parseChecklistItems,
   uploadSopPdf,
 } from "../../lib/shifts";
 import { resolveStaffLabel } from "../../lib/staffNames";
-import type { Sop, Task } from "../../types/shiftproof";
+import type { ChecklistItem, Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
 
 type InboxView = "today" | "backlog" | "all";
@@ -78,6 +81,7 @@ export function ManagerHome() {
 
   const sopInputRef = useRef<HTMLInputElement>(null);
   const [sop, setSop] = useState<Sop | null>(null);
+  const [liveItems, setLiveItems] = useState<ChecklistItem[]>([]);
   const [sopLoading, setSopLoading] = useState(true);
   const [sopUploading, setSopUploading] = useState(false);
   const [sopMessage, setSopMessage] = useState<string | null>(null);
@@ -148,9 +152,13 @@ export function ManagerHome() {
     let cancelled = false;
     (async () => {
       try {
-        const row = await getSop();
+        const [row, checklist] = await Promise.all([
+          getSop(),
+          getChecklist().catch(() => null),
+        ]);
         if (!cancelled) {
           setSop(row);
+          if (checklist) setLiveItems(parseChecklistItems(checklist));
           setSopError(null);
         }
       } catch (err) {
@@ -176,9 +184,27 @@ export function ManagerHome() {
     try {
       const updated = await uploadSopPdf(file);
       setSop(updated);
-      setSopMessage("SOP PDF saved.");
+      await extractSopLiveSet();
+      const [sopRow, checklist] = await Promise.all([
+        getSop(),
+        getChecklist(),
+      ]);
+      setSop(sopRow);
+      setLiveItems(parseChecklistItems(checklist));
+      setSopMessage(null);
     } catch (err) {
-      setSopError(getErrorMessage(err, "Could not upload SOP PDF"));
+      setSopError(
+        getErrorMessage(
+          err,
+          "The new file was not read. The previous opening check is still in force.",
+        ),
+      );
+      try {
+        const checklist = await getChecklist();
+        setLiveItems(parseChecklistItems(checklist));
+      } catch {
+        /* keep last known live set */
+      }
     } finally {
       setSopUploading(false);
     }
@@ -665,9 +691,11 @@ export function ManagerHome() {
         )}
       </section>
 
-      {!sopLoading && !sopReady ? (
-        <div className="manager-sop-missing" data-testid="sop-upload">
-          <span>Missing</span>
+      {!sopLoading ? (
+        <div
+          className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
+          data-testid="sop-upload"
+        >
           <input
             ref={sopInputRef}
             type="file"
@@ -676,15 +704,45 @@ export function ManagerHome() {
             onChange={(e) => void onSopFileChange(e)}
             disabled={sopUploading}
           />
-          <button
-            type="button"
-            className="text-btn"
-            disabled={sopUploading}
-            onClick={() => sopInputRef.current?.click()}
-          >
-            Upload
-          </button>
-          {sopMessage ? (
+          {!sopReady ? (
+            <>
+              <span>Missing</span>
+              <button
+                type="button"
+                className="text-btn"
+                disabled={sopUploading}
+                onClick={() => sopInputRef.current?.click()}
+              >
+                Upload
+              </button>
+            </>
+          ) : (
+            <>
+              {liveItems.length > 0 ? (
+                <ol
+                  className="manager-sop-clauses"
+                  data-testid="live-clause-set"
+                >
+                  {liveItems.map((item) => (
+                    <li key={item.id}>{item.label}</li>
+                  ))}
+                </ol>
+              ) : null}
+              <button
+                type="button"
+                className="text-btn"
+                disabled={sopUploading}
+                onClick={() => sopInputRef.current?.click()}
+              >
+                Replace
+              </button>
+            </>
+          )}
+          {sopUploading ? (
+            <p className="manager-sop-toast" role="status">
+              Reading the SOP…
+            </p>
+          ) : sopMessage ? (
             <p className="manager-sop-toast" role="status">
               {sopMessage}
             </p>

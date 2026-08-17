@@ -1,6 +1,6 @@
 /**
  * Appwrite Function: runShiftScore
- * Contract: docs/API.md — input { shiftId, jobId }
+ * Contract: docs/API.md — input { shiftId, jobId } or { action: "extract" }
  *
  * Default: Gemini Flash (Google AI Studio) scores Storage photos + checklist
  * → FINDINGS_SCHEMA → findings / job / events.
@@ -15,15 +15,27 @@
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
 const { Client, TablesDB, Storage, ID, Query } = require("node-appwrite");
+const { thinkingConfigFor, fallbackModels, extractCallPolicy } = require(
+  __dirname.endsWith("src") ? "./thinking" : "./src/thinking",
+);
+const {
+  parseExtractPayload,
+  toChecklistItems,
+  bumpVersion,
+} = require(__dirname.endsWith("src") ? "./liveSet" : "./src/liveSet");
 
 const DB = "shiftproof";
 const EVIDENCE_BUCKET = "evidence";
+const SOP_BUCKET = "sop_files";
+const SOP_ID = "cafe_sop_v1";
+const CHECKLIST_ID = "opening_fs";
 const T = {
   shifts: "shifts",
   checklists: "checklists",
   findings: "findings",
   agent_jobs: "agent_jobs",
   events: "events",
+  sops: "sops",
 };
 
 /** Low confidence cannot be silent pass/gap (TC-C3-05). */
@@ -33,7 +45,7 @@ const MAX_PHOTOS = 5;
 /** Cap base64 chars per image (~1.2MB decoded). Phone originals are compressed on upload. */
 const MAX_B64_CHARS = 1_600_000;
 /** One Gemini attempt must finish in time to allow a retry inside the Function timeout. */
-const GEMINI_ATTEMPT_MS = 45_000;
+const GEMINI_ATTEMPT_MS = 60_000;
 /** Leave headroom under Appwrite Function timeout (120s default; set 170000 after raising to 180s). */
 const SCORING_DEADLINE_MS = Number(process.env.SCORING_DEADLINE_MS || 110_000);
 
@@ -199,6 +211,54 @@ ${JSON.stringify(checklistForModel, null, 2)}
 `;
 }
 
+function buildExtractPrompt() {
+  return `You extract the café opening check from this SOP PDF.
+
+Return ONLY valid JSON (no markdown fences):
+{
+  "items": [
+    {
+      "clause_id": "FS-01",
+      "label": "short photo-provable opening question",
+      "quote": "short verbatim quote from the SOP"
+    }
+  ]
+}
+
+Rules:
+1. Only photo-provable café-opening rules — something a photo at open can prove.
+2. At most 8 items. If more photographable rules exist, pick the eight most critical opening checks, not document order or cover pages.
+3. If fewer than 3 photo-provable opening rules exist, return { "items": [] }.
+4. Prefer printed clause ids (FS-01 and so on) when the SOP has them.
+5. Labels are short staff-facing questions, not section titles.
+6. Quotes are short verbatim lines from the SOP.
+`;
+}
+
+function extractJsonAny(text) {
+  const raw = String(text || "").trim();
+  if (!raw) throw new Error("Empty model text");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    /* fall through */
+  }
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) {
+    return JSON.parse(fence[1].trim());
+  }
+  try {
+    return extractJsonObject(raw);
+  } catch {
+    const start = raw.indexOf("[");
+    const end = raw.lastIndexOf("]");
+    if (start >= 0 && end > start) {
+      return JSON.parse(raw.slice(start, end + 1));
+    }
+    throw new Error("Model response is not valid JSON");
+  }
+}
+
 function extractJsonObject(text) {
   const raw = String(text || "").trim();
   if (!raw) throw new Error("Empty model text");
@@ -320,15 +380,6 @@ function isThinkingConfigRejected(status, body) {
   return String(body || "").toLowerCase().includes("thinking");
 }
 
-/** 2.5 Flash: thinkingBudget 0. 3.x / flash-latest: MINIMAL (cannot fully disable). */
-function thinkingConfigFor(model) {
-  const m = String(model || "").toLowerCase();
-  if (m.includes("2.5") || m.includes("2.0")) {
-    return { thinkingBudget: 0 };
-  }
-  return { thinkingLevel: "MINIMAL" };
-}
-
 function retryDelayMs(status, attempt) {
   if (status === 429) return 12_000;
   if (status === 503) return attempt === 1 ? 5_000 : 12_000;
@@ -350,7 +401,7 @@ async function callGeminiFlashOnce({
   const parts = [{ text: prompt }, ...imageParts];
   const generationConfig = {
     temperature: 0.2,
-    maxOutputTokens: 2048,
+    maxOutputTokens: 8192,
     responseMimeType: "application/json",
   };
   if (thinkingConfig) {
@@ -426,7 +477,10 @@ async function callGeminiFlashOnce({
 async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
   const maxAttempts = 3;
   const started = Date.now();
-  let thinkingConfig = thinkingConfigFor(model);
+  const models = fallbackModels(model);
+  let modelIdx = 0;
+  let currentModel = models[0];
+  let thinkingConfig = thinkingConfigFor(currentModel);
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const elapsed = Date.now() - started;
@@ -435,14 +489,15 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
       break;
     }
     try {
-      return await callGeminiFlashOnce({
+      const textOut = await callGeminiFlashOnce({
         apiKey,
-        model,
+        model: currentModel,
         prompt,
         imageParts,
         log,
         thinkingConfig,
       });
+      return { textOut, model: currentModel };
     } catch (e) {
       lastErr = e;
       const status = e && e.httpStatus;
@@ -453,6 +508,7 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
       if (thinkingConfig && isThinkingConfigRejected(status, body)) {
         log("Gemini rejected thinkingConfig; retrying without it");
         thinkingConfig = null;
+        attempt -= 1;
         continue;
       }
 
@@ -464,6 +520,13 @@ async function callGeminiFlash({ apiKey, model, prompt, imageParts, log }) {
 
       const retryable = timedOut || isRetryableGeminiHttp(status);
       if (attempt < maxAttempts && retryable) {
+        if (status === 503 && modelIdx + 1 < models.length) {
+          modelIdx += 1;
+          currentModel = models[modelIdx];
+          thinkingConfig = thinkingConfigFor(currentModel);
+          log(`Gemini HTTP 503; fallback model=${currentModel}`);
+          continue;
+        }
         const delayMs = retryDelayMs(status || 503, attempt);
         log(
           `Gemini retryable ${timedOut ? "timeout" : `HTTP ${status}`}; attempt ${attempt}/${maxAttempts}; wait ${delayMs}ms`,
@@ -491,7 +554,7 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
     log("warning: no photos downloaded; scoring with text-only context");
   }
   const prompt = buildScoringPrompt(items);
-  const textOut = await callGeminiFlash({
+  const { textOut, model: usedModel } = await callGeminiFlash({
     apiKey,
     model,
     prompt,
@@ -504,7 +567,82 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
   if (scored.length < 5) {
     throw new Error(`Need ≥5 findings, got ${scored.length}`);
   }
-  return { scored, model, photoCountUsed: imageParts.length };
+  return { scored, model: usedModel, photoCountUsed: imageParts.length };
+}
+
+async function extractWithGemini({ storage, fileId, log }) {
+  const apiKey = process.env.GOOGLE_AI_API_KEY || "";
+  if (!apiKey) {
+    throw new Error(
+      "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
+    );
+  }
+  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const policy = extractCallPolicy(model);
+  const buf = await storage.getFileDownload({
+    bucketId: SOP_BUCKET,
+    fileId,
+  });
+  const b64 = Buffer.from(buf).toString("base64");
+  if (!b64.length) {
+    throw new Error("SOP file is empty");
+  }
+  const { thinkingConfig } = policy;
+  const textOut = await callGeminiFlashOnce({
+    apiKey,
+    model,
+    prompt: buildExtractPrompt(),
+    imageParts: [
+      {
+        inline_data: {
+          mime_type: "application/pdf",
+          data: b64,
+        },
+      },
+    ],
+    log,
+    thinkingConfig,
+  });
+  return textOut;
+}
+
+async function handleExtract({ tables, storage, res, log, error }) {
+  log("runShiftScore action=extract");
+  try {
+    const sop = await tables.getRow({
+      databaseId: DB,
+      tableId: T.sops,
+      rowId: SOP_ID,
+    });
+    const fileId = String(sop.fileId || "").trim();
+    if (!fileId || /^TODO/i.test(fileId)) {
+      throw new Error("No SOP file on record");
+    }
+    const textOut = await extractWithGemini({ storage, fileId, log });
+    log(`extract response chars=${textOut.length}`);
+    const extracted = parseExtractPayload(extractJsonAny(textOut));
+    const items = toChecklistItems(extracted);
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: T.checklists,
+      rowId: CHECKLIST_ID,
+      data: { itemsJson: JSON.stringify(items) },
+    });
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: T.sops,
+      rowId: SOP_ID,
+      data: {
+        version: bumpVersion(sop.version),
+      },
+    });
+    log(`extract ok items=${items.length}`);
+    return res.json({ ok: true, items });
+  } catch (e) {
+    const message = String(e.message || e);
+    error(`extract failed: ${message}`);
+    return res.json({ ok: false, error: message }, 500);
+  }
 }
 
 module.exports = async ({ req, res, log, error }) => {
@@ -532,7 +670,11 @@ module.exports = async ({ req, res, log, error }) => {
   } catch {
     body = {};
   }
-  if (!body.shiftId && req.bodyJson) body = req.bodyJson;
+  if (!body.shiftId && !body.action && req.bodyJson) body = req.bodyJson;
+
+  if (body.action === "extract") {
+    return handleExtract({ tables, storage, res, log, error });
+  }
 
   const shiftId = body.shiftId;
   const jobId = body.jobId;

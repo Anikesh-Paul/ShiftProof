@@ -60,6 +60,8 @@ export interface ChecklistItem {
   label: string;
   requiredPhoto: boolean;
   relatedClauseIds: string[];
+  /** Verbatim Clause quote from the live set. Lives in itemsJson. */
+  quote?: string;
 }
 
 export interface Checklist extends AppwriteRowMeta {
@@ -176,10 +178,9 @@ export interface CreateAgentJobInput {
   traceJson?: string;
 }
 
-export interface RunShiftScoreRequest {
-  shiftId: string;
-  jobId: string;
-}
+export type RunShiftScoreRequest =
+  | { shiftId: string; jobId: string }
+  | { action: "extract" };
 
 /** Constants matching live Appwrite project Jammu */
 export const APPWRITE_IDS = {

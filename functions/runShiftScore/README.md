@@ -4,9 +4,19 @@ Appwrite Function for ShiftProof vision scoring. Contract: `docs/API.md`, schema
 
 ## Input
 
+Score a Shift:
+
 ```json
 { "shiftId": "<id>", "jobId": "<id>" }
 ```
+
+Extract the live clause set from the SOP now on record (manager upload, sync wait on Inbox):
+
+```json
+{ "action": "extract" }
+```
+
+Extract uses `thinkingLevel: HIGH`, one attempt, no 2.x fallback, no MEDIUM retry. Success rewrites `opening_fs.itemsJson` (3–8 items). Failure writes nothing to the Checklist.
 
 ## Default path (Gemini Flash)
 
