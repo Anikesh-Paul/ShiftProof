@@ -727,7 +727,14 @@ export function ManagerHome() {
             role="status"
             data-testid="inbox-jobs"
           >
-            <p className="manager-jobs-copy">{jobsLine}</p>
+            <button
+              type="button"
+              className="manager-jobs-copy"
+              aria-label={`${jobsLine}. Show on All.`}
+              onClick={() => setView("all")}
+            >
+              {jobsLine}
+            </button>
             <div className="manager-jobs-actions">
               <Button
                 variant="quiet"

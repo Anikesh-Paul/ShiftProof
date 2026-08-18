@@ -326,6 +326,15 @@ test.describe("manager Inbox rows name the work", () => {
     await expect(
       page.locator(`a[href="/manager/shifts/${gapId}"]`),
     ).toBeVisible();
+    await banner.getByRole("button", { name: /stuck/i }).click();
+    await expect(page.getByRole("tab", { name: /^all$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByTestId("inbox-jobs")).toHaveCount(0);
+    await expect(
+      page.locator(`a[href="/manager/shifts/${stuckId}"]`),
+    ).toBeVisible();
     assertNoPageErrors(errors);
   });
 
