@@ -578,6 +578,77 @@ export function ManagerHome() {
         </div>
       ) : null}
 
+      {!sopLoading ? (
+        <div
+          className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
+          data-testid="sop-upload"
+        >
+          <input
+            ref={sopInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            className="manager-sop-file"
+            onChange={(e) => void onSopFileChange(e)}
+            disabled={sopUploading}
+          />
+          {!sopReady ? (
+            <>
+              <span>Missing</span>
+              <button
+                type="button"
+                className="text-btn"
+                disabled={sopUploading}
+                onClick={() => sopInputRef.current?.click()}
+              >
+                Upload
+              </button>
+            </>
+          ) : (
+            <>
+              <details className="manager-sop-details">
+                <summary>
+                  {liveItems.length > 0
+                    ? `Opening check · ${liveItems.length} items`
+                    : "Opening check"}
+                </summary>
+                {liveItems.length > 0 ? (
+                  <ol
+                    className="manager-sop-clauses"
+                    data-testid="live-clause-set"
+                  >
+                    {liveItems.map((item) => (
+                      <li key={item.id}>{item.label}</li>
+                    ))}
+                  </ol>
+                ) : null}
+              </details>
+              <button
+                type="button"
+                className="text-btn"
+                disabled={sopUploading}
+                onClick={() => sopInputRef.current?.click()}
+              >
+                Replace
+              </button>
+            </>
+          )}
+          {sopUploading ? (
+            <p className="manager-sop-toast" role="status">
+              Reading the SOP…
+            </p>
+          ) : sopMessage ? (
+            <p className="manager-sop-toast" role="status">
+              {sopMessage}
+            </p>
+          ) : null}
+          {sopError ? (
+            <div className="error-banner" role="alert">
+              {sopError}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {!loading && openTasks.length > 0 ? (
         <section
           className="manager-inbox"
@@ -912,77 +983,6 @@ export function ManagerHome() {
           </ul>
         )}
       </section>
-
-      {!sopLoading ? (
-        <div
-          className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
-          data-testid="sop-upload"
-        >
-          <input
-            ref={sopInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="manager-sop-file"
-            onChange={(e) => void onSopFileChange(e)}
-            disabled={sopUploading}
-          />
-          {!sopReady ? (
-            <>
-              <span>Missing</span>
-              <button
-                type="button"
-                className="text-btn"
-                disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Upload
-              </button>
-            </>
-          ) : (
-            <>
-              <details className="manager-sop-details">
-                <summary>
-                  {liveItems.length > 0
-                    ? `Opening check · ${liveItems.length} items`
-                    : "Opening check"}
-                </summary>
-                {liveItems.length > 0 ? (
-                  <ol
-                    className="manager-sop-clauses"
-                    data-testid="live-clause-set"
-                  >
-                    {liveItems.map((item) => (
-                      <li key={item.id}>{item.label}</li>
-                    ))}
-                  </ol>
-                ) : null}
-              </details>
-              <button
-                type="button"
-                className="text-btn"
-                disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Replace
-              </button>
-            </>
-          )}
-          {sopUploading ? (
-            <p className="manager-sop-toast" role="status">
-              Reading the SOP…
-            </p>
-          ) : sopMessage ? (
-            <p className="manager-sop-toast" role="status">
-              {sopMessage}
-            </p>
-          ) : null}
-          {sopError ? (
-            <div className="error-banner" role="alert">
-              {sopError}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
