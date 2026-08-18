@@ -5,6 +5,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,6 +30,7 @@ import {
   attachRecheckAndRescore,
   closeShift,
   DEMO_AGENT_TRACE,
+  formatManagerWhen,
   getAgentJobTrace,
   hasForcedCitation,
   isStuckScoring,
@@ -39,6 +41,8 @@ import {
   markTaskDone,
   mergeTasksById,
   overrideFinding,
+  isHarnessName,
+  shortItemLabel,
   subscribeManagerTables,
   sweepStaleJobs,
   type ManagerShiftSummary,
@@ -53,7 +57,7 @@ import {
   retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
-import { resolveStaffLabel } from "../../lib/staffNames";
+import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type {
   AuditEvent,
   ChecklistItem,
@@ -81,6 +85,10 @@ export function ManagerShiftDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const listRef = useRef<HTMLUListElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDetailsElement>(null);
+  const stickyRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [item, setItem] = useState<ManagerShiftSummary | null>(null);
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -103,6 +111,9 @@ export function ManagerShiftDetail() {
   const [overrideTo, setOverrideTo] = useState<FindingStatus>("pass");
   const [toast, setToast] = useState<string | null>(null);
   const [recheckTaskId, setRecheckTaskId] = useState<string | null>(null);
+  const [missingPhotos, setMissingPhotos] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -264,6 +275,90 @@ export function ManagerShiftDetail() {
     () => item?.findings.find((f) => f.$id === selectedId) ?? null,
     [item, selectedId],
   );
+  const formOpen = Boolean(selected) && mode !== "idle";
+
+  useLayoutEffect(() => {
+    const root = detailRef.current;
+    if (!formOpen) {
+      root?.style.removeProperty("--sticky-sheet-height");
+      return;
+    }
+    const sheet = stickyRef.current;
+    if (!sheet || !root) return;
+    const apply = () => {
+      root.style.setProperty("--sticky-sheet-height", `${sheet.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(sheet);
+    return () => ro.disconnect();
+  }, [formOpen, mode]);
+
+  useEffect(() => {
+    if (!formOpen) return;
+    closeOverflow();
+    const sheet = stickyRef.current;
+    const findingId = selectedId;
+    if (!sheet || !findingId) return;
+
+    const keepFindingVisible = () => {
+      scrollFindingAboveSheet(listRef.current, findingId, sheet);
+    };
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      keepFindingVisible();
+      window.requestAnimationFrame(() => {
+        if (!cancelled) keepFindingVisible();
+      });
+    });
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", keepFindingVisible);
+    vv?.addEventListener("scroll", keepFindingVisible);
+
+    if (!sheet.contains(document.activeElement)) {
+      sheet.focus({ preventScroll: true });
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSheet();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const nodes = sheetFocusables(sheet);
+      if (nodes.length === 0) {
+        e.preventDefault();
+        sheet.focus({ preventScroll: true });
+        return;
+      }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === sheet)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      vv?.removeEventListener("resize", keepFindingVisible);
+      vv?.removeEventListener("scroll", keepFindingVisible);
+      document.removeEventListener("keydown", onKey);
+      const back = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (back && document.contains(back)) {
+        back.focus({ preventScroll: true });
+      }
+    };
+  }, [formOpen, selectedId, mode]);
 
   const visibleFindings = useMemo(() => {
     if (!item) return [];
@@ -291,30 +386,79 @@ export function ManagerShiftDetail() {
     [item],
   );
 
-  function focusFinding(f: Finding) {
+  const onPhotoMissing = useCallback((fileId: string, missing: boolean) => {
+    if (!missing) return;
+    setMissingPhotos((prev) => {
+      if (prev.has(fileId)) return prev;
+      const next = new Set(prev);
+      next.add(fileId);
+      return next;
+    });
+  }, []);
+
+  function openEvidence(fileId: string, startIndex: number) {
+    if (!item || missingPhotos.has(fileId)) return;
+    const ids = parsePhotoFileIds(item.shift.photoFileIds);
+    setLightbox({
+      items: ids.map((fid, j) => ({
+        src: getEvidenceFileUrl(fid),
+        label: `Evidence ${j + 1}`,
+      })),
+      startIndex: startIndex >= 0 ? startIndex : 0,
+    });
+  }
+
+  function closeOverflow() {
+    const el = overflowRef.current;
+    if (el?.open) el.open = false;
+  }
+
+  function selectFinding(f: Finding) {
     setSelectedId(f.$id);
     setReason("");
     setToast(null);
     setError(null);
-    window.requestAnimationFrame(() => {
-      const row = listRef.current?.querySelector(
-        `[data-finding-id="${f.$id}"]`,
-      );
-      if (row instanceof HTMLElement) {
-        row.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
-    });
   }
 
   function startOverride(f: Finding) {
-    focusFinding(f);
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    closeOverflow();
+    selectFinding(f);
     setOverrideTo(f.status === "pass" ? "gap" : "pass");
     setMode("override");
   }
 
   function startAssign(f: Finding) {
-    focusFinding(f);
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    closeOverflow();
+    selectFinding(f);
     setMode(f.status === "unclear" ? "retake" : "assign");
+  }
+
+  function closeSheet() {
+    setMode("idle");
+    setReason("");
+    setError(null);
+  }
+
+  function focusTask(findingId: string) {
+    setMode("idle");
+    setSelectedId(null);
+    requestAnimationFrame(() => {
+      const row = document.querySelector(
+        `[data-testid="fix-row"][data-finding-id="${findingId}"]`,
+      );
+      if (row instanceof HTMLElement) {
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+        row.focus();
+      }
+    });
   }
 
   async function runOverride() {
@@ -388,8 +532,8 @@ export function ManagerShiftDetail() {
     setSaving(true);
     const title =
       kind === "retake"
-        ? `Retake: ${itemLabel(selected.itemId)}`
-        : `Fix: ${itemLabel(selected.itemId)}`;
+        ? `Retake: ${glanceLabel(selected.itemId)}`
+        : `Fix: ${glanceLabel(selected.itemId)}`;
     const assignedTo = item.shift.createdBy;
     try {
       if (source === "demo") {
@@ -425,7 +569,7 @@ export function ManagerShiftDetail() {
           ...prev,
         ]);
         setToast(
-          `Task assigned to ${resolveStaffLabel(assignedTo)} (sample): ${title}`,
+          `Task assigned to ${displayStaffName(resolveStaffLabel(assignedTo))} (sample): ${title}`,
         );
       } else {
         const created = await assignFixTask({
@@ -439,7 +583,7 @@ export function ManagerShiftDetail() {
         await loadExtras(item.shift.$id, false);
         setTasks((prev) => mergeTasksById([created], prev));
         setToast(
-          `Task assigned to ${resolveStaffLabel(assignedTo)}: ${title}`,
+          `Task assigned to ${displayStaffName(resolveStaffLabel(assignedTo))}: ${title}`,
         );
       }
       setMode("idle");
@@ -478,7 +622,7 @@ export function ManagerShiftDetail() {
 
   async function runClose() {
     if (!item || !user) return;
-    const ok = window.confirm("Close this opening?");
+    const ok = window.confirm("Close this opening? It leaves the inbox.");
     if (!ok) return;
     setError(null);
     setSaving(true);
@@ -699,23 +843,26 @@ export function ManagerShiftDetail() {
 
   const openCount = item.gapCount + item.unclearCount;
   const evidenceIds = parsePhotoFileIds(item.shift.photoFileIds);
-  const evidenceSlides: EvidenceSlide[] = evidenceIds.map((fid, j) => ({
-    src: getEvidenceFileUrl(fid),
-    label: `Evidence ${j + 1}`,
-  }));
   const stuck = isStuckScoring(item.shift, item.latestJob);
   const jobFailed = item.latestJob?.status === "failed";
-  const formOpen = Boolean(selected) && mode !== "idle";
+  const hasFindings = item.findings.length > 0;
+  const failureDetail = scoringFailureDetail(item.latestJob);
 
   return (
-    <div className={`manager-detail ${formOpen ? "has-sticky" : ""}`}>
-      <div className="app-page stack manager-detail-page staff-settle-in">
+    <div
+      ref={detailRef}
+      className={`manager-detail ${formOpen ? "has-sticky" : ""}`}
+    >
+      <div
+        className="app-page stack manager-detail-page"
+        inert={formOpen ? true : undefined}
+      >
         <div className="manager-detail-nav">
           <Link to="/manager" className="back-link">
             ← Inbox
           </Link>
           {item.findings.length > 0 || item.shift.status !== "closed" ? (
-            <details className="scoreboard-overflow">
+            <details ref={overflowRef} className="scoreboard-overflow">
               <summary
                 className="text-btn scoreboard-overflow-trigger"
                 data-testid="scoreboard-overflow"
@@ -773,48 +920,6 @@ export function ManagerShiftDetail() {
           ) : null}
         </header>
 
-        {evidenceIds.length > 0 ? (
-          <section
-            className="card stack-sm evidence-gallery"
-            aria-label="Shift evidence photos"
-          >
-            <div className="evidence-gallery-head">
-              <h2>Evidence</h2>
-              <p className="caption">
-                {evidenceIds.length} photo
-                {evidenceIds.length === 1 ? "" : "s"} from opening check
-              </p>
-            </div>
-            <ul className="list-plain evidence-grid">
-              {evidenceIds.map((id, i) => {
-                const label = `Evidence ${i + 1}`;
-                return (
-                  <li key={id} className="evidence-tile">
-                    <button
-                      type="button"
-                      className="evidence-link"
-                      onClick={() =>
-                        setLightbox({
-                          items: evidenceSlides,
-                          startIndex: i,
-                        })
-                      }
-                      aria-label={`View ${label}`}
-                    >
-                      <EvidenceImg
-                        fileId={id}
-                        alt={label}
-                        className="evidence-img"
-                      />
-                      <span className="evidence-index caption">{i + 1}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ) : null}
-
         {stuck ? (
           <div
             className="manager-stuck-banner"
@@ -828,6 +933,9 @@ export function ManagerShiftDetail() {
             >
               {shiftStatusSentence(item)}
             </p>
+            {failureDetail ? (
+              <p className="caption muted">{failureDetail}</p>
+            ) : null}
             <Button
               variant="primary"
               loading={saving}
@@ -838,7 +946,8 @@ export function ManagerShiftDetail() {
           </div>
         ) : null}
 
-        <div className="manager-tally" aria-label="Finding counts">
+        {hasFindings ? (
+        <p className="manager-tally" aria-label="Finding counts">
           <span>
             <strong>{item.gapCount}</strong> Gap
           </span>
@@ -858,11 +967,12 @@ export function ManagerShiftDetail() {
               </span>
             </>
           ) : null}
-        </div>
+        </p>
+        ) : null}
 
-        {agentTrace ? (
+        {agentTrace && hasFindings ? (
           <section
-            className="card stack-sm agent-trace"
+            className="agent-trace"
             data-testid="agent-trace"
             aria-label="How this was scored"
           >
@@ -897,27 +1007,25 @@ export function ManagerShiftDetail() {
         ) : null}
 
         {unclearFindings.length > 0 ? (
-          <section
-            className="hero-unclear card"
+          <p
+            className="hero-unclear"
             data-testid="hero-unclear"
-            aria-label="Unclear findings need review"
+            role="status"
           >
-            <h2>Needs human eyes</h2>
-            <p className="muted">
-              {unclearFindings.length === 1
-                ? "1 photo is unclear — request a retake, don’t assign a fix."
-                : `${unclearFindings.length} photos are unclear — request a retake, don’t assign a fix.`}
-            </p>
-          </section>
+            {unclearFindings.length === 1
+              ? "1 photo is unclear — request a retake, don’t assign a fix."
+              : `${unclearFindings.length} photos are unclear — request a retake, don’t assign a fix.`}
+          </p>
         ) : null}
 
+        {hasFindings ? (
         <div className="manager-filter-row">
           <p className="caption">
             {showAll
               ? "All findings"
               : openCount === 0
-                ? "No open gaps on this shift"
-                : "Open gaps only"}
+                ? "No open items"
+                : "Open items"}
           </p>
           <button
             type="button"
@@ -928,8 +1036,9 @@ export function ManagerShiftDetail() {
             {showAll ? "Hide passes" : "Show all"}
           </button>
         </div>
+        ) : null}
 
-        {errorShown ? (
+        {errorShown && !formOpen ? (
           <div
             className="error-banner"
             data-enter={!errorExiting ? "true" : undefined}
@@ -955,7 +1064,7 @@ export function ManagerShiftDetail() {
 
         {visibleFindings.length === 0 ? (
           stuck || jobFailed ? null : (
-          <div className="card stack-sm">
+          <div className="stack-sm manager-empty-findings">
             <h2>
               {item.findings.length === 0
                 ? item.shift.status === "scored"
@@ -973,7 +1082,7 @@ export function ManagerShiftDetail() {
         ) : (
           <ul
             ref={listRef}
-            className="list-plain finding-list stagger-in"
+            className="list-plain finding-list"
             aria-label="Findings"
           >
             {visibleFindings.map((f) => {
@@ -993,29 +1102,31 @@ export function ManagerShiftDetail() {
                     data-finding-id={f.$id}
                     data-source={f.source}
                     data-testid="finding-row"
-                    className={`finding-row card ${isSelected ? "is-selected" : ""}`}
+                    className={`finding-row ${isSelected ? "is-selected" : ""}`}
                   >
                     <div className="finding-row-top">
                       <FindingChip status={f.status} />
                     </div>
                     <div className="finding-title-row">
-                      <p className="finding-title">{itemLabel(f.itemId)}</p>
+                      <p className="finding-title">{glanceLabel(f.itemId)}</p>
                       {photoId ? (
                         <button
                           type="button"
                           className="finding-photo"
-                          onClick={() =>
-                            setLightbox({
-                              items: evidenceSlides,
-                              startIndex: photoIndex >= 0 ? photoIndex : 0,
-                            })
+                          disabled={missingPhotos.has(photoId)}
+                          onClick={() => openEvidence(photoId, photoIndex)}
+                          aria-label={
+                            missingPhotos.has(photoId)
+                              ? "Photo unavailable"
+                              : "View evidence photo"
                           }
-                          aria-label="View evidence photo"
                         >
                           <EvidenceImg
                             fileId={photoId}
                             alt=""
                             className="finding-photo-img"
+                            compact
+                            onMissingChange={onPhotoMissing}
                           />
                         </button>
                       ) : null}
@@ -1026,7 +1137,9 @@ export function ManagerShiftDetail() {
                     >
                       {f.clauseId} · {confidenceBand(f.confidence)}
                     </p>
+                    {f.quote ? (
                     <p className="finding-quote muted">“{f.quote}”</p>
+                    ) : null}
                     {note ? (
                       <p className="finding-note caption">{note}</p>
                     ) : null}
@@ -1048,21 +1161,31 @@ export function ManagerShiftDetail() {
                       </p>
                     ) : null}
                     <div className="finding-actions">
+                      {openTasks.some((t) => t.findingId === f.$id) ? (
+                        <Button
+                          variant="secondary"
+                          disabled={saving}
+                          onClick={() => focusTask(f.$id)}
+                        >
+                          View open fix
+                        </Button>
+                      ) : f.status !== "pass" ? (
+                        <Button
+                          variant="primary"
+                          disabled={saving}
+                          onClick={() => startAssign(f)}
+                        >
+                          {f.status === "unclear"
+                            ? "Request photo"
+                            : "Assign fix"}
+                        </Button>
+                      ) : null}
                       <Button
-                        variant="secondary"
+                        variant="quiet"
                         disabled={saving}
                         onClick={() => startOverride(f)}
                       >
                         Override
-                      </Button>
-                      <Button
-                        variant="primary"
-                        disabled={saving}
-                        onClick={() => startAssign(f)}
-                      >
-                        {f.status === "unclear"
-                          ? "Request new photo"
-                          : "Assign fix"}
                       </Button>
                     </div>
                   </article>
@@ -1072,9 +1195,51 @@ export function ManagerShiftDetail() {
           </ul>
         )}
 
+        {evidenceIds.length > 0 ? (
+          <section
+            className="evidence-gallery"
+            aria-label="Shift evidence photos"
+          >
+            <div className="evidence-gallery-head">
+              <h2>Evidence</h2>
+              <p className="caption">
+                {evidenceIds.length} photo
+                {evidenceIds.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <ul className="list-plain evidence-grid">
+              {evidenceIds.map((id, i) => {
+                const label = `Evidence ${i + 1}`;
+                const gone = missingPhotos.has(id);
+                return (
+                  <li key={id} className="evidence-tile">
+                    <button
+                      type="button"
+                      className="evidence-link"
+                      disabled={gone}
+                      onClick={() => openEvidence(id, i)}
+                      aria-label={gone ? "Photo unavailable" : `View ${label}`}
+                    >
+                      <EvidenceImg
+                        fileId={id}
+                        alt={label}
+                        className="evidence-img"
+                        onMissingChange={onPhotoMissing}
+                      />
+                      {gone ? null : (
+                        <span className="evidence-index caption">{i + 1}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
         {/* C6 — open fix tasks */}
         {openTasks.length > 0 || tasks.length > 0 ? (
-          <section className="card stack-sm manager-side-panel">
+          <section className="stack-sm manager-side-panel">
             <h2>Fix tasks</h2>
             {openTasks.length === 0 ? (
               <p className="muted caption">
@@ -1090,15 +1255,29 @@ export function ManagerShiftDetail() {
                     Boolean(t.recheckFileId) && linked?.status === "pass";
                   const attested = linked?.source === "staff_recheck";
                   return (
-                  <li key={t.$id} className="task-row" data-testid="fix-row">
+                  <li
+                    key={t.$id}
+                    className="task-row"
+                    data-testid="fix-row"
+                    data-finding-id={t.findingId}
+                    tabIndex={-1}
+                  >
                     <div className="stack-sm">
-                      <p className="task-title">{t.title}</p>
+                      <p className="task-title">
+                        {linked
+                          ? `${/^retake:/i.test(t.title) ? "Retake" : "Fix"}: ${glanceLabel(linked.itemId)}`
+                          : isHarnessName(t.title)
+                            ? /^retake:/i.test(t.title)
+                              ? "Retake"
+                              : "Fix"
+                            : t.title}
+                      </p>
                       <p className="caption">
                         {t.status === "open" ? "Open" : "Done"}
                         {t.assignedTo
-                          ? ` · ${resolveStaffLabel(t.assignedTo)}`
+                          ? ` · ${displayStaffName(resolveStaffLabel(t.assignedTo))}`
                           : ""}
-                        {t.createdAt ? ` · ${formatWhen(t.createdAt)}` : ""}
+                        {t.createdAt ? ` · ${formatManagerWhen(t.createdAt)}` : ""}
                       </p>
                       {t.recheckFileId ? (
                         <>
@@ -1167,13 +1346,13 @@ export function ManagerShiftDetail() {
 
         {/* C6 — audit events */}
         {events.length > 0 ? (
-          <section className="card stack-sm manager-side-panel">
+          <section className="stack-sm manager-side-panel">
             <h2>Audit trail</h2>
             <ul className="list-plain event-list">
               {events.slice(0, 12).map((ev) => (
                 <li key={ev.$id} className="event-row caption">
                   <span className="event-type">{formatEventType(ev.type)}</span>
-                  <span>{formatWhen(ev.createdAt || ev.$createdAt)}</span>
+                  <span>{formatManagerWhen(ev.createdAt || ev.$createdAt)}</span>
                 </li>
               ))}
             </ul>
@@ -1182,11 +1361,27 @@ export function ManagerShiftDetail() {
       </div>
 
       {formOpen && selected ? (
-        <div className="manager-sticky" role="region" aria-label="Finding actions">
+        <div
+          ref={stickyRef}
+          className="manager-sticky"
+          role="region"
+          aria-modal="true"
+          aria-label="Finding actions"
+          tabIndex={-1}
+        >
           <div className="manager-sticky-inner">
             <p className="manager-sticky-label caption">
-              {itemLabel(selected.itemId)}
+              {mode === "override"
+                ? `Override ${glanceLabel(selected.itemId)}`
+                : mode === "retake"
+                  ? `Request photo · ${glanceLabel(selected.itemId)}`
+                  : `Assign ${glanceLabel(selected.itemId)}`}
             </p>
+            {errorShown ? (
+              <div className="error-banner" role="alert">
+                {errorShown}
+              </div>
+            ) : null}
 
             {mode === "override" ? (
               <div className="manager-sticky-form stack-sm">
@@ -1209,17 +1404,10 @@ export function ManagerShiftDetail() {
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder="Add a short reason"
-                    autoFocus
                   />
                 </label>
                 <div className="manager-sticky-actions">
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setMode("idle");
-                      setReason("");
-                    }}
-                  >
+                  <Button variant="secondary" onClick={closeSheet}>
                     Cancel
                   </Button>
                   <Button
@@ -1233,16 +1421,15 @@ export function ManagerShiftDetail() {
               </div>
             ) : (
               <div className="manager-sticky-form stack-sm">
-                <p className="muted">
-                  {mode === "retake" ? "Request a new photo for " : "Assign fix: "}
-                  <strong>{itemLabel(selected.itemId)}</strong>
-                </p>
                 <p className="caption" data-testid="assign-to-staff">
-                  To {item ? resolveStaffLabel(item.shift.createdBy) : "staff"}{" "}
-                  — they upload a new photo; staff attests; you mark done.
+                  To{" "}
+                  {item
+                    ? displayStaffName(resolveStaffLabel(item.shift.createdBy))
+                    : "staff"}{" "}
+                  — they send a new photo; you mark it done.
                 </p>
                 <div className="manager-sticky-actions">
-                  <Button variant="secondary" onClick={() => setMode("idle")}>
+                  <Button variant="secondary" onClick={closeSheet}>
                     Cancel
                   </Button>
                   <Button
@@ -1273,6 +1460,49 @@ export function ManagerShiftDetail() {
   );
 }
 
+const SHEET_FOCUSABLE = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function sheetFocusables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(SHEET_FOCUSABLE)].filter(
+    (el) => el.getClientRects().length > 0,
+  );
+}
+
+function scrollFindingAboveSheet(
+  list: HTMLUListElement | null,
+  findingId: string,
+  sheet: HTMLElement,
+) {
+  const row = list?.querySelector(
+    `[data-finding-id="${CSS.escape(findingId)}"]`,
+  );
+  if (!(row instanceof HTMLElement)) return;
+  const chrome = document.querySelector(".shell-chrome");
+  const chromeH =
+    chrome instanceof HTMLElement ? chrome.getBoundingClientRect().height : 0;
+  const gap = 12;
+  const vv = window.visualViewport;
+  const viewTop = vv?.offsetTop ?? 0;
+  const viewH = vv?.height ?? window.innerHeight;
+  const sheetH = sheet.getBoundingClientRect().height;
+  const rect = row.getBoundingClientRect();
+  const topMin = viewTop + chromeH + gap;
+  const bottomMax = viewTop + viewH - sheetH - gap;
+  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+  if (rect.height > bottomMax - topMin || rect.top < topMin) {
+    window.scrollBy({ top: rect.top - topMin, behavior });
+  } else if (rect.bottom > bottomMax) {
+    window.scrollBy({ top: rect.bottom - bottomMax, behavior });
+  }
+}
+
 function rank(f: Finding): number {
   if (f.status === "gap") return 0;
   if (f.status === "unclear") return 1;
@@ -1285,21 +1515,15 @@ function stripStepNumber(step: string): string {
   return step.replace(/^\s*\d+\.\s*/, "").trim();
 }
 
-function formatWhen(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      month: "short",
-      day: "numeric",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
+function glanceLabel(itemId: string): string {
+  return shortItemLabel(itemId) || itemLabel(itemId);
 }
 
-function staffTitleLabel(label: string): string {
-  return label.replace(/\s*·\s*Opening\s*$/i, "").trim() || label;
+function scoringFailureDetail(job?: { errorMessage?: string } | null): string | null {
+  const raw = job?.errorMessage?.trim();
+  if (!raw) return null;
+  if (/seeded e2e/i.test(raw) || isHarnessName(raw)) return null;
+  return raw;
 }
 
 function formatTitleTime(iso: string): string {
@@ -1350,12 +1574,22 @@ function shiftStatusSentence(item: ManagerShiftSummary): string {
     return "Scoring is in progress.";
   }
   if (item.shift.status === "submitted") return "Waiting to score.";
-  if (item.shift.status === "scored") return "This opening is scored.";
+  if (item.shift.status === "scored") {
+    if (item.gapCount > 0) {
+      return item.gapCount === 1
+        ? "1 gap still open."
+        : `${item.gapCount} gaps still open.`;
+    }
+    if (item.unclearCount > 0) {
+      return "Unclear photos need a retake.";
+    }
+    return "All checks passed.";
+  }
   return "This opening is a draft.";
 }
 
 function scoreboardHeading(item: ManagerShiftSummary): string {
-  const staff = staffTitleLabel(item.staffLabel);
+  const staff = displayStaffName(item.staffLabel);
   const time = formatTitleTime(item.shift.submittedAt || item.shift.startedAt);
   return `${staff}, ${time} — ${shiftOutcome(item)}`;
 }

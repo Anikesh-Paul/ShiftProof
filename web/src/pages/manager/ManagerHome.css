@@ -4,6 +4,12 @@
   gap: var(--space-6);
 }
 
+@media (min-width: 768px) {
+  .app-page.manager-home {
+    width: min(100%, var(--content-wide));
+  }
+}
+
 /* —— Header —— */
 
 .manager-home-header {
@@ -78,8 +84,13 @@
   gap: var(--space-3);
 }
 
-.manager-filter-btn {
-  flex-shrink: 0;
+.manager-view-tabs .text-btn.manager-filter-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--touch);
+  justify-content: center;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
 }
 
 .manager-today-actions {
@@ -94,6 +105,7 @@
   display: flex;
   align-items: center;
   width: 100%;
+  min-height: var(--touch);
   margin: 0;
   padding: 0;
   border: none;
@@ -120,14 +132,18 @@
 
 .manager-view-tabs {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--fill);
+  border-radius: var(--radius-md);
 }
 
 .manager-filter-btn.is-active {
   color: var(--accent);
   font-weight: 700;
+  background: var(--bg-elevated);
 }
 
 /* —— Shift list —— */
@@ -139,13 +155,13 @@
 }
 
 .manager-row {
-  display: flex;
-  align-items: stretch;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
   text-decoration: none;
   color: inherit;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--separator);
@@ -154,6 +170,37 @@
     border-color var(--dur-ui) var(--ease-out),
     background-color var(--dur-ui) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
+}
+
+.manager-row.is-stuck,
+.manager-row.is-failed {
+  background: var(--warning-soft);
+  border-color: transparent;
+}
+
+.manager-row.is-pass {
+  background: transparent;
+  border-color: transparent;
+  border-bottom: 1px solid var(--separator);
+  border-radius: 0;
+  padding-inline: 0;
+}
+
+.manager-row-thumb {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: 1px solid var(--separator);
+  flex-shrink: 0;
+}
+
+.manager-row-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -179,9 +226,8 @@
 .manager-row-main {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
-  flex: 1;
 }
 
 .manager-row-top {
@@ -198,8 +244,8 @@
 .manager-row-staff {
   margin: 0;
   font-weight: 600;
-  font-size: 1.05rem;
-  letter-spacing: -0.022em;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
   line-height: 1.2;
   min-width: 0;
 }
@@ -217,7 +263,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-1);
 }
 
 .manager-meta-wait {
@@ -291,17 +337,27 @@
 
 .manager-repeat-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-block: 2px;
+}
+
+.manager-repeat-chips::-webkit-scrollbar {
+  display: none;
 }
 
 .manager-repeat-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 1.75rem;
+  flex: 0 0 auto;
+  min-height: var(--touch);
   margin: 0;
-  padding: 0 0.7rem;
+  padding: 0 var(--space-4);
   border: 1px solid var(--separator);
   border-radius: var(--radius-pill);
   background: var(--bg-elevated);
@@ -311,6 +367,13 @@
   letter-spacing: -0.015em;
   color: var(--label-secondary);
   cursor: pointer;
+}
+
+@media (min-width: 768px) {
+  .manager-repeat-chips {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
 }
 
 .manager-repeat-chip.is-active {
@@ -336,7 +399,35 @@
   outline-offset: 2px;
 }
 
-/* —— SOP: Missing + Upload, or live clause set + Replace —— */
+/* —— Stuck / failed jobs: one banner, not a stack of cards —— */
+
+.manager-jobs-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+}
+
+.manager-jobs-copy {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--warning-ink);
+}
+
+.manager-jobs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* —— SOP: Missing + Upload, or Opening check disclosure + Replace —— */
 
 .manager-sop-missing,
 .manager-sop-panel {
@@ -353,8 +444,48 @@
   align-items: center;
 }
 
+.manager-sop-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.manager-sop-details {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.manager-sop-panel > .text-btn {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.manager-sop-panel > .manager-sop-toast,
+.manager-sop-panel > .error-banner {
+  grid-column: 1 / -1;
+}
+
+.manager-sop-details summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch);
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label-secondary);
+}
+
+.manager-sop-panel > .text-btn,
+.manager-sop-missing > .text-btn {
+  min-height: var(--touch);
+  padding-inline: var(--space-3);
+}
+
+.manager-sop-details[open] summary {
+  margin-bottom: var(--space-2);
+}
+
 .manager-sop-clauses {
-  flex: 1 1 16rem;
   margin: 0;
   padding-left: 1.25rem;
   font-weight: 500;
@@ -389,7 +520,7 @@
     font-size: 2rem;
   }
 
-  .manager-row {
-    padding: var(--space-4) var(--space-5);
+  .manager-row:not(.is-pass) {
+    padding: var(--space-3) var(--space-5);
   }
 }

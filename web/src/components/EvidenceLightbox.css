@@ -71,6 +71,23 @@
   -webkit-user-drag: none;
 }
 
+.lightbox-missing {
+  width: min(100%, 22rem);
+  min-height: 12rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: var(--space-5);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--label);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  text-align: center;
+  line-height: 1.35;
+}
+
 .lightbox-close {
   position: absolute;
   top: calc(var(--space-3) + env(safe-area-inset-top));

@@ -137,6 +137,9 @@ test.describe("manager Inbox first fold", () => {
     await expect(page.getByRole("heading", { name: /opening sop/i })).toHaveCount(
       0,
     );
+    await expect(sop.locator("summary")).toContainText(/Opening check · 3 items/i);
+    await expect(page.getByTestId("live-clause-set")).toBeHidden();
+    await sop.locator("summary").click();
     const live = page.getByTestId("live-clause-set");
     await expect(live).toBeVisible();
     await expect(live).toContainText("Gloves worn at food-prep station");
@@ -294,6 +297,35 @@ test.describe("manager Inbox rows name the work", () => {
     if ((await backlogRow.count()) > 0) {
       await expect(backlogRow).toBeVisible();
     }
+    assertNoPageErrors(errors);
+  });
+
+  test("stuck openings collapse to one Retry all banner", async ({ page }) => {
+    test.skip(
+      !hasServerKey(),
+      "root .env APPWRITE_API_KEY absent — cannot seed openings",
+    );
+    const errors = collectPageErrors(page);
+    const stuckAt = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const stuckId = await seedSubmittedShift({ submittedAt: stuckAt });
+    const gapId = await seedSubmittedShift();
+    await seedFinding(gapId, { itemId: "gloves_worn", status: "gap" });
+    await markShiftScored(gapId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await expect(page.getByRole("tab", { name: /^today$/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    const banner = page.getByTestId("inbox-jobs");
+    await expect(banner).toBeVisible({ timeout: 25_000 });
+    await expect(banner).toContainText(/stuck/i);
+    await expect(banner.getByRole("button", { name: /retry all/i })).toBeVisible();
+    await expect(
+      page.locator(`a[href="/manager/shifts/${stuckId}"]`),
+    ).toHaveCount(0);
+    await expect(
+      page.locator(`a[href="/manager/shifts/${gapId}"]`),
+    ).toBeVisible();
     assertNoPageErrors(errors);
   });
 
@@ -621,6 +653,7 @@ test.describe("manager Inbox SOP extract", () => {
     await login(page, MANAGER.email, MANAGER.password);
     const sop = page.getByTestId("sop-upload");
     await expect(sop).toBeVisible({ timeout: 25_000 });
+    await sop.locator("summary").click();
     await expect(sop).toContainText("Gloves worn at food-prep station");
 
     await sop.locator('input[type="file"]').setInputFiles(TINY_PDF);
@@ -633,6 +666,11 @@ test.describe("manager Inbox SOP extract", () => {
     await expect(sop.getByRole("alert")).toContainText(
       /previous opening check is still in force/i,
     );
+    await expect(sop.locator("summary")).toContainText(/Opening check/i);
+    const liveAfterFail = page.getByTestId("live-clause-set");
+    if (!(await liveAfterFail.isVisible())) {
+      await sop.locator("summary").click();
+    }
     await expect(sop).toContainText("Gloves worn at food-prep station");
     await expect(sop).toContainText("Handwash station stocked");
     await expect(sop).toContainText("Sanitizer available and filled");
@@ -671,6 +709,7 @@ test.describe("manager Inbox SOP extract", () => {
     await login(page, MANAGER.email, MANAGER.password);
     const sop = page.getByTestId("sop-upload");
     await expect(sop).toBeVisible({ timeout: 25_000 });
+    await sop.locator("summary").click();
     await expect(sop).toContainText("Gloves worn at food-prep station");
 
     await sop.locator('input[type="file"]').setInputFiles(TINY_PDF);
@@ -679,6 +718,9 @@ test.describe("manager Inbox SOP extract", () => {
     extract.release();
 
     const live = page.getByTestId("live-clause-set");
+    if (!(await live.isVisible())) {
+      await sop.locator("summary").click();
+    }
     await expect(live).toContainText("Gloves at the prep line");
     await expect(live).toContainText("Stocked handwash station");
     await expect(live).toContainText("Floor clear of slip hazards");

@@ -437,7 +437,7 @@ test.describe("staff scoring + manager golden + fix loop", () => {
     await expect(target.getByRole("button", { name: /^override$/i })).toBeVisible();
     const gallery = page.getByRole("region", { name: /shift evidence photos/i });
     await expect(gallery.locator("img.evidence-img, img").first()).toBeVisible();
-    await expect(gallery.getByText("Unavailable")).toHaveCount(0);
+    await expect(gallery.getByText(/photo unavailable/i)).toHaveCount(0);
     await expect(page.locator(".evidence-img-missing")).toHaveCount(0);
 
     await target.getByRole("button", { name: /^override$/i }).click();
@@ -1757,7 +1757,7 @@ test.describe("compliance export evidence", () => {
     assertNoPageErrors(errors);
   });
 
-  test("missing evidence files still show Unavailable", async ({ page }) => {
+  test("missing evidence files still show photo unavailable", async ({ page }) => {
     test.skip(
       !hasServerKey(),
       "root .env APPWRITE_API_KEY absent — cannot seed a missing-file shift",
@@ -1773,7 +1773,9 @@ test.describe("compliance export evidence", () => {
     });
     const evidence = page.locator('[data-testid="export-evidence"]');
     await expect(evidence).toBeVisible();
-    await expect(evidence.getByText("Unavailable")).toBeVisible({ timeout: 15_000 });
+    await expect(evidence.getByText(/photo unavailable/i)).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(evidence.locator("img")).toHaveCount(0);
     await expect(evidence.locator('[data-evidence="missing"]')).toHaveCount(1);
     await expect(page.getByRole("button", { name: /print|save pdf/i })).toBeEnabled();

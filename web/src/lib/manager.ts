@@ -31,10 +31,14 @@ type RowData = Record<string, any>;
 
 export type { ManagerShiftSummary };
 export {
+  formatManagerWhen,
+  formatManagerWhenRange,
   hydrateItemLabels,
+  isHarnessName,
   itemLabel,
   openGapCount,
   shiftsWithOpenGaps,
+  shortItemLabel,
 } from "./managerDemo";
 export { DEMO_MANAGER_INBOX } from "./managerDemo";
 
@@ -741,7 +745,7 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
       }))
       .filter((r) => r.count >= 2)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+      .slice(0, 4);
   } catch {
     return DEMO_REPEAT_OFFENDERS;
   }

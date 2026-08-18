@@ -270,6 +270,78 @@ export function itemLabel(itemId: string): string {
   return liveLabels[itemId] ?? ITEM_LABELS[itemId] ?? titleCaseItemId(itemId);
 }
 
+/** e2e / harness ids and titles must never surface in the manager inbox. */
+export function isHarnessName(text: string): boolean {
+  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
+}
+
+/**
+ * Glanceable inbox label. Prefers the short map so live SOP questions
+ * do not become chips, row previews, or the H1.
+ */
+export function shortItemLabel(itemId: string): string {
+  if (isHarnessName(itemId)) return "";
+  const known = ITEM_LABELS[itemId];
+  if (known) return known;
+  const live = liveLabels[itemId] ?? titleCaseItemId(itemId);
+  if (isHarnessName(live)) return "";
+  if (live.length <= 28) return live;
+  const beforeMark = live.split(/[?]/)[0]?.trim() ?? live;
+  if (beforeMark.length <= 32) return beforeMark;
+  return beforeMark.split(/\s+/).slice(0, 3).join(" ");
+}
+
+/** One manager clock: Asia/Kolkata, 24h. */
+export function formatManagerWhen(
+  iso: string,
+  opts?: { year?: boolean },
+): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      day: "numeric",
+      month: "short",
+      ...(opts?.year ? { year: "numeric" } : {}),
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+/** Same clock, collapsed to a range when openings span minutes. */
+export function formatManagerWhenRange(fromIso: string, toIso: string): string {
+  if (!fromIso) return toIso ? formatManagerWhen(toIso) : "";
+  if (!toIso || fromIso === toIso) return formatManagerWhen(fromIso);
+  try {
+    const zone = "Asia/Kolkata";
+    const dateFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      day: "numeric",
+      month: "short",
+    });
+    const timeFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const from = new Date(fromIso);
+    const to = new Date(toIso);
+    const fromTime = timeFmt.format(from);
+    const toTime = timeFmt.format(to);
+    if (dateFmt.format(from) === dateFmt.format(to)) {
+      if (fromTime === toTime) return formatManagerWhen(fromIso);
+      return `${dateFmt.format(from)}, ${fromTime}–${toTime}`;
+    }
+    return `${formatManagerWhen(fromIso)} – ${formatManagerWhen(toIso)}`;
+  } catch {
+    return formatManagerWhen(fromIso);
+  }
+}
+
 function summarize(
   shift: Shift,
   staffLabel: string,

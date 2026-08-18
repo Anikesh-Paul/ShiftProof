@@ -12,15 +12,26 @@ import { formatEventType, formatFindingSource } from "../../lib/events";
 import { displayEvidenceNote } from "../../lib/evidenceNote";
 import { getErrorMessage } from "../../lib/errors";
 import {
+  formatManagerWhen,
+  isHarnessName,
   itemLabel,
   listEvents,
   listTasks,
   loadManagerShift,
+  shortItemLabel,
   type ManagerShiftSummary,
 } from "../../lib/manager";
-import { getSite, parsePhotoFileIds } from "../../lib/shifts";
+import { displayStaffName } from "../../lib/staffNames";
+import {
+  getChecklist,
+  getSite,
+  parseChecklistItems,
+  parsePhotoFileIds,
+  photoForItem,
+} from "../../lib/shifts";
 import type {
   AuditEvent,
+  ChecklistItem,
   Finding,
   FindingStatus,
   ShiftStatus,
@@ -32,12 +43,13 @@ import "./ComplianceExport.css";
 export function ComplianceExport() {
   const { shiftId = "" } = useParams();
   const [item, setItem] = useState<ManagerShiftSummary | null>(null);
-  const [siteName, setSiteName] = useState("Demo café");
+  const [siteName, setSiteName] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [printReady, setPrintReady] = useState(false);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [generatedAt] = useState(() => new Date().toISOString());
   const evidenceRef = useRef<HTMLElement>(null);
   const photoIds = item ? parsePhotoFileIds(item.shift.photoFileIds) : [];
@@ -47,9 +59,10 @@ export function ComplianceExport() {
     let cancelled = false;
     (async () => {
       try {
-        const [result, site] = await Promise.all([
+        const [result, site, checklist] = await Promise.all([
           loadManagerShift(shiftId),
           getSite().catch(() => null),
+          getChecklist().catch(() => null),
         ]);
         if (cancelled) return;
         if (!result) {
@@ -58,6 +71,8 @@ export function ComplianceExport() {
         }
         setItem(result.item);
         if (site?.name) setSiteName(site.name);
+        else setSiteName("Demo café");
+        if (checklist) setChecklistItems(parseChecklistItems(checklist));
 
         if (result.source === "live" && !shiftId.startsWith("demo_shift_")) {
           const [t, e] = await Promise.all([
@@ -166,7 +181,7 @@ export function ComplianceExport() {
           </div>
           <div>
             <span className="export-label">Staff</span>
-            <p>{item.staffLabel}</p>
+            <p>{displayStaffName(item.staffLabel)}</p>
           </div>
           <div>
             <span className="export-label">Opening</span>
@@ -247,26 +262,48 @@ export function ComplianceExport() {
                   .sort((a, b) => findingStatusRank(a.status) - findingStatusRank(b.status))
                   .map((f) => {
                     const note = displayEvidenceNote(f.evidenceNote);
+                    const photoId = photoForItem(
+                      f.itemId,
+                      shift.photoFileIds,
+                      checklistItems,
+                    );
                     return (
                       <tr key={f.$id} className="export-row">
                         <td className="export-cell-status">
                           <FindingChip status={f.status} />
                         </td>
-                        <td className="export-cell-item">{itemLabel(f.itemId)}</td>
-                        <td className="export-cell-clause">{f.clauseId}</td>
-                        <td className="export-cell-quote export-note">
+                        <td className="export-cell-item">
+                          {shortItemLabel(f.itemId) || itemLabel(f.itemId)}
+                        </td>
+                        <td
+                          className="export-cell-clause"
+                          data-label="Clause"
+                        >
+                          {f.clauseId}
+                        </td>
+                        <td
+                          className="export-cell-quote export-note"
+                          data-label="Quote"
+                        >
                           {f.quote ? `“${f.quote}”` : "—"}
                         </td>
-                        <td className="export-cell-conf">
+                        <td
+                          className="export-cell-conf"
+                          data-label="Confidence"
+                        >
                           {confidenceBand(f.confidence)}
                         </td>
-                        <td className="export-cell-evidence export-note">
-                          {note || "—"}
+                        <td
+                          className="export-cell-evidence export-note"
+                          data-label="Evidence"
+                        >
+                          {exportEvidenceCell(photoId, note, photoIds.length > 0)}
                         </td>
                         <td
                           className="export-cell-source"
                           data-testid="export-source"
                           data-source={f.source}
+                          data-label="Source"
                         >
                           {f.source === "manager_override"
                             ? `Override${f.overrideReason ? `: ${f.overrideReason}` : ""}`
@@ -333,6 +370,30 @@ export function ComplianceExport() {
   );
 }
 
+function exportEvidenceCell(
+  photoId: string | null,
+  note: string | null,
+  shiftHasPhotos: boolean,
+) {
+  if (photoId) {
+    return (
+      <span className="export-evidence-file">
+        <EvidenceImg
+          fileId={photoId}
+          alt=""
+          className="export-cell-thumb"
+          eager
+          compact
+        />
+        {note ? <span>{note}</span> : null}
+      </span>
+    );
+  }
+  if (note) return note;
+  if (shiftHasPhotos) return "Photo on file";
+  return "No photo on file";
+}
+
 function decodeEvidenceImages(root: HTMLElement | null): Promise<void> {
   if (!root) return Promise.resolve();
   const imgs = [...root.querySelectorAll<HTMLImageElement>("img")];
@@ -366,14 +427,10 @@ function formatTaskStatus(status: TaskStatus | string): string {
   return status === "done" ? "Done" : "Open";
 }
 
-function isHarnessName(text: string): boolean {
-  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
-}
-
 function openFixTitle(task: Task, finding?: { itemId: string }): string {
   const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
   if (finding) {
-    const label = itemLabel(finding.itemId);
+    const label = shortItemLabel(finding.itemId) || itemLabel(finding.itemId);
     if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
       return `${kind}: ${label}`;
     }
@@ -400,18 +457,15 @@ function packGapSentence(
   const date = formatPackDay(submittedAt ?? "");
   const gaps = findings.filter((f) => f.status === "gap");
   if (gaps.length === 0) return `${date}: no Gaps`;
-  const labels = gaps.map((f) => itemLabel(f.itemId)).join(", ");
+  const labels = gaps
+    .map((f) => shortItemLabel(f.itemId) || itemLabel(f.itemId))
+    .filter((label) => label && !isHarnessName(label))
+    .join(", ");
   const noun = gaps.length === 1 ? "Gap" : "Gaps";
+  if (!labels) return `${date}: ${gaps.length} ${noun}`;
   return `${date}: ${gaps.length} ${noun} — ${labels}`;
 }
 
 function formatLong(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
+  return formatManagerWhen(iso, { year: true });
 }

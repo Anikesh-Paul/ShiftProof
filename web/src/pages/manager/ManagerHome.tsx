@@ -13,18 +13,23 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import {
   assignFixTask,
   DEMO_REPEAT_OFFENDERS,
   isSameLocalDay,
+  formatManagerWhen,
+  formatManagerWhenRange,
+  isHarnessName,
   isStuckScoring,
   itemLabel,
   listOpenTasks,
   loadManagerInbox,
   loadRepeatOffenders,
   mergeTasksById,
+  shortItemLabel,
   subscribeManagerTables,
   sweepStaleJobs,
   type ManagerShiftSummary,
@@ -37,9 +42,12 @@ import {
   getSop,
   isSopFileReady,
   parseChecklistItems,
+  parsePhotoFileIds,
+  photoForItem,
+  retryShiftScore,
   uploadSopPdf,
 } from "../../lib/shifts";
-import { resolveStaffLabel } from "../../lib/staffNames";
+import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type { ChecklistItem, Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
 
@@ -62,7 +70,7 @@ export function ManagerHome() {
 
   const [items, setItems] = useState<ManagerShiftSummary[]>([]);
   const [source, setSource] = useState<"live" | "demo">("demo");
-  const [siteName, setSiteName] = useState("Demo café");
+  const [siteName, setSiteName] = useState("");
   const [timeZone, setTimeZone] = useState("Asia/Kolkata");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +82,8 @@ export function ManagerHome() {
   const [fixesExpanded, setFixesExpanded] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignToast, setAssignToast] = useState<string | null>(null);
+  const [retryingJobs, setRetryingJobs] = useState(false);
+  const [jobsToast, setJobsToast] = useState<string | null>(null);
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -244,6 +254,22 @@ export function ManagerHome() {
     [items],
   );
 
+  const failedItems = useMemo(
+    () => items.filter((s) => s.latestJob?.status === "failed"),
+    [items],
+  );
+
+  const jobTargets = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ManagerShiftSummary[] = [];
+    for (const row of [...stuckItems, ...failedItems]) {
+      if (seen.has(row.shift.$id)) continue;
+      seen.add(row.shift.$id);
+      out.push(row);
+    }
+    return out;
+  }, [stuckItems, failedItems]);
+
   const todayGaps = todayItems.reduce((n, s) => n + s.gapCount, 0);
   const todayUnclear = todayItems.reduce((n, s) => n + s.unclearCount, 0);
 
@@ -267,26 +293,50 @@ export function ManagerHome() {
         return s.gapCount > 0 || s.unclearCount > 0;
       });
     }
-    const todayIds = new Set(todayItems.map((s) => s.shift.$id));
-    const stuckOnly = stuckItems.filter((s) => !todayIds.has(s.shift.$id));
-    const todayNeeds = todayItems.filter(
-      (s) =>
+    const todayNeeds = todayItems.filter((s) => {
+      if (isStuckScoring(s.shift, s.latestJob)) return false;
+      if (
+        s.latestJob?.status === "failed" &&
+        s.gapCount === 0 &&
+        s.unclearCount === 0
+      ) {
+        return false;
+      }
+      return (
         s.gapCount > 0 ||
         s.unclearCount > 0 ||
         s.shift.status === "submitted" ||
-        s.shift.status === "scoring",
-    );
-    return sortTodayInbox([...todayNeeds, ...stuckOnly]);
-  }, [itemFilter, view, items, timeZone, todayItems, stuckItems]);
+        s.shift.status === "scoring"
+      );
+    });
+    return sortTodayInbox(todayNeeds);
+  }, [itemFilter, view, items, timeZone, todayItems]);
+
+  const listed = useMemo(
+    () => (view === "all" ? asInboxClusters(defaultList) : clusterInboxRows(defaultList)),
+    [defaultList, view],
+  );
 
   const sopReady = isSopFileReady(sop?.fileId);
   const waitingOnStaff = openTasks.filter((t) => !t.recheckFileId).length;
-  const activeFilter = repeatOffenders.find((r) => r.itemId === itemFilter);
+  const glanceChips = useMemo(
+    () =>
+      repeatOffenders
+        .filter(
+          (r) =>
+            !isHarnessName(r.itemId) &&
+            !isHarnessName(r.label) &&
+            shortItemLabel(r.itemId),
+        )
+        .slice(0, 4),
+    [repeatOffenders],
+  );
+  const activeFilter = glanceChips.find((r) => r.itemId === itemFilter);
 
   const headline = loading
     ? "Checking shifts…"
     : itemFilter
-      ? itemLabel(itemFilter)
+      ? shortItemLabel(itemFilter) || itemLabel(itemFilter)
       : todayGaps === 0
         ? todayUnclear > 0
           ? todayUnclear === 1
@@ -307,8 +357,8 @@ export function ManagerHome() {
         ? "Today’s open gaps first. Older checks sit in Backlog."
         : todayUnclear > 0
           ? "Today’s unclear photos need a retake, not a fix task."
-          : stuckItems.length > 0
-            ? "Older scoring jobs are still running — retry or close them."
+          : jobTargets.length > 0
+            ? "Retry stuck jobs here, or close them from the scoreboard."
             : "When staff leave open gaps today, they land here first.";
 
   function setView(next: InboxView) {
@@ -348,7 +398,7 @@ export function ManagerHome() {
         pending.push({
           shiftId: row.shift.$id,
           findingId: finding.$id,
-          title: `Fix: ${itemLabel(finding.itemId)}`,
+          title: `Fix: ${shortItemLabel(finding.itemId) || itemLabel(finding.itemId)}`,
           assignedTo: row.shift.createdBy,
           local: source === "demo" || row.shift.$id.startsWith("demo_shift_"),
         });
@@ -412,18 +462,64 @@ export function ManagerHome() {
     }
   }
 
+  async function retryStuckJobs() {
+    if (!user || retryingJobs || jobTargets.length === 0) return;
+    setRetryingJobs(true);
+    setJobsToast(null);
+    setError(null);
+    const live = jobTargets.filter(
+      (row) => source !== "demo" && !row.shift.$id.startsWith("demo_shift_"),
+    );
+    if (live.length === 0) {
+      setJobsToast("Retry is sample-only on these shifts.");
+      setRetryingJobs(false);
+      return;
+    }
+    try {
+      const settled = await Promise.allSettled(
+        live.map((row) => retryShiftScore(row.shift.$id, user.$id)),
+      );
+      const ok = settled.filter((r) => r.status === "fulfilled").length;
+      const firstErr = settled.find((r) => r.status === "rejected");
+      if (ok > 0) {
+        setJobsToast(
+          ok === 1 ? "Retrying 1 opening." : `Retrying ${ok} openings.`,
+        );
+        void reload({ silent: true });
+      }
+      if (firstErr && firstErr.status === "rejected" && ok === 0) {
+        setError(getErrorMessage(firstErr.reason, "Could not retry scoring"));
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not retry scoring"));
+    } finally {
+      setRetryingJobs(false);
+    }
+  }
+
+  const stuckCount = stuckItems.length;
+  const failedCount = failedItems.filter(
+    (s) => !stuckItems.some((stuck) => stuck.shift.$id === s.shift.$id),
+  ).length;
+  const jobsLine =
+    stuckCount > 0 && failedCount > 0
+      ? `${stuckCount} stuck · ${failedCount} failed`
+      : stuckCount > 0
+        ? stuckCount === 1
+          ? "1 opening is stuck"
+          : `${stuckCount} openings are stuck`
+        : failedCount === 1
+          ? "1 score failed"
+          : `${failedCount} scores failed`;
+
   return (
     <div className="app-page stack manager-home">
       <header className="manager-home-header">
         <div className="manager-home-kicker">
-          <p className="manager-site">{siteName}</p>
+          {siteName ? <p className="manager-site">{siteName}</p> : null}
           {liveHint ? (
             <span className="manager-live-pill" role="status">
               {liveHint}
-            </span>
-          ) : source === "demo" && !loading ? (
-            <span className="manager-live-pill is-sample" role="status">
-              Sample
             </span>
           ) : null}
         </div>
@@ -489,10 +585,12 @@ export function ManagerHome() {
                         <p className="manager-row-staff">{title}</p>
                         <div className="manager-row-meta">
                           <span className="caption">
-                            {resolveStaffLabel(
-                              task.assignedTo ||
-                                shiftRow?.shift.createdBy ||
-                                "",
+                            {displayStaffName(
+                              resolveStaffLabel(
+                                task.assignedTo ||
+                                  shiftRow?.shift.createdBy ||
+                                  "",
+                              ),
                             )}
                           </span>
                           <span
@@ -536,14 +634,14 @@ export function ManagerHome() {
           ))}
         </div>
 
-        {!loading && repeatOffenders.length > 0 ? (
+        {!loading && glanceChips.length > 0 ? (
           <div
             className="manager-repeat-chips"
             data-testid="repeat-offender"
             role="group"
             aria-label="Repeat gaps"
           >
-            {repeatOffenders.map((r) => (
+            {glanceChips.map((r) => (
               <button
                 key={r.itemId}
                 type="button"
@@ -553,7 +651,7 @@ export function ManagerHome() {
                   setItemFilter(itemFilter === r.itemId ? null : r.itemId)
                 }
               >
-                {r.label} {r.count}/{r.of}
+                {shortItemLabel(r.itemId)} {r.count}/{r.of}
               </button>
             ))}
           </div>
@@ -562,7 +660,7 @@ export function ManagerHome() {
         {view === "today" && !itemFilter && todayGaps > 0 && !loading ? (
           <div className="manager-today-actions">
             <Button
-              variant="quiet"
+              variant="primary"
               loading={assigning}
               data-testid="assign-today-gaps"
               onClick={() => void assignTodayGaps()}
@@ -574,6 +672,31 @@ export function ManagerHome() {
                 {assignToast}
               </p>
             ) : null}
+          </div>
+        ) : null}
+
+        {view === "today" && !itemFilter && !loading && jobTargets.length > 0 ? (
+          <div
+            className="manager-jobs-banner"
+            role="status"
+            data-testid="inbox-jobs"
+          >
+            <p className="manager-jobs-copy">{jobsLine}</p>
+            <div className="manager-jobs-actions">
+              <Button
+                variant="quiet"
+                loading={retryingJobs}
+                data-testid="retry-stuck-jobs"
+                onClick={() => void retryStuckJobs()}
+              >
+                Retry all
+              </Button>
+              {jobsToast ? (
+                <p className="manager-sop-toast" role="status">
+                  {jobsToast}
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -595,6 +718,7 @@ export function ManagerHome() {
             ) : null}
           </div>
         ) : defaultList.length === 0 ? (
+          view === "today" && !itemFilter && jobTargets.length > 0 ? null : (
           <div className="manager-empty staff-settle-in">
             <h3>
               {items.length === 0
@@ -624,26 +748,39 @@ export function ManagerHome() {
               </button>
             ) : null}
           </div>
+          )
         ) : (
-          <ul className="list-plain manager-list stagger-in">
-            {defaultList.map((row) => {
+          <ul className="list-plain manager-list">
+            {listed.map((cluster) => {
+              const row = cluster.row;
               const itemsPreview = openItemsPreview(row.findings);
+              const kind = inboxRowKind(row, view);
+              const thumbId = inboxRowPhoto(row, liveItems);
+              const when =
+                cluster.count > 1
+                  ? formatManagerWhenRange(cluster.from, cluster.to)
+                  : formatManagerWhen(cluster.from);
+              const gapCount = row.gapCount * cluster.count;
+              const unclearCount = row.unclearCount * cluster.count;
               return (
-                <li key={row.shift.$id}>
+                <li
+                  key={row.shift.$id}
+                  data-cluster-count={cluster.count > 1 ? cluster.count : undefined}
+                >
                   <Link
                     to={`/manager/shifts/${row.shift.$id}`}
-                    className="manager-row"
+                    className={`manager-row is-${kind}`}
                   >
                     <div className="manager-row-main">
                       <div className="manager-row-top">
                         <p className="manager-row-staff">
-                          {inboxStaffLabel(row.staffLabel)}
+                          {displayStaffName(row.staffLabel)}
                         </p>
-                        <time className="caption manager-row-when">
-                          {formatWhen(
-                            row.shift.submittedAt || row.shift.startedAt,
-                          )}
-                        </time>
+                        {when ? (
+                          <time className="caption manager-row-when" dateTime={cluster.from}>
+                            {when}
+                          </time>
+                        ) : null}
                       </div>
                       {itemsPreview ? (
                         <p className="manager-row-items">{itemsPreview}</p>
@@ -655,7 +792,7 @@ export function ManagerHome() {
                           </span>
                         ) : isStuckScoring(row.shift, row.latestJob) ? (
                           <span className="manager-meta-wait">
-                            Scoring stuck — retry from the scoreboard
+                            Stuck — open to retry
                           </span>
                         ) : row.shift.status === "scoring" ||
                           row.shift.status === "submitted" ? (
@@ -664,14 +801,19 @@ export function ManagerHome() {
                           </span>
                         ) : (
                           <>
-                            {row.gapCount > 0 ? (
-                              <span className="manager-pill is-gap">
-                                {row.gapCount} Gap
+                            {cluster.count > 1 ? (
+                              <span className="manager-meta-wait">
+                                {cluster.count} openings
                               </span>
                             ) : null}
-                            {row.unclearCount > 0 ? (
+                            {gapCount > 0 ? (
+                              <span className="manager-pill is-gap">
+                                {gapCount} Gap
+                              </span>
+                            ) : null}
+                            {unclearCount > 0 ? (
                               <span className="manager-pill is-unclear">
-                                {row.unclearCount} Unclear
+                                {unclearCount} Unclear
                               </span>
                             ) : null}
                             {view === "all" && row.passCount > 0 ? (
@@ -683,6 +825,16 @@ export function ManagerHome() {
                         )}
                       </div>
                     </div>
+                    {thumbId ? (
+                      <span className="manager-row-thumb" aria-hidden>
+                        <EvidenceImg
+                          fileId={thumbId}
+                          alt=""
+                          className="manager-row-thumb-img"
+                          compact
+                        />
+                      </span>
+                    ) : null}
                   </Link>
                 </li>
               );
@@ -718,16 +870,23 @@ export function ManagerHome() {
             </>
           ) : (
             <>
-              {liveItems.length > 0 ? (
-                <ol
-                  className="manager-sop-clauses"
-                  data-testid="live-clause-set"
-                >
-                  {liveItems.map((item) => (
-                    <li key={item.id}>{item.label}</li>
-                  ))}
-                </ol>
-              ) : null}
+              <details className="manager-sop-details">
+                <summary>
+                  {liveItems.length > 0
+                    ? `Opening check · ${liveItems.length} items`
+                    : "Opening check"}
+                </summary>
+                {liveItems.length > 0 ? (
+                  <ol
+                    className="manager-sop-clauses"
+                    data-testid="live-clause-set"
+                  >
+                    {liveItems.map((item) => (
+                      <li key={item.id}>{item.label}</li>
+                    ))}
+                  </ol>
+                ) : null}
+              </details>
               <button
                 type="button"
                 className="text-btn"
@@ -758,14 +917,11 @@ export function ManagerHome() {
   );
 }
 
-function isHarnessName(text: string): boolean {
-  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
-}
-
 function openFixTitle(task: Task, finding?: { itemId: string }): string {
   const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
   if (finding) {
-    const label = itemLabel(finding.itemId);
+    const label =
+      shortItemLabel(finding.itemId) || itemLabel(finding.itemId);
     if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
       return `${kind}: ${label}`;
     }
@@ -795,8 +951,122 @@ function sortTodayInbox(
   return [...rows].sort((a, b) => todayInboxRank(a) - todayInboxRank(b));
 }
 
-function inboxStaffLabel(label: string): string {
-  return label.replace(/\s*·\s*Opening\s*$/i, "").trim() || label;
+type InboxCluster = {
+  row: ManagerShiftSummary;
+  count: number;
+  from: string;
+  to: string;
+};
+
+function clusterSubmittedAt(row: ManagerShiftSummary): string {
+  return row.shift.submittedAt || row.shift.startedAt || "";
+}
+
+function inboxClusterKey(row: ManagerShiftSummary): string {
+  const staff = row.shift.createdBy || displayStaffName(row.staffLabel);
+  const kind =
+    row.gapCount > 0
+      ? "gap"
+      : row.unclearCount > 0
+        ? "unclear"
+        : inboxRowKind(row, "today");
+  const open = row.findings
+    .filter((f) => f.status === "gap" || f.status === "unclear")
+    .map((f) => `${f.itemId}:${f.status}`)
+    .sort()
+    .join(",");
+  return `${staff}|${kind}|${open}`;
+}
+
+function stamp(iso: string): number {
+  const n = Date.parse(iso);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pickClusterRepresentative(
+  members: ManagerShiftSummary[],
+): ManagerShiftSummary {
+  const first = members[0];
+  if (!first) {
+    throw new Error("inbox cluster is empty");
+  }
+  let best = first;
+  for (const row of members) {
+    const rank = todayInboxRank(row) - todayInboxRank(best);
+    if (rank < 0) {
+      best = row;
+      continue;
+    }
+    if (
+      rank === 0 &&
+      stamp(clusterSubmittedAt(row)) > stamp(clusterSubmittedAt(best))
+    ) {
+      best = row;
+    }
+  }
+  return best;
+}
+
+function asInboxClusters(rows: ManagerShiftSummary[]): InboxCluster[] {
+  return rows.map((row) => {
+    const when = clusterSubmittedAt(row);
+    return { row, count: 1, from: when, to: when };
+  });
+}
+
+function clusterInboxRows(rows: ManagerShiftSummary[]): InboxCluster[] {
+  const groups = new Map<string, ManagerShiftSummary[]>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const key = inboxClusterKey(row);
+    const list = groups.get(key);
+    if (list) {
+      list.push(row);
+    } else {
+      groups.set(key, [row]);
+      order.push(key);
+    }
+  }
+  return order.map((key) => {
+    const members = groups.get(key) ?? [];
+    const row = pickClusterRepresentative(members);
+    const times = members.map(clusterSubmittedAt).filter(Boolean).sort();
+    return {
+      row,
+      count: members.length,
+      from: times[0] || clusterSubmittedAt(row),
+      to: times[times.length - 1] || clusterSubmittedAt(row),
+    };
+  });
+}
+
+function inboxRowKind(
+  row: ManagerShiftSummary,
+  view: InboxView,
+): "gap" | "unclear" | "stuck" | "failed" | "pass" | "wait" {
+  if (row.latestJob?.status === "failed") return "failed";
+  if (isStuckScoring(row.shift, row.latestJob)) return "stuck";
+  if (row.gapCount > 0) return "gap";
+  if (row.unclearCount > 0) return "unclear";
+  if (row.shift.status === "submitted" || row.shift.status === "scoring") {
+    return "wait";
+  }
+  if (view === "all" && row.passCount > 0) return "pass";
+  return "wait";
+}
+
+function inboxRowPhoto(
+  row: ManagerShiftSummary,
+  items: ChecklistItem[],
+): string | null {
+  const open = row.findings.filter(
+    (f) => f.status === "gap" || f.status === "unclear",
+  );
+  for (const finding of open) {
+    const id = photoForItem(finding.itemId, row.shift.photoFileIds, items);
+    if (id) return id;
+  }
+  return parsePhotoFileIds(row.shift.photoFileIds)[0] || null;
 }
 
 function scoringWaitLabel(row: ManagerShiftSummary): string {
@@ -813,20 +1083,12 @@ function openItemsPreview(
     (f) => f.status === "gap" || f.status === "unclear",
   );
   if (open.length === 0) return null;
-  const shown = open.slice(0, 2).map((f) => itemLabel(f.itemId));
-  const extra = open.length - 2;
+  const labels = open
+    .map((f) => shortItemLabel(f.itemId))
+    .filter(Boolean);
+  if (labels.length === 0) return null;
+  const shown = labels.slice(0, 2);
+  const extra = labels.length - 2;
   return extra > 0 ? `${shown.join(" · ")} +${extra}` : shown.join(" · ");
 }
 
-function formatWhen(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      month: "short",
-      day: "numeric",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}

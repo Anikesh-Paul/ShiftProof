@@ -68,6 +68,11 @@ export function rememberStaffName(
   persist(userId, finalLabel);
 }
 
+/** Manager-facing name — drop the seed role suffix. */
+export function displayStaffName(label: string): string {
+  return label.replace(/\s*·\s*Opening\s*$/i, "").trim() || label;
+}
+
 /** Resolve createdBy → label for inbox / scoreboard. */
 export function resolveStaffLabel(createdBy: string): string {
   if (!createdBy) return "Opening staff";
