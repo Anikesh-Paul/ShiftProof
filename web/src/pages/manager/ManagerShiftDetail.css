@@ -102,6 +102,24 @@
   font-weight: 600;
 }
 
+.missing-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--separator);
+  background: var(--bg-elevated);
+}
+
+.missing-evidence-title {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
 .agent-trace-toggle {
   display: flex;
   align-items: center;

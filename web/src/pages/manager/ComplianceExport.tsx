@@ -18,6 +18,7 @@ import {
   listEvents,
   listTasks,
   loadManagerShift,
+  openFixTitle,
   shortItemLabel,
   type ManagerShiftSummary,
 } from "../../lib/manager";
@@ -425,19 +426,6 @@ function formatShiftStatus(status: ShiftStatus | string): string {
 
 function formatTaskStatus(status: TaskStatus | string): string {
   return status === "done" ? "Done" : "Open";
-}
-
-function openFixTitle(task: Task, finding?: { itemId: string }): string {
-  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
-  if (finding) {
-    const label = shortItemLabel(finding.itemId) || itemLabel(finding.itemId);
-    if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
-      return `${kind}: ${label}`;
-    }
-    return kind;
-  }
-  if (isHarnessName(task.title)) return kind;
-  return task.title;
 }
 
 function formatPackDay(iso: string): string {

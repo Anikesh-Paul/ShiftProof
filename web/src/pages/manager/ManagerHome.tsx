@@ -24,11 +24,13 @@ import {
   formatManagerWhenRange,
   isHarnessName,
   isStuckScoring,
+  isKnownItemId,
   itemLabel,
   listOpenTasks,
   loadManagerInbox,
   loadRepeatOffenders,
   mergeTasksById,
+  openFixTitle,
   shortItemLabel,
   subscribeManagerTables,
   sweepStaleJobs,
@@ -52,6 +54,8 @@ import type { ChecklistItem, Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
 
 type InboxView = "today" | "backlog" | "all";
+
+const OPEN_FIX_CAP = 4;
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -80,6 +84,7 @@ export function ManagerHome() {
   >([]);
   const [openTasks, setOpenTasks] = useState<Task[]>([]);
   const [fixesExpanded, setFixesExpanded] = useState(false);
+  const [fixesShowAll, setFixesShowAll] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignToast, setAssignToast] = useState<string | null>(null);
   const [retryingJobs, setRetryingJobs] = useState(false);
@@ -318,7 +323,11 @@ export function ManagerHome() {
   );
 
   const sopReady = isSopFileReady(sop?.fileId);
-  const waitingOnStaff = openTasks.filter((t) => !t.recheckFileId).length;
+  const waitingTasks = openTasks.filter((t) => !t.recheckFileId);
+  const recheckTasks = openTasks.filter((t) => Boolean(t.recheckFileId));
+  const waitingOnStaff = waitingTasks.length;
+  const openFixOverflow =
+    waitingTasks.length > OPEN_FIX_CAP || recheckTasks.length > OPEN_FIX_CAP;
   const glanceChips = useMemo(
     () =>
       repeatOffenders
@@ -332,34 +341,57 @@ export function ManagerHome() {
     [repeatOffenders],
   );
   const activeFilter = glanceChips.find((r) => r.itemId === itemFilter);
+  const itemKnown = !itemFilter || isKnownItemId(itemFilter);
+  const backlogGaps = defaultList.reduce((n, s) => n + s.gapCount, 0);
+  const backlogUnclear = defaultList.reduce((n, s) => n + s.unclearCount, 0);
 
   const headline = loading
     ? "Checking shifts…"
     : itemFilter
-      ? shortItemLabel(itemFilter) || itemLabel(itemFilter)
-      : todayGaps === 0
-        ? todayUnclear > 0
-          ? todayUnclear === 1
-            ? "1 photo needs a look"
-            : `${todayUnclear} photos need a look`
-          : stuckItems.length > 0 || waitingShifts.length > 0
-            ? "Checks in progress"
-            : "Nothing needs you today"
-        : todayGaps === 1
-          ? "1 gap needs a look"
-          : `${todayGaps} gaps need a look`;
+      ? itemKnown
+        ? shortItemLabel(itemFilter) || itemLabel(itemFilter)
+        : "No matching item"
+      : view === "backlog"
+        ? defaultList.length === 0
+          ? "Backlog is empty"
+          : backlogGaps === 0
+            ? backlogUnclear === 1
+              ? "1 older photo needs a look"
+              : `${backlogUnclear} older photos need a look`
+            : backlogGaps === 1
+              ? "1 older gap needs a look"
+              : `${backlogGaps} older gaps need a look`
+        : todayGaps === 0
+          ? todayUnclear > 0
+            ? todayUnclear === 1
+              ? "1 photo needs a look"
+              : `${todayUnclear} photos need a look`
+            : stuckItems.length > 0 || waitingShifts.length > 0
+              ? "Checks in progress"
+              : "Nothing needs you today"
+          : todayGaps === 1
+            ? "1 gap needs a look"
+            : `${todayGaps} gaps need a look`;
 
   const lede = loading
     ? "Loading opening checks…"
-    : itemFilter && activeFilter
-      ? `Failed on ${activeFilter.count} of the last ${activeFilter.of} scored openings.`
-      : todayGaps > 0
-        ? "Today’s open gaps first. Older checks sit in Backlog."
-        : todayUnclear > 0
-          ? "Today’s unclear photos need a retake, not a fix task."
-          : jobTargets.length > 0
-            ? "Retry stuck jobs here, or close them from the scoreboard."
-            : "When staff leave open gaps today, they land here first.";
+    : itemFilter && !itemKnown
+      ? "This item is not on the opening check."
+      : itemFilter && activeFilter
+        ? `Failed on ${activeFilter.count} of the last ${activeFilter.of} scored openings.`
+        : itemFilter
+          ? "Open gaps and unclear photos for this item."
+          : view === "backlog"
+            ? defaultList.length === 0
+              ? "Older openings with open gaps land here."
+              : "Older openings. Today stays on Today."
+            : todayGaps > 0
+              ? "Today’s open gaps first. Older checks sit in Backlog."
+              : todayUnclear > 0
+                ? "Today’s unclear photos need a retake, not a fix task."
+                : jobTargets.length > 0
+                  ? "Retry stuck jobs here, or close them from the scoreboard."
+                  : "When staff leave open gaps today, they land here first.";
 
   function setView(next: InboxView) {
     const nextParams = new URLSearchParams(params);
@@ -556,7 +588,12 @@ export function ManagerHome() {
             type="button"
             className="manager-fixes-summary"
             aria-expanded={fixesExpanded}
-            onClick={() => setFixesExpanded((v) => !v)}
+            onClick={() => {
+              setFixesExpanded((v) => {
+                if (v) setFixesShowAll(false);
+                return !v;
+              });
+            }}
           >
             {openTasks.length === 1
               ? "1 open fix"
@@ -567,49 +604,48 @@ export function ManagerHome() {
               : `${waitingOnStaff} waiting on staff`}
           </button>
           {fixesExpanded ? (
-            <ul className="list-plain manager-list">
-              {openTasks.map((task) => {
-                const shiftRow = items.find((s) => s.shift.$id === task.shiftId);
-                const finding = shiftRow?.findings.find(
-                  (f) => f.$id === task.findingId,
-                );
-                const title = openFixTitle(task, finding);
-                const waitingRecheck = Boolean(task.recheckFileId);
-                return (
-                  <li key={task.$id} data-finding-id={task.findingId}>
-                    <Link
-                      to={`/manager/shifts/${task.shiftId}`}
-                      className="manager-row"
-                    >
-                      <div className="manager-row-main">
-                        <p className="manager-row-staff">{title}</p>
-                        <div className="manager-row-meta">
-                          <span className="caption">
-                            {displayStaffName(
-                              resolveStaffLabel(
-                                task.assignedTo ||
-                                  shiftRow?.shift.createdBy ||
-                                  "",
-                              ),
-                            )}
-                          </span>
-                          <span
-                            className={`manager-pill${waitingRecheck ? " is-pass" : " is-unclear"}`}
-                          >
-                            {waitingRecheck
-                              ? "Re-check on file"
-                              : "Waiting on staff"}
-                          </span>
-                        </div>
-                      </div>
-                      <span className="manager-row-go" aria-hidden>
-                        Review
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="manager-fixes-expanded">
+              {waitingTasks.length > 0 ? (
+                <div className="manager-fix-group">
+                  <p className="manager-fix-group-label">
+                    Waiting on staff ({waitingTasks.length})
+                  </p>
+                  <ul className="list-plain manager-list">
+                    {(fixesShowAll
+                      ? waitingTasks
+                      : waitingTasks.slice(0, OPEN_FIX_CAP)
+                    ).map((task) => (
+                      <OpenFixRow key={task.$id} task={task} items={items} />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {recheckTasks.length > 0 ? (
+                <div className="manager-fix-group">
+                  <p className="manager-fix-group-label">
+                    Re-check on file ({recheckTasks.length})
+                  </p>
+                  <ul className="list-plain manager-list">
+                    {(fixesShowAll
+                      ? recheckTasks
+                      : recheckTasks.slice(0, OPEN_FIX_CAP)
+                    ).map((task) => (
+                      <OpenFixRow key={task.$id} task={task} items={items} />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {openFixOverflow ? (
+                <button
+                  type="button"
+                  className="text-btn"
+                  aria-pressed={fixesShowAll}
+                  onClick={() => setFixesShowAll((v) => !v)}
+                >
+                  {fixesShowAll ? "Show less" : "Show all"}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </section>
       ) : null}
@@ -634,13 +670,23 @@ export function ManagerHome() {
           ))}
         </div>
 
-        {!loading && glanceChips.length > 0 ? (
+        {!loading && (glanceChips.length > 0 || (itemFilter && !itemKnown)) ? (
           <div
             className="manager-repeat-chips"
             data-testid="repeat-offender"
             role="group"
             aria-label="Repeat gaps"
           >
+            {itemFilter && !itemKnown ? (
+              <button
+                type="button"
+                className="manager-repeat-chip is-active"
+                aria-pressed="true"
+                onClick={() => setItemFilter(null)}
+              >
+                No matching item
+              </button>
+            ) : null}
             {glanceChips.map((r) => (
               <button
                 key={r.itemId}
@@ -733,12 +779,24 @@ export function ManagerHome() {
               {items.length === 0
                 ? "When staff submit an opening check, shifts appear here."
                 : itemFilter
-                  ? "No open gaps for this checklist item in the inbox."
+                  ? itemKnown
+                    ? "No open gaps for this checklist item in the inbox."
+                    : "Clear the filter to see today’s openings."
                   : view === "today"
                     ? "No open gaps today. Backlog holds older checks."
-                    : "Show all shifts to review clean scores."}
+                    : view === "backlog"
+                      ? "Nothing waiting from earlier days."
+                      : "Show all shifts to review clean scores."}
             </p>
-            {items.length > 0 && view !== "all" && !itemFilter ? (
+            {items.length > 0 && itemFilter ? (
+              <button
+                type="button"
+                className="text-btn is-accent"
+                onClick={() => setItemFilter(null)}
+              >
+                Clear filter
+              </button>
+            ) : items.length > 0 && view !== "all" ? (
               <button
                 type="button"
                 className="text-btn is-accent"
@@ -756,6 +814,8 @@ export function ManagerHome() {
               const itemsPreview = openItemsPreview(row.findings);
               const kind = inboxRowKind(row, view);
               const thumbId = inboxRowPhoto(row, liveItems);
+              const hasPhoto =
+                parsePhotoFileIds(row.shift.photoFileIds).length > 0;
               const when =
                 cluster.count > 1
                   ? formatManagerWhenRange(cluster.from, cluster.to)
@@ -823,6 +883,9 @@ export function ManagerHome() {
                             ) : null}
                           </>
                         )}
+                        {!hasPhoto ? (
+                          <span className="manager-meta-wait">No photo</span>
+                        ) : null}
                       </div>
                     </div>
                     {thumbId ? (
@@ -917,18 +980,43 @@ export function ManagerHome() {
   );
 }
 
-function openFixTitle(task: Task, finding?: { itemId: string }): string {
-  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
-  if (finding) {
-    const label =
-      shortItemLabel(finding.itemId) || itemLabel(finding.itemId);
-    if (!isHarnessName(finding.itemId) && !isHarnessName(label)) {
-      return `${kind}: ${label}`;
-    }
-    return kind;
-  }
-  if (isHarnessName(task.title)) return kind;
-  return task.title;
+function OpenFixRow({
+  task,
+  items,
+}: {
+  task: Task;
+  items: ManagerShiftSummary[];
+}) {
+  const shiftRow = items.find((s) => s.shift.$id === task.shiftId);
+  const finding = shiftRow?.findings.find((f) => f.$id === task.findingId);
+  const title = openFixTitle(task, finding);
+  const waitingRecheck = Boolean(task.recheckFileId);
+  return (
+    <li data-finding-id={task.findingId}>
+      <Link to={`/manager/shifts/${task.shiftId}`} className="manager-row">
+        <div className="manager-row-main">
+          <p className="manager-row-staff">{title}</p>
+          <div className="manager-row-meta">
+            <span className="caption">
+              {displayStaffName(
+                resolveStaffLabel(
+                  task.assignedTo || shiftRow?.shift.createdBy || "",
+                ),
+              )}
+            </span>
+            <span
+              className={`manager-pill${waitingRecheck ? " is-pass" : " is-unclear"}`}
+            >
+              {waitingRecheck ? "Re-check on file" : "Waiting on staff"}
+            </span>
+          </div>
+        </div>
+        <span className="manager-row-go" aria-hidden>
+          Review
+        </span>
+      </Link>
+    </li>
+  );
 }
 
 function todayInboxRank(row: ManagerShiftSummary): number {

@@ -270,9 +270,22 @@ export function itemLabel(itemId: string): string {
   return liveLabels[itemId] ?? ITEM_LABELS[itemId] ?? titleCaseItemId(itemId);
 }
 
+/** True when the id is on the opening check (static map or hydrated live set). */
+export function isKnownItemId(itemId: string): boolean {
+  if (!itemId || isHarnessName(itemId)) return false;
+  return Object.prototype.hasOwnProperty.call(liveLabels, itemId);
+}
+
 /** e2e / harness ids and titles must never surface in the manager inbox. */
 export function isHarnessName(text: string): boolean {
   return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
+}
+
+function shortenLabelText(live: string): string {
+  if (live.length <= 28) return live;
+  const beforeMark = live.split(/[?]/)[0]?.trim() ?? live;
+  if (beforeMark.length <= 32) return beforeMark;
+  return beforeMark.split(/\s+/).slice(0, 3).join(" ");
 }
 
 /**
@@ -285,10 +298,29 @@ export function shortItemLabel(itemId: string): string {
   if (known) return known;
   const live = liveLabels[itemId] ?? titleCaseItemId(itemId);
   if (isHarnessName(live)) return "";
-  if (live.length <= 28) return live;
-  const beforeMark = live.split(/[?]/)[0]?.trim() ?? live;
-  if (beforeMark.length <= 32) return beforeMark;
-  return beforeMark.split(/\s+/).slice(0, 3).join(" ");
+  return shortenLabelText(live);
+}
+
+/** Always `Fix:` / `Retake:` + a short item. Never a bare Fix or a full SOP question. */
+export function openFixTitle(
+  task: { title: string },
+  finding?: { itemId: string },
+): string {
+  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
+  if (finding && !isHarnessName(finding.itemId)) {
+    const label =
+      shortItemLabel(finding.itemId) ||
+      shortenLabelText(itemLabel(finding.itemId));
+    if (label && !isHarnessName(label)) return `${kind}: ${label}`;
+  }
+  const stripped = task.title.replace(/^(Fix|Retake):\s*/i, "").trim();
+  if (stripped && !isHarnessName(stripped)) {
+    const fromId = shortItemLabel(stripped);
+    if (fromId) return `${kind}: ${fromId}`;
+    const shortened = shortenLabelText(stripped);
+    if (shortened && !isHarnessName(shortened)) return `${kind}: ${shortened}`;
+  }
+  return `${kind}: Opening item`;
 }
 
 /** One manager clock: Asia/Kolkata, 24h. */

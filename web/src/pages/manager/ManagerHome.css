@@ -130,6 +130,32 @@
   outline-offset: 2px;
 }
 
+.manager-fixes-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.manager-fix-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.manager-fix-group-label {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--label-secondary);
+}
+
+.manager-fixes-expanded .text-btn {
+  align-self: flex-start;
+  min-height: var(--touch);
+  padding-inline: var(--space-3);
+}
+
 .manager-view-tabs {
   display: flex;
   flex-wrap: nowrap;

@@ -42,6 +42,7 @@ import {
   mergeTasksById,
   overrideFinding,
   isHarnessName,
+  openFixTitle,
   shortItemLabel,
   subscribeManagerTables,
   sweepStaleJobs,
@@ -526,6 +527,82 @@ export function ManagerShiftDetail() {
     }
   }
 
+  async function requestMissingPhotos() {
+    if (!item || !user) return;
+    const pending = item.findings.filter(
+      (f) =>
+        f.status === "unclear" && !openTasks.some((t) => t.findingId === f.$id),
+    );
+    if (pending.length === 0) return;
+    setError(null);
+    setSaving(true);
+    const assignedTo = item.shift.createdBy;
+    const staff = displayStaffName(resolveStaffLabel(assignedTo));
+    const created: Task[] = [];
+    try {
+      if (source === "demo" || item.shift.$id.startsWith("demo_shift_")) {
+        const now = new Date().toISOString();
+        for (const finding of pending) {
+          created.push({
+            $id: `local_task_${Date.now()}_${finding.$id}`,
+            $createdAt: now,
+            $updatedAt: now,
+            shiftId: item.shift.$id,
+            findingId: finding.$id,
+            title: `Retake: ${glanceLabel(finding.itemId)}`,
+            status: "open",
+            assignedTo,
+            createdBy: user.$id,
+            createdAt: now,
+          });
+        }
+        setTasks((prev) => mergeTasksById(created, prev));
+        setToast(
+          created.length === 1
+            ? `Requested photos from ${staff} (sample).`
+            : `Requested ${created.length} photos from ${staff} (sample).`,
+        );
+      } else {
+        const settled = await Promise.allSettled(
+          pending.map((finding) =>
+            assignFixTask({
+              shiftId: item.shift.$id,
+              findingId: finding.$id,
+              title: `Retake: ${glanceLabel(finding.itemId)}`,
+              userId: user.$id,
+              assignedTo,
+            }),
+          ),
+        );
+        let firstError: unknown = null;
+        for (const result of settled) {
+          if (result.status === "fulfilled") created.push(result.value);
+          else if (!firstError) firstError = result.reason;
+        }
+        if (created.length) {
+          await loadExtras(item.shift.$id, false);
+          setTasks((prev) => mergeTasksById(created, prev));
+          setToast(
+            created.length === 1
+              ? `Requested photos from ${staff}.`
+              : `Requested ${created.length} photos from ${staff}.`,
+          );
+        }
+        if (firstError && created.length === 0) throw firstError;
+        if (firstError) {
+          setError(getErrorMessage(firstError, "Could not request photos"));
+        }
+      }
+    } catch (err) {
+      if (created.length) {
+        setTasks((prev) => mergeTasksById(created, prev));
+      }
+      setError(getErrorMessage(err, "Could not request photos"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function runAssign(kind: "fix" | "retake" = "fix") {
     if (!item || !selected || !user) return;
     setError(null);
@@ -843,10 +920,20 @@ export function ManagerShiftDetail() {
 
   const openCount = item.gapCount + item.unclearCount;
   const evidenceIds = parsePhotoFileIds(item.shift.photoFileIds);
+  const hasShiftPhotos = evidenceIds.length > 0;
+  const missingPhotoUnclear = unclearFindings.filter(
+    (f) => !openTasks.some((t) => t.findingId === f.$id),
+  );
+  const showRequestPhotos = !hasShiftPhotos && missingPhotoUnclear.length > 0;
   const stuck = isStuckScoring(item.shift, item.latestJob);
   const jobFailed = item.latestJob?.status === "failed";
   const hasFindings = item.findings.length > 0;
   const failureDetail = scoringFailureDetail(item.latestJob);
+  const tallyParts = [
+    item.gapCount > 0 ? { n: item.gapCount, label: "Gap" } : null,
+    item.unclearCount > 0 ? { n: item.unclearCount, label: "Unclear" } : null,
+    item.passCount > 0 ? { n: item.passCount, label: "Pass" } : null,
+  ].filter((p): p is { n: number; label: string } => p !== null);
 
   return (
     <div
@@ -946,27 +1033,18 @@ export function ManagerShiftDetail() {
           </div>
         ) : null}
 
-        {hasFindings ? (
+        {hasFindings && tallyParts.length > 0 ? (
         <p className="manager-tally" aria-label="Finding counts">
-          <span>
-            <strong>{item.gapCount}</strong> Gap
-          </span>
-          <span className="tally-sep" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong>{item.unclearCount}</strong> Unclear
-          </span>
-          {showAll || item.passCount > 0 ? (
-            <>
-              <span className="tally-sep" aria-hidden>
-                ·
-              </span>
-              <span>
-                <strong>{item.passCount}</strong> Pass
-              </span>
-            </>
-          ) : null}
+          {tallyParts.map((part, i) => (
+            <span key={part.label}>
+              {i > 0 ? (
+                <span className="tally-sep" aria-hidden>
+                  ·
+                </span>
+              ) : null}
+              <strong>{part.n}</strong> {part.label}
+            </span>
+          ))}
         </p>
         ) : null}
 
@@ -1006,7 +1084,27 @@ export function ManagerShiftDetail() {
           </section>
         ) : null}
 
-        {unclearFindings.length > 0 ? (
+        {!hasShiftPhotos && hasFindings ? (
+          <section
+            className="missing-evidence"
+            data-testid="missing-evidence"
+            aria-label="Missing evidence"
+          >
+            <p className="missing-evidence-title">No photos on this opening.</p>
+            {showRequestPhotos ? (
+              <Button
+                variant="primary"
+                loading={saving}
+                data-testid="request-photos"
+                onClick={() => void requestMissingPhotos()}
+              >
+                Request photos
+              </Button>
+            ) : null}
+          </section>
+        ) : null}
+
+        {unclearFindings.length > 0 && hasShiftPhotos ? (
           <p
             className="hero-unclear"
             data-testid="hero-unclear"
@@ -1027,14 +1125,16 @@ export function ManagerShiftDetail() {
                 ? "No open items"
                 : "Open items"}
           </p>
-          <button
-            type="button"
-            className="text-btn"
-            onClick={() => setShowAll((v) => !v)}
-            aria-pressed={showAll}
-          >
-            {showAll ? "Hide passes" : "Show all"}
-          </button>
+          {item.passCount > 0 ? (
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => setShowAll((v) => !v)}
+              aria-pressed={showAll}
+            >
+              {showAll ? "Hide passes" : "Show all"}
+            </button>
+          ) : null}
         </div>
         ) : null}
 
@@ -1169,7 +1269,8 @@ export function ManagerShiftDetail() {
                         >
                           View open fix
                         </Button>
-                      ) : f.status !== "pass" ? (
+                      ) : f.status === "gap" ||
+                        (f.status === "unclear" && hasShiftPhotos) ? (
                         <Button
                           variant="primary"
                           disabled={saving}
@@ -1264,13 +1365,7 @@ export function ManagerShiftDetail() {
                   >
                     <div className="stack-sm">
                       <p className="task-title">
-                        {linked
-                          ? `${/^retake:/i.test(t.title) ? "Retake" : "Fix"}: ${glanceLabel(linked.itemId)}`
-                          : isHarnessName(t.title)
-                            ? /^retake:/i.test(t.title)
-                              ? "Retake"
-                              : "Fix"
-                            : t.title}
+                        {openFixTitle(t, linked)}
                       </p>
                       <p className="caption">
                         {t.status === "open" ? "Open" : "Done"}
@@ -1581,7 +1676,9 @@ function shiftStatusSentence(item: ManagerShiftSummary): string {
         : `${item.gapCount} gaps still open.`;
     }
     if (item.unclearCount > 0) {
-      return "Unclear photos need a retake.";
+      return parsePhotoFileIds(item.shift.photoFileIds).length === 0
+        ? "Ask staff to send photos."
+        : "Unclear photos need a retake.";
     }
     return "All checks passed.";
   }
