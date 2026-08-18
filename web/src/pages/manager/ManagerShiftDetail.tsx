@@ -1393,7 +1393,11 @@ export function ManagerShiftDetail() {
                       ) : f.status === "gap" ||
                         (f.status === "unclear" && hasShiftPhotos) ? (
                         <Button
-                          variant="primary"
+                          variant={
+                            f.status === "gap" && !hasShiftPhotos
+                              ? "secondary"
+                              : "primary"
+                          }
                           disabled={saving}
                           onClick={() => startAssign(f)}
                         >

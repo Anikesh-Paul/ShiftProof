@@ -607,8 +607,10 @@
   line-height: 1.45;
 }
 
-.finding-note {
+.finding-note.caption {
   margin: 0;
+  max-width: 62ch;
+  line-height: 1.45;
 }
 
 .finding-conf {
