@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { useSheetChromeInert } from "../../lib/sheetChrome";
 import { EvidenceImg } from "../../components/EvidenceImg";
 import {
   EvidenceLightbox,
@@ -28,6 +29,7 @@ import {
   applyLocalOverride,
   assignFixTask,
   attachRecheckAndRescore,
+  citationForFinding,
   closeShift,
   DEMO_AGENT_TRACE,
   formatManagerWhen,
@@ -51,10 +53,10 @@ import {
 } from "../../lib/manager";
 import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
-  getChecklist,
   getEvidenceFileUrl,
   getSite,
-  parseChecklistItems,
+  loadChecklistItems,
+  peekChecklistItems,
   parsePhotoFileIds,
   photoForItem,
   retryShiftScore,
@@ -93,6 +95,7 @@ export function ManagerShiftDetail() {
   const { shiftId = "" } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const setChromeInert = useSheetChromeInert();
   const listRef = useRef<HTMLUListElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   const overflowRef = useRef<HTMLDetailsElement>(null);
@@ -227,18 +230,26 @@ export function ManagerShiftDetail() {
           setLoading(false);
           return;
         }
-        // Paint scoreboard first — extras (trace/tasks/events) fill in after
+        // Paint scoreboard first — extras (trace/tasks/events) fill in after.
+        // Inbox already warmed the checklist cache so citations match on first paint.
         setItem(result.item);
         setSource(result.source);
+        setChecklistItems(peekChecklistItems());
         if (result.source === "live" && user && result.item.latestJob) {
           void sweepStaleJobs([result.item], user.$id).then(() => {
             if (!cancelled) setItem({ ...result.item });
           });
         }
         setTraceOpen(false);
-        void getChecklist()
-          .then((c) => setChecklistItems(parseChecklistItems(c)))
-          .catch(() => setChecklistItems([]));
+        void loadChecklistItems()
+          .then((items) => {
+            if (!cancelled) setChecklistItems(items);
+          })
+          .catch(() => {
+            if (!cancelled && peekChecklistItems().length === 0) {
+              setChecklistItems([]);
+            }
+          });
         // If every finding is Pass (e.g. golden after overrides), default to Show all
         // so managers / demo path can still select rows without an empty board.
         const openGaps = result.item.findings.filter(
@@ -316,6 +327,11 @@ export function ManagerShiftDetail() {
     [item, selectedId],
   );
   const formOpen = Boolean(selected) && mode !== "idle";
+
+  useEffect(() => {
+    setChromeInert(formOpen);
+    return () => setChromeInert(false);
+  }, [formOpen, setChromeInert]);
 
   useLayoutEffect(() => {
     const root = detailRef.current;
@@ -422,8 +438,9 @@ export function ManagerShiftDetail() {
   );
 
   const citationGaps = useMemo(
-    () => (item?.findings ?? []).filter((f) => !hasForcedCitation(f)),
-    [item],
+    () =>
+      (item?.findings ?? []).filter((f) => !hasForcedCitation(f, checklistItems)),
+    [item, checklistItems],
   );
 
   const onPhotoMissing = useCallback((fileId: string, missing: boolean) => {
@@ -1295,6 +1312,7 @@ export function ManagerShiftDetail() {
                 ? evidenceIds.indexOf(photoId)
                 : -1;
               const note = displayEvidenceNote(f.evidenceNote);
+              const cite = citationForFinding(f, checklistItems);
               return (
                 <li key={f.$id}>
                   <article
@@ -1333,11 +1351,15 @@ export function ManagerShiftDetail() {
                     <p
                       className="citation-bar caption"
                       data-testid="citation"
+                      data-citation={cite.gap ? "missing" : "ok"}
                     >
-                      {f.clauseId} · {confidenceBand(f.confidence)}
+                      {cite.gap
+                        ? "No clause cited"
+                        : cite.clauseId}{" "}
+                      · {confidenceBand(f.confidence)}
                     </p>
-                    {f.quote ? (
-                    <p className="finding-quote muted">“{f.quote}”</p>
+                    {cite.quote ? (
+                    <p className="finding-quote muted">“{cite.quote}”</p>
                     ) : null}
                     {note ? (
                       <p className="finding-note caption">{note}</p>

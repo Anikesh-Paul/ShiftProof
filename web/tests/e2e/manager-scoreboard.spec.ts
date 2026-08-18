@@ -74,11 +74,17 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await row.getByRole("button", { name: /^override$/i }).click();
     await expect(actions).toBeVisible();
     await expect(actions.getByPlaceholder(/overriding AI/i)).toHaveCount(0);
+    await expect(page.getByTestId("shell-chrome")).toHaveAttribute("inert");
     await actions.getByRole("button", { name: /cancel/i }).click();
+    await expect(page.getByTestId("shell-chrome")).not.toHaveAttribute("inert");
 
     await row.getByRole("button", { name: /assign fix/i }).click();
     await expect(actions).toBeVisible();
     await expect(actions).not.toContainText(/Fix:\s*Fix:/);
+    await expect(page.getByTestId("shell-chrome")).toHaveAttribute("inert");
+    await page.keyboard.press("Escape");
+    await expect(actions).toHaveCount(0);
+    await expect(page.getByTestId("shell-chrome")).not.toHaveAttribute("inert");
     assertNoPageErrors(errors);
   });
 
@@ -177,6 +183,53 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await expect(floor).not.toContainText(/% sure/i);
 
     await expect(page.getByText(/Food handlers must wear clean/i)).toHaveCount(0);
+    assertNoPageErrors(errors);
+  });
+
+  test("a no-photo Fridge finding does not inherit the gloves clause", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({ photoFileIds: [] });
+    await seedFinding(shiftId, {
+      itemId: "gloves_worn",
+      status: "gap",
+      clauseId: "FS-01",
+      quote: "Food handlers must wear clean disposable gloves at the prep station.",
+    });
+    await seedFinding(shiftId, {
+      itemId: "fridge_temp",
+      status: "gap",
+      clauseId: "FS-01",
+      quote: "Food handlers must wear clean disposable gloves at the prep station.",
+    });
+    await seedFinding(shiftId, {
+      itemId: "handwash_station",
+      status: "unclear",
+      clauseId: "FS-01",
+      quote: "Food handlers must wear clean disposable gloves at the prep station.",
+    });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}`);
+
+    const rows = page.getByTestId("finding-row");
+    await expect(rows.first()).toBeVisible({ timeout: 25_000 });
+    await expect(rows).toHaveCount(3);
+
+    const gloves = rows.filter({ hasText: /Gloves/i });
+    await expect(gloves.getByTestId("citation")).toHaveText(/FS-01/);
+    await expect(gloves).toContainText(/disposable gloves/i);
+
+    const fridge = rows.filter({ hasText: /Fridge/i });
+    await expect(fridge.getByTestId("citation")).not.toHaveText(/FS-01/);
+    await expect(fridge).not.toContainText(/disposable gloves/i);
+
+    const handwash = rows.filter({ hasText: /Handwash/i });
+    await expect(handwash.getByTestId("citation")).not.toHaveText(/FS-01/);
+    await expect(handwash).not.toContainText(/disposable gloves/i);
+
     assertNoPageErrors(errors);
   });
 

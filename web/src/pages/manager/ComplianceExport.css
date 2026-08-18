@@ -219,6 +219,11 @@
   display: block;
 }
 
+.export-photo-tile .evidence-img-missing {
+  min-height: 100%;
+  padding: var(--space-2);
+}
+
 .export-evidence-file {
   display: flex;
   align-items: flex-start;

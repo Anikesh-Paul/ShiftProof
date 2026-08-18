@@ -38,6 +38,34 @@ test.describe("manager Inbox first fold", () => {
 
     await expect(page.getByLabel("Inbox summary")).toHaveCount(0);
     await expect(page.getByText("Stuck / scoring")).toHaveCount(0);
+
+    const sopFile = page.locator('[data-testid="sop-upload"] input[type="file"]');
+    await expect(sopFile).toHaveAttribute("tabindex", "-1");
+    assertNoPageErrors(errors);
+  });
+
+  test("hidden SOP file is skipped in the inbox tab order", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "desktop Log out is in tab order");
+    const errors = collectPageErrors(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await expect(page.getByRole("tab", { name: /^today$/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(page.getByTestId("sop-upload")).toBeVisible({ timeout: 25_000 });
+    await page.getByRole("button", { name: /^log out$/i }).focus();
+    await page.keyboard.press("Tab");
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLInputElement | null;
+      return {
+        tag: el?.tagName ?? "",
+        type: el?.type ?? "",
+        label: el?.getAttribute("aria-label") ?? el?.textContent?.trim() ?? "",
+      };
+    });
+    expect(focused.type).not.toBe("file");
+    expect(focused.tag).not.toBe("INPUT");
     assertNoPageErrors(errors);
   });
 
@@ -205,6 +233,12 @@ test.describe("manager Inbox first fold", () => {
     await expect(assign).toHaveCount(0);
     await page.getByRole("tab", { name: /^all$/i }).click();
     await expect(assign).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      /opening(s)? on file/i,
+    );
+    await expect(page.getByTestId("inbox-lede")).not.toHaveText(
+      /Today.s open gaps first/i,
+    );
     assertNoPageErrors(errors);
   });
 });
@@ -331,6 +365,12 @@ test.describe("manager Inbox rows name the work", () => {
       "aria-selected",
       "true",
     );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      /opening(s)? on file/i,
+    );
+    await expect(page.getByTestId("inbox-lede")).toHaveText(
+      /Every opening on file/i,
+    );
     await expect(page.getByTestId("inbox-jobs")).toHaveCount(0);
     await expect(
       page.locator(`a[href="/manager/shifts/${stuckId}"]`),
@@ -382,9 +422,31 @@ test.describe("manager Inbox rows name the work", () => {
     await expect(gapRow).toBeVisible();
     await expect(unclearRow).toBeVisible();
     await expect(otherRow).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(/gloves/i);
+    const lede = page.getByTestId("inbox-lede");
+    await expect(lede).toHaveText(/\d+ openings? mention/i);
+    await expect(lede).not.toHaveText(/Failed on \d+ of the last/i);
+    const painted = Number(
+      ((await lede.innerText()).match(/(\d+)/) ?? [])[1] ?? "0",
+    );
+    expect(await inbox.getByRole("link").count()).toBe(painted);
 
     await glovesChip.click();
     await expect(otherRow).toBeVisible({ timeout: 25_000 });
+
+    await page.getByRole("tab", { name: /^all$/i }).click();
+    await glovesChip.click();
+    await expect(page.getByRole("tab", { name: /^all$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(/gloves/i);
+    await expect(lede).toHaveText(/\d+ openings? mention/i);
+    await expect(lede).not.toHaveText(/Failed on \d+ of the last/i);
+    const allPainted = Number(
+      ((await lede.innerText()).match(/(\d+)/) ?? [])[1] ?? "0",
+    );
+    expect(await inbox.getByRole("link").count()).toBe(allPainted);
     assertNoPageErrors(errors);
   });
 
@@ -416,6 +478,12 @@ test.describe("manager Inbox rows name the work", () => {
     await expect(row).toContainText(/1\s*Pass/i);
     await expect(row).not.toContainText(/· Opening/);
     await expect(row).not.toContainText(/Review/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      /opening(s)? on file/i,
+    );
+    await expect(page.getByTestId("inbox-lede")).not.toHaveText(
+      /Today.s open gaps first/i,
+    );
     assertNoPageErrors(errors);
   });
 });

@@ -6,6 +6,7 @@ import { tables, DB, ID, Query, realtime, Channel } from "./appwrite";
 import {
   APPWRITE_IDS,
   type AgentJob,
+  type ChecklistItem,
   type Finding,
   type FindingStatus,
   type Shift,
@@ -16,13 +17,14 @@ import {
   DEMO_MANAGER_INBOX,
   DEMO_AGENT_TRACE,
   DEMO_REPEAT_OFFENDERS,
+  citationForFinding,
   getDemoShift,
   hydrateItemLabels,
   itemLabel,
   type ManagerShiftSummary,
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
-import { getChecklist, getLatestJob, parseChecklistItems } from "./shifts";
+import { getLatestJob, loadChecklistItems } from "./shifts";
 
 const T = APPWRITE_IDS.tables;
 
@@ -31,9 +33,11 @@ type RowData = Record<string, any>;
 
 export type { ManagerShiftSummary };
 export {
+  citationForFinding,
   formatManagerWhen,
   formatManagerWhenRange,
   hydrateItemLabels,
+  inboxCopy,
   isHarnessName,
   isKnownItemId,
   itemLabel,
@@ -42,6 +46,7 @@ export {
   shiftsWithOpenGaps,
   shortItemLabel,
 } from "./managerDemo";
+export type { FindingCitation, InboxCopyInput, InboxCopyView } from "./managerDemo";
 export { DEMO_MANAGER_INBOX } from "./managerDemo";
 
 const STUCK_MS = 10 * 60 * 1000;
@@ -96,8 +101,7 @@ export function isStaleAgentJob(job: AgentJob): boolean {
 
 async function ensureItemLabels(): Promise<void> {
   try {
-    const checklist = await getChecklist();
-    hydrateItemLabels(parseChecklistItems(checklist));
+    hydrateItemLabels(await loadChecklistItems());
   } catch {
     /* keep static map */
   }
@@ -756,10 +760,15 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
 export { DEMO_AGENT_TRACE, DEMO_REPEAT_OFFENDERS };
 
 /** Boost #1 — every finding must expose clause + quote + confidence. */
-export function hasForcedCitation(f: Finding): boolean {
+export function hasForcedCitation(
+  f: Finding,
+  items: ChecklistItem[] = [],
+): boolean {
+  const cite = citationForFinding(f, items);
   return Boolean(
-    f.clauseId?.trim() &&
-      f.quote?.trim() &&
+    !cite.gap &&
+      cite.clauseId &&
+      cite.quote &&
       typeof f.confidence === "number" &&
       f.confidence >= 0 &&
       f.confidence <= 1,

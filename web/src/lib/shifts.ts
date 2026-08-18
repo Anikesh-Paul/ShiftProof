@@ -181,13 +181,27 @@ export function parseChecklistItems(checklist: Checklist): ChecklistItem[] {
   }
 }
 
+let checklistItemCache: ChecklistItem[] = [];
+
+export function peekChecklistItems(): ChecklistItem[] {
+  return checklistItemCache;
+}
+
+export async function loadChecklistItems(): Promise<ChecklistItem[]> {
+  const checklist = await getChecklist();
+  const items = parseChecklistItems(checklist);
+  checklistItemCache = items;
+  return items;
+}
+
 export function parsePhotoFileIds(photoFileIds?: string): string[] {
   if (!photoFileIds) return [];
   try {
     const parsed = JSON.parse(photoFileIds) as unknown;
     return Array.isArray(parsed)
       ? parsed.filter(
-          (id): id is string => typeof id === "string" && id.length > 0,
+          (id): id is string =>
+            typeof id === "string" && id.trim().length > 0 && id.trim() !== "—",
         )
       : [];
   } catch {

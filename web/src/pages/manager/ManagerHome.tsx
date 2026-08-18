@@ -24,6 +24,7 @@ import {
   formatManagerWhenRange,
   isHarnessName,
   isStuckScoring,
+  inboxCopy,
   isKnownItemId,
   itemLabel,
   listOpenTasks,
@@ -329,58 +330,24 @@ export function ManagerHome() {
         .slice(0, 4),
     [repeatOffenders],
   );
-  const activeFilter = glanceChips.find((r) => r.itemId === itemFilter);
   const itemKnown = !itemFilter || isKnownItemId(itemFilter);
   const backlogGaps = defaultList.reduce((n, s) => n + s.gapCount, 0);
   const backlogUnclear = defaultList.reduce((n, s) => n + s.unclearCount, 0);
 
-  const headline = loading
-    ? "Checking shifts…"
-    : itemFilter
-      ? itemKnown
-        ? shortItemLabel(itemFilter) || itemLabel(itemFilter)
-        : "No matching item"
-      : view === "backlog"
-        ? defaultList.length === 0
-          ? "Backlog is empty"
-          : backlogGaps === 0
-            ? backlogUnclear === 1
-              ? "1 older photo needs a look"
-              : `${backlogUnclear} older photos need a look`
-            : backlogGaps === 1
-              ? "1 older gap needs a look"
-              : `${backlogGaps} older gaps need a look`
-        : todayGaps === 0
-          ? todayUnclear > 0
-            ? todayUnclear === 1
-              ? "1 photo needs a look"
-              : `${todayUnclear} photos need a look`
-            : stuckItems.length > 0 || waitingShifts.length > 0
-              ? "Checks in progress"
-              : "Nothing needs you today"
-          : todayGaps === 1
-            ? "1 gap needs a look"
-            : `${todayGaps} gaps need a look`;
-
-  const lede = loading
-    ? "Loading opening checks…"
-    : itemFilter && !itemKnown
-      ? "This item is not on the opening check."
-      : itemFilter && activeFilter
-        ? `Failed on ${activeFilter.count} of the last ${activeFilter.of} scored openings.`
-        : itemFilter
-          ? "Open gaps and unclear photos for this item."
-          : view === "backlog"
-            ? defaultList.length === 0
-              ? "Older openings with open gaps land here."
-              : "Older openings. Today stays on Today."
-            : todayGaps > 0
-              ? "Today’s open gaps first. Older checks sit in Backlog."
-              : todayUnclear > 0
-                ? "Today’s unclear photos need a retake, not a fix task."
-                : jobTargets.length > 0
-                  ? "Retry stuck jobs here, or close them from the scoreboard."
-                  : "When staff leave open gaps today, they land here first.";
+  const { headline, lede } = inboxCopy({
+    loading,
+    itemFilter,
+    itemKnown,
+    view,
+    listedCount: listed.length,
+    todayGaps,
+    todayUnclear,
+    checksInProgress: stuckItems.length > 0 || waitingShifts.length > 0,
+    jobsWaiting: jobTargets.length > 0,
+    backlogEmpty: defaultList.length === 0,
+    backlogGaps,
+    backlogUnclear,
+  });
 
   function setView(next: InboxView) {
     const nextParams = new URLSearchParams(params);
@@ -545,7 +512,9 @@ export function ManagerHome() {
           ) : null}
         </div>
         <h1>{headline}</h1>
-        <p className="muted manager-lede">{lede}</p>
+        <p className="muted manager-lede" data-testid="inbox-lede">
+          {lede}
+        </p>
       </header>
 
       {source === "demo" && !loading ? (
@@ -577,6 +546,7 @@ export function ManagerHome() {
             type="file"
             accept="application/pdf,.pdf"
             className="manager-sop-file"
+            tabIndex={-1}
             onChange={(e) => void onSopFileChange(e)}
             disabled={sopUploading}
           />

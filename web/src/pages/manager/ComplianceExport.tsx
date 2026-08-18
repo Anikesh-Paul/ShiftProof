@@ -12,6 +12,7 @@ import { formatEventType, formatFindingSource } from "../../lib/events";
 import { displayEvidenceNote } from "../../lib/evidenceNote";
 import { getErrorMessage } from "../../lib/errors";
 import {
+  citationForFinding,
   formatManagerWhen,
   isHarnessName,
   itemLabel,
@@ -226,19 +227,25 @@ export function ComplianceExport() {
         ) : null}
 
         <section className="export-tally">
-          <span>
-            <strong>{passes.length}</strong> Pass
-          </span>
+          {passes.length > 0 ? (
+            <span>
+              <strong>{passes.length}</strong> Pass
+            </span>
+          ) : null}
           <span>
             <strong>{gaps.length}</strong> Gap
           </span>
-          <span>
-            <strong>{unclear.length}</strong> Unclear
-          </span>
-          <span>
-            <strong>{overrides.length}</strong> Override
-            {overrides.length === 1 ? "" : "s"}
-          </span>
+          {unclear.length > 0 ? (
+            <span>
+              <strong>{unclear.length}</strong> Unclear
+            </span>
+          ) : null}
+          {overrides.length > 0 ? (
+            <span>
+              <strong>{overrides.length}</strong> Override
+              {overrides.length === 1 ? "" : "s"}
+            </span>
+          ) : null}
         </section>
 
         <section className="export-section">
@@ -263,6 +270,7 @@ export function ComplianceExport() {
                   .sort((a, b) => findingStatusRank(a.status) - findingStatusRank(b.status))
                   .map((f) => {
                     const note = displayEvidenceNote(f.evidenceNote);
+                    const cite = citationForFinding(f, checklistItems);
                     const photoId = photoForItem(
                       f.itemId,
                       shift.photoFileIds,
@@ -280,13 +288,15 @@ export function ComplianceExport() {
                           className="export-cell-clause"
                           data-label="Clause"
                         >
-                          {f.clauseId}
+                          {cite.gap ? "No clause cited" : cite.clauseId}
                         </td>
                         <td
                           className="export-cell-quote export-note"
                           data-label="Quote"
                         >
-                          {f.quote ? `“${f.quote}”` : "—"}
+                          {cite.quote
+                            ? `“${cite.quote}”`
+                            : "No quote on file"}
                         </td>
                         <td
                           className="export-cell-conf"
@@ -397,10 +407,22 @@ function exportEvidenceCell(
 
 function decodeEvidenceImages(root: HTMLElement | null): Promise<void> {
   if (!root) return Promise.resolve();
-  const imgs = [...root.querySelectorAll<HTMLImageElement>("img")];
-  return Promise.all(
-    imgs.map((img) => img.decode().catch(() => undefined)),
-  ).then(() => undefined);
+  const deadline = Date.now() + 8000;
+  return new Promise((resolve) => {
+    const tick = () => {
+      const pending = root.querySelectorAll("[data-evidence='pending']");
+      const imgs = [...root.querySelectorAll<HTMLImageElement>("img")];
+      const decoded =
+        pending.length === 0 &&
+        imgs.every((img) => img.complete && img.naturalWidth > 0);
+      if (decoded || Date.now() >= deadline) {
+        resolve();
+        return;
+      }
+      window.setTimeout(tick, 80);
+    };
+    tick();
+  });
 }
 
 function findingStatusRank(status: FindingStatus | string): number {
