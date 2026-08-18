@@ -36,11 +36,21 @@
 
 .export-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-5);
   padding-bottom: var(--space-4);
   border-bottom: 2px solid var(--label);
+}
+
+.export-gap-line {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--label);
 }
 
 .export-brand {
@@ -128,7 +138,7 @@
 .export-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
 .export-table th,
@@ -147,12 +157,12 @@
 .export-note {
   max-width: 14rem;
   color: var(--label-secondary);
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .export-override {
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   color: var(--label-tertiary);
 }
 
@@ -163,6 +173,22 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.export-task-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.export-recheck-img {
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  display: block;
 }
 
 .export-events {
@@ -193,11 +219,153 @@
   display: block;
 }
 
+.export-photo-tile .evidence-img-missing {
+  min-height: 100%;
+  padding: var(--space-2);
+}
+
+.export-evidence-file {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.export-cell-thumb,
+.export-cell-evidence .evidence-img-missing {
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+
 .export-footer {
   margin-top: var(--space-6);
   padding-top: var(--space-3);
   border-top: 1px solid var(--separator);
   text-align: center;
+}
+
+/* Screen: labeled stack — not a 12px 7-column micro-table. Print restores the table. */
+@media screen {
+  .export-table thead {
+    display: none;
+  }
+
+  .export-table,
+  .export-table tbody,
+  .export-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .export-table tr.export-row {
+    padding: var(--space-4) 0;
+    border-bottom: 1px solid var(--separator);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: var(--space-2);
+    row-gap: 0.35rem;
+    align-items: center;
+  }
+
+  .export-table td {
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .export-cell-status {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .export-cell-item {
+    grid-column: 2;
+    grid-row: 1;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--label);
+  }
+
+  .export-cell-clause,
+  .export-cell-quote,
+  .export-cell-conf,
+  .export-cell-evidence,
+  .export-cell-source {
+    grid-column: 1 / -1;
+    font-size: 0.8125rem;
+    color: var(--label-secondary);
+  }
+
+  .export-cell-quote {
+    line-height: 1.45;
+  }
+
+  .export-table td[data-label] {
+    display: grid;
+    grid-template-columns: 6.75rem minmax(0, 1fr);
+    column-gap: var(--space-2);
+    align-items: start;
+  }
+
+  .export-table td[data-label]::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--label-tertiary);
+  }
+
+  .export-note {
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+}
+
+@media screen and (min-width: 768px) {
+  .export-table tr.export-row {
+    grid-template-columns: auto minmax(0, 1.25fr) minmax(14rem, 1fr);
+    column-gap: var(--space-4);
+    align-items: start;
+  }
+
+  .export-cell-status {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .export-cell-item {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .export-cell-quote {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+
+  .export-cell-clause,
+  .export-cell-conf,
+  .export-cell-evidence,
+  .export-cell-source {
+    grid-column: 3;
+  }
+
+  .export-cell-clause {
+    grid-row: 1;
+  }
+
+  .export-cell-conf {
+    grid-row: 2;
+  }
+
+  .export-cell-evidence {
+    grid-row: 3;
+  }
+
+  .export-cell-source {
+    grid-row: 4;
+  }
 }
 
 @media print {
@@ -250,15 +418,40 @@
     box-sizing: border-box !important;
   }
 
+  .export-table thead {
+    display: table-header-group !important;
+  }
+
   .export-table {
+    display: table !important;
     width: 100% !important;
     table-layout: fixed;
   }
 
+  .export-table tbody {
+    display: table-row-group !important;
+  }
+
+  .export-table tr.export-row {
+    display: table-row !important;
+    padding: 0 !important;
+  }
+
+  .export-table td {
+    display: table-cell !important;
+    padding: 0.4rem 0.35rem !important;
+    border-bottom: 1px solid var(--separator) !important;
+  }
+
+  .export-table td[data-label]::before {
+    content: none !important;
+    display: none !important;
+  }
+
   .export-table th,
   .export-table td {
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: break-word;
+    word-break: normal;
   }
 
   .export-note {

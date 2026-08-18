@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PHOTO_UNAVAILABLE_HINT } from "./EvidenceImg";
 import "./EvidenceLightbox.css";
 
 export type EvidenceSlide = {
@@ -29,8 +30,15 @@ export function EvidenceLightbox({
     Math.max(0, safeItems.length - 1),
   );
   const [index, setIndex] = useState(initial);
+  const [failed, setFailed] = useState<ReadonlySet<number>>(() => new Set());
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const skipScrollSync = useRef(false);
+
+  useEffect(() => {
+    setFailed(new Set());
+  }, [items]);
 
   const goTo = useCallback(
     (next: number) => {
@@ -60,6 +68,16 @@ export function EvidenceLightbox({
       el.scrollTo({ left: slide.offsetLeft, behavior: "auto" });
     }
   }, [initial, safeItems.length]);
+
+  useEffect(() => {
+    const prev = document.activeElement;
+    restoreFocusRef.current =
+      prev instanceof HTMLElement ? prev : null;
+    closeRef.current?.focus();
+    return () => {
+      restoreFocusRef.current?.focus();
+    };
+  }, []);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -110,6 +128,7 @@ export function EvidenceLightbox({
     >
       <button
         type="button"
+        ref={closeRef}
         className="lightbox-close"
         onClick={onClose}
         aria-label="Close"
@@ -150,12 +169,24 @@ export function EvidenceLightbox({
               className="lightbox-slide"
               aria-hidden={i !== index}
             >
-              <img
-                src={item.src}
-                alt={item.label || `Photo ${i + 1}`}
-                className="lightbox-img"
-                draggable={false}
-              />
+              {failed.has(i) ? (
+                <p className="lightbox-missing">{PHOTO_UNAVAILABLE_HINT}</p>
+              ) : (
+                <img
+                  src={item.src}
+                  alt={item.label || `Photo ${i + 1}`}
+                  className="lightbox-img"
+                  draggable={false}
+                  onError={() =>
+                    setFailed((prev) => {
+                      if (prev.has(i)) return prev;
+                      const next = new Set(prev);
+                      next.add(i);
+                      return next;
+                    })
+                  }
+                />
+              )}
             </div>
           ))}
         </div>

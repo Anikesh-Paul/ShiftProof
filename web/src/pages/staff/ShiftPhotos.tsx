@@ -5,7 +5,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type AnimationEvent,
@@ -16,6 +15,7 @@ import {
   EvidenceLightbox,
   type EvidenceSlide,
 } from "../../components/EvidenceLightbox";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import { FindingChip } from "../../components/FindingChip";
 import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
@@ -27,6 +27,8 @@ import {
   listEvents,
   listTasks,
 } from "../../lib/manager";
+import { displayEvidenceNote } from "../../lib/evidenceNote";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   PHOTO_ACCEPT,
   PHOTO_MAX,
@@ -41,11 +43,10 @@ import {
   listFindingsForShift,
   parseChecklistItems,
   parsePhotoFileIds,
-  parsePhotoSlots,
   pollJobUntilSettled,
   retryShiftScore,
-  serializePhotoSlots,
   setShiftPhotos,
+  SubmitInterruptedError,
   submitShift,
   uploadEvidence,
   validatePhotoFile,
@@ -66,8 +67,18 @@ type LocalPhoto = {
   previewUrl: string;
   uploading: boolean;
   error?: string;
-  itemId: string | null;
 };
+
+function localPhotoId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* insecure context — fall through */
+  }
+  return `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -80,12 +91,10 @@ function findingRank(status: Finding["status"]) {
 }
 
 function isStuck(shift: Shift, job: AgentJob | null): boolean {
-  if (job?.status === "failed") return true;
-  if (shift.status !== "submitted" && shift.status !== "scoring") return false;
-  const raw = shift.submittedAt || shift.startedAt;
-  const then = Date.parse(raw);
-  if (!Number.isFinite(then)) return false;
-  return Date.now() - then > 90_000;
+  // With a job, failure is the job's own status — never an age guess.
+  if (job) return job.status === "failed";
+  // No job on a submitted/scoring shift is stranded — recover immediately.
+  return shift.status === "submitted" || shift.status === "scoring";
 }
 
 export function ShiftPhotos() {
@@ -93,11 +102,12 @@ export function ShiftPhotos() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
-  const targetKeyRef = useRef<string | null>(null);
+  const committedRef = useRef<string[]>([]);
+  const persistTail = useRef(Promise.resolve());
+  const cancelledLocals = useRef(new Set<string>());
 
   const [shift, setShift] = useState<Shift | null>(null);
-  const [slots, setSlots] = useState<Record<string, string>>({});
-  const [extras, setExtras] = useState<string[]>([]);
+  const [fileIds, setFileIds] = useState<string[]>([]);
   const [locals, setLocals] = useState<LocalPhoto[]>([]);
   const [items, setItems] = useState<ChecklistItem[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -110,6 +120,7 @@ export function ShiftPhotos() {
   const [discarding, setDiscarding] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [recheckFindingId, setRecheckFindingId] = useState<string | null>(null);
+  const [recheckToast, setRecheckToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [readyIds, setReadyIds] = useState<Set<string>>(() => new Set());
@@ -183,9 +194,9 @@ export function ShiftPhotos() {
         const parsedItems = checklist ? parseChecklistItems(checklist) : [];
         setShift(row);
         setItems(parsedItems);
-        const parsed = parsePhotoSlots(row.photoFileIds, parsedItems);
-        setSlots(parsed.slots);
-        setExtras(parsed.extras);
+        const pool = parsePhotoFileIds(row.photoFileIds);
+        committedRef.current = pool;
+        setFileIds(pool);
         if (row.status !== "draft") {
           setDone(true);
           try {
@@ -222,7 +233,10 @@ export function ShiftPhotos() {
     if (!shiftId || !shiftStatus) return;
     if (shiftStatus !== "submitted" && shiftStatus !== "scoring") return;
     let cancelled = false;
-    void pollJobUntilSettled(shiftId, { timeoutMs: 180_000 }).then(async () => {
+    void pollJobUntilSettled(shiftId, {
+      timeoutMs: 180_000,
+      isCancelled: () => cancelled,
+    }).then(async () => {
       if (cancelled) return;
       try {
         const [row, scored, job] = await Promise.all([
@@ -252,107 +266,137 @@ export function ShiftPhotos() {
     };
   }, []);
 
-  const persistSlots = useCallback(
-    async (nextSlots: Record<string, string>, nextExtras: string[]) => {
-      if (!shiftId) return;
-      const ids = serializePhotoSlots(items, nextSlots, nextExtras);
-      const updated = await setShiftPhotos(shiftId, ids);
-      setShift(updated);
-      const parsed = parsePhotoSlots(updated.photoFileIds, items);
-      setSlots(parsed.slots);
-      setExtras(parsed.extras);
+  const persistUpdate = useCallback(
+    (updater: (prev: string[]) => string[]) => {
+      const run = async () => {
+        if (!shiftId) return;
+        const prev = committedRef.current;
+        const next = updater(prev);
+        if (prev.join("\0") === next.join("\0")) return;
+        const updated = await setShiftPhotos(shiftId, next);
+        const parsed = parsePhotoFileIds(updated.photoFileIds);
+        committedRef.current = parsed;
+        setShift(updated);
+        setFileIds(parsed);
+      };
+      const p = persistTail.current.then(run, run);
+      persistTail.current = p.then(
+        () => undefined,
+        () => undefined,
+      );
+      return p;
     },
-    [shiftId, items],
+    [shiftId],
   );
 
-  const fileIds = useMemo(
-    () => [...Object.values(slots).filter(Boolean), ...extras],
-    [slots, extras],
-  );
+  const dropLocal = useCallback((localId: string) => {
+    setLocals((prev) => {
+      const target = prev.find((p) => p.localId === localId);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.localId !== localId);
+    });
+  }, []);
+
+  async function commitUploadedFile(localId: string, fileId: string) {
+    if (cancelledLocals.current.has(localId)) {
+      cancelledLocals.current.delete(localId);
+      void deleteEvidenceFile(fileId);
+      return;
+    }
+    let applied = false;
+    await persistUpdate((prev) => {
+      if (cancelledLocals.current.has(localId)) return prev;
+      applied = true;
+      return [...prev, fileId];
+    });
+    if (!applied) {
+      cancelledLocals.current.delete(localId);
+      void deleteEvidenceFile(fileId);
+      return;
+    }
+    dropLocal(localId);
+  }
+
   const totalCount = fileIds.length;
-  const uploading = locals.some((p) => p.uploading);
+  const inFlightCount = locals.filter((p) => p.uploading).length;
+  const uploading = inFlightCount > 0;
   const canSubmit =
     shift?.status === "draft" &&
     !uploading &&
     totalCount >= PHOTO_MIN &&
     totalCount <= PHOTO_MAX &&
     !submitting;
+  const canAddPhoto =
+    shift?.status === "draft" &&
+    totalCount + inFlightCount < PHOTO_MAX &&
+    !uploading &&
+    !submitting;
 
   const progress = Math.min(1, totalCount / PHOTO_MIN);
+  const hint = uploading
+    ? "Uploading…"
+    : totalCount < PHOTO_MIN
+      ? `${totalCount} / ${PHOTO_MIN}`
+      : `${totalCount} photos · min ${PHOTO_MIN}`;
 
   const itemLabel = useCallback(
     (itemId: string) => items.find((i) => i.id === itemId)?.label ?? itemId,
     [items],
   );
 
-  function pickFiles(key: string) {
-    targetKeyRef.current = key;
-    inputRef.current?.click();
-  }
-
   async function addFiles(fileList: FileList | null) {
     if (!fileList?.length || !shiftId || shift?.status !== "draft") return;
-    const key = targetKeyRef.current;
-    targetKeyRef.current = null;
     setError(null);
 
-    const file = fileList[0];
-    if (!file) return;
-    const validation = validatePhotoFile(file);
-    if (validation) {
-      setError(validation);
-      return;
-    }
+    const files = Array.from(fileList);
+    const inFlights = locals.filter((p) => p.uploading).length;
+    const currentTotal = committedRef.current.length + inFlights;
 
-    const itemId = key && key !== "extra" ? key : null;
-    if (!itemId && totalCount >= PHOTO_MAX) {
-      setError(`Maximum ${PHOTO_MAX} photos.`);
-      return;
-    }
-    if (itemId && !slots[itemId] && totalCount >= PHOTO_MAX) {
+    if (currentTotal + files.length > PHOTO_MAX) {
       setError(`Maximum ${PHOTO_MAX} photos.`);
       return;
     }
 
-    const local: LocalPhoto = {
-      localId: crypto.randomUUID(),
+    for (const file of files) {
+      const validation = validatePhotoFile(file);
+      if (validation) {
+        setError(validation);
+        return;
+      }
+    }
+
+    const newLocals: LocalPhoto[] = files.map((file) => ({
+      localId: localPhotoId(),
       file,
       previewUrl: URL.createObjectURL(file),
       uploading: true,
-      itemId,
-    };
-    setLocals((prev) => [...prev, local]);
+    }));
 
-    try {
-      const fileId = await uploadEvidence(file);
-      const nextSlots = { ...slots };
-      let nextExtras = [...extras];
-      if (itemId) {
-        const previous = nextSlots[itemId];
-        nextSlots[itemId] = fileId;
-        if (previous) void deleteEvidenceFile(previous);
-      } else {
-        nextExtras = [...nextExtras, fileId];
+    newLocals.forEach((l) => cancelledLocals.current.delete(l.localId));
+    setLocals((prev) => [...prev, ...newLocals]);
+
+    for (const local of newLocals) {
+      try {
+        const fileId = await uploadEvidence(local.file);
+        await commitUploadedFile(local.localId, fileId);
+      } catch (err) {
+        if (cancelledLocals.current.has(local.localId)) {
+          cancelledLocals.current.delete(local.localId);
+          continue;
+        }
+        setLocals((prev) =>
+          prev.map((p) =>
+            p.localId === local.localId
+              ? {
+                  ...p,
+                  uploading: false,
+                  error: getErrorMessage(err, "Upload failed"),
+                }
+              : p,
+          ),
+        );
+        setError(getErrorMessage(err, "Upload failed"));
       }
-      await persistSlots(nextSlots, nextExtras);
-      setLocals((prev) => {
-        const target = prev.find((p) => p.localId === local.localId);
-        if (target) URL.revokeObjectURL(target.previewUrl);
-        return prev.filter((p) => p.localId !== local.localId);
-      });
-    } catch (err) {
-      setLocals((prev) =>
-        prev.map((p) =>
-          p.localId === local.localId
-            ? {
-                ...p,
-                uploading: false,
-                error: getErrorMessage(err, "Upload failed"),
-              }
-            : p,
-        ),
-      );
-      setError(getErrorMessage(err, "Upload failed"));
     }
   }
 
@@ -367,23 +411,14 @@ export function ShiftPhotos() {
       ),
     );
     try {
+      cancelledLocals.current.delete(item.localId);
       const fileId = await uploadEvidence(item.file);
-      const nextSlots = { ...slots };
-      let nextExtras = [...extras];
-      if (item.itemId) {
-        const previous = nextSlots[item.itemId];
-        nextSlots[item.itemId] = fileId;
-        if (previous) void deleteEvidenceFile(previous);
-      } else {
-        nextExtras = [...nextExtras, fileId];
-      }
-      await persistSlots(nextSlots, nextExtras);
-      setLocals((prev) => {
-        const target = prev.find((p) => p.localId === item.localId);
-        if (target) URL.revokeObjectURL(target.previewUrl);
-        return prev.filter((p) => p.localId !== item.localId);
-      });
+      await commitUploadedFile(item.localId, fileId);
     } catch (err) {
+      if (cancelledLocals.current.has(item.localId)) {
+        cancelledLocals.current.delete(item.localId);
+        return;
+      }
       setLocals((prev) =>
         prev.map((p) =>
           p.localId === item.localId
@@ -399,27 +434,10 @@ export function ShiftPhotos() {
     }
   }
 
-  async function removeSlot(itemId: string) {
-    const fileId = slots[itemId];
-    if (!fileId) return;
+  async function removePhoto(fileId: string) {
     setError(null);
     try {
-      const next = { ...slots };
-      delete next[itemId];
-      await persistSlots(next, extras);
-      void deleteEvidenceFile(fileId);
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not remove photo"));
-    }
-  }
-
-  async function removeExtra(fileId: string) {
-    setError(null);
-    try {
-      await persistSlots(
-        slots,
-        extras.filter((id) => id !== fileId),
-      );
+      await persistUpdate((prev) => prev.filter((id) => id !== fileId));
       void deleteEvidenceFile(fileId);
     } catch (err) {
       setError(getErrorMessage(err, "Could not remove photo"));
@@ -427,11 +445,8 @@ export function ShiftPhotos() {
   }
 
   function removeLocal(localId: string) {
-    setLocals((prev) => {
-      const target = prev.find((p) => p.localId === localId);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((p) => p.localId !== localId);
-    });
+    cancelledLocals.current.add(localId);
+    dropLocal(localId);
   }
 
   async function discardDraft() {
@@ -470,6 +485,25 @@ export function ShiftPhotos() {
         }
       }
     } catch (err) {
+      if (err instanceof SubmitInterruptedError) {
+        setShift(err.shift);
+        setDone(true);
+        setLatestJob(err.job);
+        setError(err.message);
+        return;
+      }
+      if (shiftId) {
+        try {
+          const row = await getShift(shiftId);
+          if (row.status !== "draft") {
+            setShift(row);
+            setDone(true);
+            setLatestJob(await getLatestJob(shiftId).catch(() => null));
+          }
+        } catch {
+          /* keep local draft */
+        }
+      }
       setError(getErrorMessage(err, "Submit failed"));
     } finally {
       setSubmitting(false);
@@ -504,9 +538,10 @@ export function ShiftPhotos() {
     }
     setRecheckFindingId(task.findingId);
     setError(null);
+    setRecheckToast(null);
     try {
       const fileId = await uploadEvidence(file);
-      await attachRecheckAndRescore({
+      const result = await attachRecheckAndRescore({
         taskId: task.$id,
         shiftId: task.shiftId,
         findingId: task.findingId,
@@ -518,6 +553,11 @@ export function ShiftPhotos() {
           t.$id === task.$id ? { ...t, recheckFileId: fileId } : t,
         ),
       );
+      const scored = await listFindingsForShift(task.shiftId).catch(
+        () => null,
+      );
+      if (scored) setFindings(scored);
+      if (result.fallback) setRecheckToast(RECHECK_FALLBACK_TOAST);
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
     } finally {
@@ -564,6 +604,12 @@ export function ShiftPhotos() {
           ? "Scoring"
           : "Submitted";
     const stuck = isStuck(shift, latestJob);
+    const showRetry =
+      Boolean(user) &&
+      (stuck ||
+        (Boolean(error) &&
+          (shift.status === "submitted" || shift.status === "scoring") &&
+          latestJob?.status !== "done"));
     const rejected = latestEventReason(events) === "invalid_evidence";
     const lede = rejected
       ? "Manager rejected this check — submit a real opening."
@@ -577,7 +623,9 @@ export function ShiftPhotos() {
     const nextRecheckFindingId =
       sortedFindings.find((f) => {
         const task = openTasks.find((t) => t.findingId === f.$id);
-        return Boolean(task && !task.recheckFileId);
+        return Boolean(
+          task && (!task.recheckFileId || f.status !== "pass"),
+        );
       })?.$id ?? null;
     const slides: EvidenceSlide[] = savedIds.map((fid, j) => ({
       src: getEvidenceFileUrl(fid),
@@ -591,9 +639,12 @@ export function ShiftPhotos() {
         </Link>
 
         <header className="stack-sm">
-          <div className="shift-header-row">
+          <div
+            className="shift-header-row"
+            data-job-status={latestJob?.status ?? "none"}
+          >
             <h1>{heading}</h1>
-            <StatusChip status={shift.status} />
+            <StatusChip status={shift.status} jobFailed={latestJob?.status === "failed"} />
           </div>
           {lede ? (
             <p
@@ -617,7 +668,13 @@ export function ShiftPhotos() {
           </div>
         ) : null}
 
-        {stuck && user ? (
+        {recheckToast ? (
+          <p className="success-banner" role="status" data-testid="recheck-toast">
+            {recheckToast}
+          </p>
+        ) : null}
+
+        {showRetry ? (
           <Button
             loading={retrying}
             onClick={() => void onRetryScore()}
@@ -637,35 +694,75 @@ export function ShiftPhotos() {
               {sortedFindings.map((f) => {
                 const assigned =
                   openTasks.find((t) => t.findingId === f.$id) ?? null;
+                const note =
+                  f.status === "unclear"
+                    ? displayEvidenceNote(f.evidenceNote)
+                    : null;
                 return (
-                  <li key={f.$id} className="staff-score-row">
+                  <li
+                    key={f.$id}
+                    className="staff-score-row"
+                    data-finding-id={f.$id}
+                  >
                     <FindingChip status={f.status} />
                     <div className="staff-score-copy">
                       <p className="staff-score-label">{itemLabel(f.itemId)}</p>
-                      {assigned && !assigned.recheckFileId ? (
-                        <label
-                          className={
-                            f.$id === nextRecheckFindingId
-                              ? "staff-score-recheck"
-                              : "staff-score-recheck is-quiet"
-                          }
+                      {note ? (
+                        <p
+                          className="staff-score-quote caption"
+                          data-testid="staff-evidence-note"
                         >
-                          {recheckFindingId === f.$id
-                            ? "Uploading…"
-                            : "Re-check photo"}
-                          <input
-                            type="file"
-                            accept={PHOTO_ACCEPT}
-                            className="visually-hidden"
-                            disabled={recheckFindingId === f.$id}
-                            onChange={(e) => {
-                              void onFindingRecheck(assigned, e.target.files);
-                              e.target.value = "";
-                            }}
-                          />
-                        </label>
+                          {note}
+                        </p>
+                      ) : null}
+                      {assigned &&
+                      (!assigned.recheckFileId || f.status !== "pass") ? (
+                        <div className="staff-score-recheck-open">
+                          {assigned.recheckFileId ? (
+                            <span data-testid="recheck-photo">
+                              <EvidenceImg
+                                fileId={assigned.recheckFileId}
+                                alt="Re-check photo"
+                                className="staff-recheck-thumb"
+                              />
+                            </span>
+                          ) : null}
+                          <label
+                            className={
+                              f.$id === nextRecheckFindingId
+                                ? "staff-score-recheck"
+                                : "staff-score-recheck is-quiet"
+                            }
+                          >
+                            {recheckFindingId === f.$id
+                              ? "Scoring re-check…"
+                              : "Re-check photo"}
+                            <input
+                              type="file"
+                              accept={PHOTO_ACCEPT}
+                              className="visually-hidden"
+                              data-testid="staff-recheck-input"
+                              disabled={recheckFindingId === f.$id}
+                              onChange={(e) => {
+                                void onFindingRecheck(assigned, e.target.files);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        </div>
                       ) : assigned?.recheckFileId ? (
-                        <p className="caption">Re-check sent · waiting on manager</p>
+                        <div className="staff-score-recheck-sent">
+                          <p className="caption">
+                            Re-check sent · waiting on manager
+                          </p>
+                          <span data-testid="recheck-photo">
+                            <EvidenceImg
+                              fileId={assigned.recheckFileId}
+                              alt="Re-check photo"
+                              className="staff-recheck-thumb"
+                            />
+                          </span>
+                        </div>
                       ) : null}
                     </div>
                   </li>
@@ -731,9 +828,6 @@ export function ShiftPhotos() {
     );
   }
 
-  const canAddExtra = totalCount < PHOTO_MAX && !uploading;
-  const extraLocals = locals.filter((p) => !p.itemId);
-
   return (
     <div className="app-page stack photos-page">
       <div className="photo-toolbar">
@@ -769,9 +863,7 @@ export function ShiftPhotos() {
               style={{ transform: `scaleX(${progress})` }}
             />
           </div>
-          <p className="photo-hint">
-            {uploading ? "Uploading…" : `${totalCount} / ${PHOTO_MIN}`}
-          </p>
+          <p className="photo-hint">{hint}</p>
         </div>
       </div>
 
@@ -792,6 +884,7 @@ export function ShiftPhotos() {
         type="file"
         accept={PHOTO_ACCEPT}
         capture="environment"
+        multiple
         className="visually-hidden"
         data-testid="staff-evidence-input"
         onChange={(e) => {
@@ -801,102 +894,38 @@ export function ShiftPhotos() {
       />
 
       {items.length > 0 ? (
-        <ol className="item-photo-list">
-          {items.map((item, i) => {
-            const fileId = slots[item.id];
-            const local = locals.find((p) => p.itemId === item.id);
-            const ready = fileId ? readyIds.has(fileId) : true;
-            return (
-              <li key={item.id} className="item-photo-row">
-                <div className="item-photo-copy">
-                  <span className="photo-shot-index" aria-hidden>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="item-photo-label">{item.label}</span>
-                </div>
-                {fileId ? (
-                  <div
-                    className={`item-photo-tile${ready ? "" : " is-loading"}`}
-                  >
-                    <img
-                      ref={bindPhoto(fileId)}
-                      src={getEvidencePreviewUrl(fileId)}
-                      alt={item.label}
-                      className={`photo-img${ready ? " is-ready" : ""}`}
-                      onLoad={() => markReady(fileId)}
-                      onError={(e) =>
-                        onPreviewError(fileId, e.target as HTMLImageElement)
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="photo-remove"
-                      onClick={() => void removeSlot(item.id)}
-                      aria-label={`Remove photo for ${item.label}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : local ? (
-                  <div className="item-photo-tile">
-                    <img src={local.previewUrl} alt="" className="photo-img is-ready" />
-                    {local.uploading ? (
-                      <div className="photo-overlay">
-                        <span className="spinner" />
-                      </div>
-                    ) : null}
-                    {local.error ? (
-                      <div className="photo-overlay photo-error">
-                        <span>{local.error}</span>
-                        <button
-                          type="button"
-                          className="photo-retry"
-                          onClick={() => void retryLocal(local)}
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="photo-remove"
-                      onClick={() => removeLocal(local.localId)}
-                      aria-label="Remove photo"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="item-photo-add"
-                    disabled={!canAddExtra}
-                    onClick={() => pickFiles(item.id)}
-                  >
-                    Add photo
-                  </button>
-                )}
+        <section className="photo-shot-list stack-sm" aria-label="What to cover">
+          <h2 className="photo-shot-heading">What to cover</h2>
+          <ol>
+            {items.map((item, i) => (
+              <li key={item.id} data-testid="cover-item" data-item-id={item.id}>
+                <span className="photo-shot-index" aria-hidden>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span>{item.label}</span>
               </li>
-            );
-          })}
-        </ol>
+            ))}
+          </ol>
+        </section>
       ) : null}
 
-      {extras.length > 0 || extraLocals.length > 0 ? (
-        <section className="stack-sm" aria-label="Other photos">
-          <h2 className="photo-shot-heading">Other photos</h2>
-          <div className="photo-grid">
-            {extras.map((id) => {
+      {fileIds.length > 0 || locals.length > 0 ? (
+        <section className="stack-sm" aria-label="Evidence photos">
+          <div className="photo-grid" data-testid="photo-grid">
+            {fileIds.map((id, i) => {
               const ready = readyIds.has(id);
+              const label = `Evidence ${i + 1}`;
               return (
                 <div
                   key={id}
                   className={`photo-tile${ready ? "" : " is-loading"}`}
+                  data-file-id={id}
+                  data-testid="persisted-photo"
                 >
                   <img
                     ref={bindPhoto(id)}
                     src={getEvidencePreviewUrl(id)}
-                    alt=""
+                    alt={label}
                     className={`photo-img${ready ? " is-ready" : ""}`}
                     onLoad={() => markReady(id)}
                     onError={(e) =>
@@ -906,16 +935,17 @@ export function ShiftPhotos() {
                   <button
                     type="button"
                     className="photo-remove"
-                    onClick={() => void removeExtra(id)}
-                    aria-label="Remove photo"
+                    onClick={() => void removePhoto(id)}
+                    aria-label={`Remove photo ${i + 1}`}
                   >
                     ×
                   </button>
+                  <div className="photo-badge caption">{i + 1}</div>
                 </div>
               );
             })}
-            {extraLocals.map((p) => (
-              <div key={p.localId} className="photo-tile">
+            {locals.map((p) => (
+              <div key={p.localId} className="photo-tile" data-testid="local-photo">
                 <img src={p.previewUrl} alt="" className="photo-img is-ready" />
                 {p.uploading ? (
                   <div className="photo-overlay">
@@ -948,13 +978,14 @@ export function ShiftPhotos() {
         </section>
       ) : null}
 
-      {canAddExtra ? (
+      {canAddPhoto ? (
         <button
           type="button"
           className="text-btn"
-          onClick={() => pickFiles("extra")}
+          data-testid="add-photo-btn"
+          onClick={() => inputRef.current?.click()}
         >
-          Add extra photo
+          Add photos
         </button>
       ) : null}
 

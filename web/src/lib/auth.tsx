@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Models } from "appwrite";
-import { account } from "./appwrite";
+import { account, client } from "./appwrite";
 import { getErrorMessage, isUnauthorized } from "./errors";
 import { rememberStaffName } from "./staffNames";
 import type { RoleLabel } from "../types/shiftproof";
@@ -64,7 +64,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
     try {
-      await account.createEmailPasswordSession({ email, password });
+      try {
+        await account.deleteSession({ sessionId: "current" });
+      } catch {
+        // Guest or expired cookie — createEmailPasswordSession next.
+      }
+      const session = await account.createEmailPasswordSession({
+        email,
+        password,
+      });
+      if (session.secret) {
+        client.setSession(session.secret);
+      }
       const me = await account.get();
       setUser(me);
       rememberStaffName(me.$id, me.name);

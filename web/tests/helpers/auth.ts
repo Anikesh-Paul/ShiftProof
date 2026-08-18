@@ -33,7 +33,13 @@ export async function login(page: Page, email: string, password: string) {
 }
 
 export async function logout(page: Page) {
-  const btn = page.getByRole("button", { name: /log out/i });
+  let btn = page.getByRole("button", { name: /log out/i });
+  if ((await btn.count()) === 0) {
+    const overflow = page.getByTestId("shell-overflow");
+    if ((await overflow.count()) === 0) return;
+    await overflow.click();
+    btn = page.getByRole("button", { name: /log out/i });
+  }
   if ((await btn.count()) === 0) return;
   await btn.click();
   await page.waitForURL(/login/, { timeout: 15_000 });

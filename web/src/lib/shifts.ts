@@ -97,6 +97,73 @@ export async function uploadSopPdf(file: File): Promise<Sop> {
   return row as unknown as Sop;
 }
 
+const EXTRACT_KEEP_PREVIOUS =
+  "The new file was not read. The previous opening check is still in force.";
+
+/**
+ * Extract the live clause set from the SOP file now on record.
+ * Waits on the Function. Writes nothing on the client — the Function
+ * rewrites the Checklist only after a successful extract.
+ */
+export async function extractSopLiveSet(): Promise<ChecklistItem[]> {
+  let execution;
+  try {
+    execution = await functions.createExecution({
+      functionId: APPWRITE_IDS.functions.runShiftScore,
+      body: JSON.stringify({ action: "extract" }),
+      async: false,
+    });
+  } catch {
+    throw new Error(EXTRACT_KEEP_PREVIOUS);
+  }
+  let payload: { ok?: boolean; items?: ChecklistItem[]; error?: string } = {};
+  try {
+    payload = JSON.parse(execution.responseBody || "{}") as {
+      ok?: boolean;
+      items?: ChecklistItem[];
+      error?: string;
+    };
+  } catch {
+    payload = {};
+  }
+  const failed =
+    execution.status === "failed" ||
+    execution.responseStatusCode >= 400 ||
+    payload.ok === false;
+  if (failed) {
+    throw new Error(EXTRACT_KEEP_PREVIOUS);
+  }
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
+/**
+ * Score one Re-check photo against that Task’s Finding (sync wait).
+ * Function writes the Finding. Client must persist task.recheckFileId first.
+ */
+export async function runRecheckScore(taskId: string): Promise<void> {
+  const execution = await functions.createExecution({
+    functionId: APPWRITE_IDS.functions.runShiftScore,
+    body: JSON.stringify({ action: "recheck", taskId }),
+    async: false,
+  });
+  let payload: { ok?: boolean; error?: string } = {};
+  try {
+    payload = JSON.parse(execution.responseBody || "{}") as {
+      ok?: boolean;
+      error?: string;
+    };
+  } catch {
+    payload = {};
+  }
+  const failed =
+    execution.status === "failed" ||
+    execution.responseStatusCode >= 400 ||
+    payload.ok === false;
+  if (failed) {
+    throw new Error(payload.error || "Re-check score did not run");
+  }
+}
+
 /** View/download URL for an SOP PDF in `sop_files`. */
 export function getSopFileUrl(fileId: string): string {
   return storage.getFileView({
@@ -114,13 +181,27 @@ export function parseChecklistItems(checklist: Checklist): ChecklistItem[] {
   }
 }
 
+let checklistItemCache: ChecklistItem[] = [];
+
+export function peekChecklistItems(): ChecklistItem[] {
+  return checklistItemCache;
+}
+
+export async function loadChecklistItems(): Promise<ChecklistItem[]> {
+  const checklist = await getChecklist();
+  const items = parseChecklistItems(checklist);
+  checklistItemCache = items;
+  return items;
+}
+
 export function parsePhotoFileIds(photoFileIds?: string): string[] {
   if (!photoFileIds) return [];
   try {
     const parsed = JSON.parse(photoFileIds) as unknown;
     return Array.isArray(parsed)
       ? parsed.filter(
-          (id): id is string => typeof id === "string" && id.length > 0,
+          (id): id is string =>
+            typeof id === "string" && id.trim().length > 0 && id.trim() !== "—",
         )
       : [];
   } catch {
@@ -375,9 +456,28 @@ export async function triggerRunShiftScore(
   }
 }
 
+/** Shift row is submitted but the Agent job / audit event never landed. */
+export class SubmitInterruptedError extends Error {
+  readonly shift: Shift;
+  readonly job: AgentJob | null;
+  constructor(shift: Shift, job: AgentJob | null) {
+    super("Scoring did not start. Try again.");
+    this.name = "SubmitInterruptedError";
+    this.shift = shift;
+    this.job = job;
+  }
+}
+
+function isLiveJob(job: AgentJob | null): job is AgentJob {
+  return job != null && (job.status === "waiting" || job.status === "running");
+}
+
 /**
  * Submit shift: status submitted → agent_jobs waiting → events shift.submitted
  * → best-effort runShiftScore (C3).
+ *
+ * If job/event creation fails after the Shift update, throws
+ * SubmitInterruptedError so Retry can finish the job instead of stranding.
  */
 export async function submitShift(
   shiftId: string,
@@ -398,36 +498,46 @@ export async function submitShift(
       submittedAt: new Date().toISOString(),
     } as RowData,
   });
+  const submitted = shiftRow as unknown as Shift;
 
-  // API.md §3 — agent_jobs waiting
-  const jobRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.agent_jobs,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      status: "waiting",
-      startedAt: null,
-      errorMessage: null,
-      finishedAt: null,
-      traceJson: null,
-    } as RowData,
-  });
+  let job: AgentJob | null = null;
+  let eventRow: unknown;
+  try {
+    // API.md §3 — agent_jobs waiting
+    const jobRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        status: "waiting",
+        startedAt: null,
+        errorMessage: null,
+        finishedAt: null,
+        traceJson: null,
+      } as RowData,
+    });
+    job = jobRow as unknown as AgentJob;
 
-  const eventRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.events,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      type: "shift.submitted",
-      actorUserId: userId,
-      payloadJson: JSON.stringify({ photoCount }),
-      createdAt: new Date().toISOString(),
-    } as RowData,
-  });
+    eventRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.events,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        type: "shift.submitted",
+        actorUserId: userId,
+        payloadJson: JSON.stringify({ photoCount }),
+        createdAt: new Date().toISOString(),
+      } as RowData,
+    });
+  } catch {
+    throw new SubmitInterruptedError(submitted, job);
+  }
+  if (!job || !eventRow) {
+    throw new SubmitInterruptedError(submitted, job);
+  }
 
-  const job = jobRow as unknown as AgentJob;
   // Prefer cloud Function only (Gemini). No silent client stub (ADR 0002 / S1).
   // Explicit emergency: Function env ALLOW_DEMO_STUB_SCORES=1 — not the client.
   const scoreTrigger = await triggerRunShiftScore(shiftId, job.$id);
@@ -458,7 +568,7 @@ export async function submitShift(
   };
 }
 
-/** API.md §4 retry — new waiting job + runShiftScore. Leaves the old job in place. */
+/** API.md §4 retry — ensure a live job + runShiftScore. Leaves any old job in place. */
 export async function retryShiftScore(
   shiftId: string,
   userId: string,
@@ -467,19 +577,26 @@ export async function retryShiftScore(
   job: AgentJob;
   scoreTrigger: { triggered: boolean; error?: string };
 }> {
-  const jobRow = await tables.createRow({
-    databaseId: DB,
-    tableId: T.agent_jobs,
-    rowId: ID.unique(),
-    data: {
-      shiftId,
-      status: "waiting",
-      startedAt: null,
-      errorMessage: null,
-      finishedAt: null,
-      traceJson: null,
-    } as RowData,
-  });
+  const existing = await getLatestJob(shiftId);
+  let job: AgentJob;
+  if (isLiveJob(existing)) {
+    job = existing;
+  } else {
+    const jobRow = await tables.createRow({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      rowId: ID.unique(),
+      data: {
+        shiftId,
+        status: "waiting",
+        startedAt: null,
+        errorMessage: null,
+        finishedAt: null,
+        traceJson: null,
+      } as RowData,
+    });
+    job = jobRow as unknown as AgentJob;
+  }
 
   try {
     await tables.createRow({
@@ -490,7 +607,7 @@ export async function retryShiftScore(
         shiftId,
         type: "job.retry",
         actorUserId: userId,
-        payloadJson: JSON.stringify({ jobId: jobRow.$id }),
+        payloadJson: JSON.stringify({ jobId: job.$id }),
         createdAt: new Date().toISOString(),
       } as RowData,
     });
@@ -498,7 +615,6 @@ export async function retryShiftScore(
     /* event is best-effort */
   }
 
-  const job = jobRow as unknown as AgentJob;
   const scoreTrigger = await triggerRunShiftScore(shiftId, job.$id);
   let shift = await getShift(shiftId);
   return {
@@ -523,17 +639,24 @@ export async function getLatestJob(shiftId: string): Promise<AgentJob | null> {
   return sorted[0] ?? null;
 }
 
-/** Poll until job done/failed or timeout (ms). */
+/** Poll until job done/failed, timeout (ms), or `isCancelled` reports true. */
 export async function pollJobUntilSettled(
   shiftId: string,
-  opts?: { timeoutMs?: number; intervalMs?: number },
+  opts?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    isCancelled?: () => boolean;
+  },
 ): Promise<AgentJob | null> {
   const timeoutMs = opts?.timeoutMs ?? 180_000;
   const intervalMs = opts?.intervalMs ?? 2_000;
+  const isCancelled = opts?.isCancelled ?? (() => false);
   const start = Date.now();
   let last: AgentJob | null = null;
   while (Date.now() - start < timeoutMs) {
+    if (isCancelled()) return last;
     last = await getLatestJob(shiftId);
+    if (isCancelled()) return last;
     if (last && (last.status === "done" || last.status === "failed")) {
       return last;
     }

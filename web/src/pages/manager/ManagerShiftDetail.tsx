@@ -5,6 +5,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,45 +13,62 @@ import {
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { useSheetChromeInert } from "../../lib/sheetChrome";
 import { EvidenceImg } from "../../components/EvidenceImg";
 import {
   EvidenceLightbox,
   type EvidenceSlide,
 } from "../../components/EvidenceLightbox";
 import { FindingChip } from "../../components/FindingChip";
-import { StatusChip } from "../../components/StatusChip";
 import { useAuth } from "../../lib/auth";
-import { formatEventType } from "../../lib/events";
+import { confidenceBand } from "../../lib/confidence";
+import { formatEventType, formatFindingSource } from "../../lib/events";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
 import {
   applyLocalOverride,
   assignFixTask,
   attachRecheckAndRescore,
+  citationForFinding,
   closeShift,
   DEMO_AGENT_TRACE,
+  formatManagerWhen,
   getAgentJobTrace,
   hasForcedCitation,
   isStuckScoring,
   itemLabel,
   listEvents,
   listTasks,
+  loadManagerInbox,
   loadManagerShift,
   markTaskDone,
+  mergeTasksById,
   overrideFinding,
+  isHarnessName,
+  openFixTitle,
+  shortItemLabel,
+  subscribeManagerTables,
   sweepStaleJobs,
   type ManagerShiftSummary,
 } from "../../lib/manager";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
-  getChecklist,
   getEvidenceFileUrl,
-  parseChecklistItems,
+  getSite,
+  loadChecklistItems,
+  peekChecklistItems,
   parsePhotoFileIds,
   photoForItem,
   retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
-import { resolveStaffLabel } from "../../lib/staffNames";
+import {
+  CLUSTER_SIBLING_CAP,
+  clusterRemainderCopy,
+  todayClusterForShift,
+  type ClusterRemainder,
+} from "../../lib/inboxCluster";
+import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type {
   AuditEvent,
   ChecklistItem,
@@ -77,7 +95,12 @@ export function ManagerShiftDetail() {
   const { shiftId = "" } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const setChromeInert = useSheetChromeInert();
   const listRef = useRef<HTMLUListElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDetailsElement>(null);
+  const stickyRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [item, setItem] = useState<ManagerShiftSummary | null>(null);
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -100,6 +123,14 @@ export function ManagerShiftDetail() {
   const [overrideTo, setOverrideTo] = useState<FindingStatus>("pass");
   const [toast, setToast] = useState<string | null>(null);
   const [recheckTaskId, setRecheckTaskId] = useState<string | null>(null);
+  const [missingPhotos, setMissingPhotos] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [clusterState, setClusterState] = useState<{
+    shiftId: string;
+    remainder: ClusterRemainder | null;
+  } | null>(null);
+  const [siblingsShowAll, setSiblingsShowAll] = useState(false);
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -178,16 +209,17 @@ export function ManagerShiftDetail() {
         listEvents(id),
         getAgentJobTrace(id).catch(() => null),
       ]);
-      setTasks(t);
+      setTasks((prev) => mergeTasksById(t, prev));
       setEvents(e);
-      setAgentTrace(trace ?? DEMO_AGENT_TRACE);
+      setAgentTrace(trace);
     } catch {
-      // Non-blocking for scoreboard
+      // Non-blocking for the findings table
     }
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setTasks([]);
     (async () => {
       try {
         const result = await loadManagerShift(shiftId);
@@ -198,22 +230,26 @@ export function ManagerShiftDetail() {
           setLoading(false);
           return;
         }
-        // Paint scoreboard first — extras (trace/tasks/events) fill in after
+        // Paint scoreboard first — extras (trace/tasks/events) fill in after.
+        // Inbox already warmed the checklist cache so citations match on first paint.
         setItem(result.item);
         setSource(result.source);
+        setChecklistItems(peekChecklistItems());
         if (result.source === "live" && user && result.item.latestJob) {
           void sweepStaleJobs([result.item], user.$id).then(() => {
             if (!cancelled) setItem({ ...result.item });
           });
         }
-        const stuck =
-          isStuckScoring(result.item.shift) ||
-          result.item.shift.status === "submitted" ||
-          result.item.shift.status === "scoring";
-        setTraceOpen(stuck);
-        void getChecklist()
-          .then((c) => setChecklistItems(parseChecklistItems(c)))
-          .catch(() => setChecklistItems([]));
+        setTraceOpen(false);
+        void loadChecklistItems()
+          .then((items) => {
+            if (!cancelled) setChecklistItems(items);
+          })
+          .catch(() => {
+            if (!cancelled && peekChecklistItems().length === 0) {
+              setChecklistItems([]);
+            }
+          });
         // If every finding is Pass (e.g. golden after overrides), default to Show all
         // so managers / demo path can still select rows without an empty board.
         const openGaps = result.item.findings.filter(
@@ -228,7 +264,7 @@ export function ManagerShiftDetail() {
         void loadExtras(result.item.shift.$id, result.source === "demo");
       } catch (err) {
         if (!cancelled) {
-          setError(getErrorMessage(err, "Could not load scoreboard"));
+          setError(getErrorMessage(err, "Could not load this opening"));
           setLoading(false);
         }
       }
@@ -238,10 +274,147 @@ export function ManagerShiftDetail() {
     };
   }, [shiftId, loadExtras, user]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setSiblingsShowAll(false);
+    if (!shiftId) return;
+    void (async () => {
+      try {
+        const [inbox, site] = await Promise.all([
+          loadManagerInbox(),
+          getSite().catch(() => null),
+        ]);
+        if (cancelled) return;
+        const tz = site?.timezone || "Asia/Kolkata";
+        const cluster = todayClusterForShift(inbox.items, shiftId, tz);
+        setClusterState({
+          shiftId,
+          remainder: cluster ? clusterRemainderCopy(cluster, shiftId) : null,
+        });
+      } catch {
+        if (!cancelled) setClusterState({ shiftId, remainder: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shiftId]);
+
+  useEffect(() => {
+    if (source !== "live" || !shiftId) return;
+    let cancelled = false;
+    const unsub = subscribeManagerTables(() => {
+      void (async () => {
+        try {
+          const result = await loadManagerShift(shiftId);
+          if (cancelled || !result) return;
+          setItem(result.item);
+          setSource(result.source);
+          void loadExtras(result.item.shift.$id, result.source === "demo");
+        } catch {
+          /* keep the painted summary */
+        }
+      })();
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [source, shiftId, loadExtras]);
+
   const selected = useMemo(
     () => item?.findings.find((f) => f.$id === selectedId) ?? null,
     [item, selectedId],
   );
+  const formOpen = Boolean(selected) && mode !== "idle";
+
+  useEffect(() => {
+    setChromeInert(formOpen);
+    return () => setChromeInert(false);
+  }, [formOpen, setChromeInert]);
+
+  useLayoutEffect(() => {
+    const root = detailRef.current;
+    if (!formOpen) {
+      root?.style.removeProperty("--sticky-sheet-height");
+      return;
+    }
+    const sheet = stickyRef.current;
+    if (!sheet || !root) return;
+    const apply = () => {
+      root.style.setProperty("--sticky-sheet-height", `${sheet.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(sheet);
+    return () => ro.disconnect();
+  }, [formOpen, mode]);
+
+  useEffect(() => {
+    if (!formOpen) return;
+    closeOverflow();
+    const sheet = stickyRef.current;
+    const findingId = selectedId;
+    if (!sheet || !findingId) return;
+
+    const keepFindingVisible = () => {
+      scrollFindingAboveSheet(listRef.current, findingId, sheet);
+    };
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled) return;
+      keepFindingVisible();
+      window.requestAnimationFrame(() => {
+        if (!cancelled) keepFindingVisible();
+      });
+    });
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", keepFindingVisible);
+    vv?.addEventListener("scroll", keepFindingVisible);
+
+    if (!sheet.contains(document.activeElement)) {
+      sheet.focus({ preventScroll: true });
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSheet();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const nodes = sheetFocusables(sheet);
+      if (nodes.length === 0) {
+        e.preventDefault();
+        sheet.focus({ preventScroll: true });
+        return;
+      }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === sheet)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKey);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      vv?.removeEventListener("resize", keepFindingVisible);
+      vv?.removeEventListener("scroll", keepFindingVisible);
+      document.removeEventListener("keydown", onKey);
+      const back = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (back && document.contains(back)) {
+        back.focus({ preventScroll: true });
+      }
+    };
+  }, [formOpen, selectedId, mode]);
 
   const visibleFindings = useMemo(() => {
     if (!item) return [];
@@ -265,22 +438,82 @@ export function ManagerShiftDetail() {
   );
 
   const citationGaps = useMemo(
-    () => (item?.findings ?? []).filter((f) => !hasForcedCitation(f)),
-    [item],
+    () =>
+      (item?.findings ?? []).filter((f) => !hasForcedCitation(f, checklistItems)),
+    [item, checklistItems],
   );
+
+  const onPhotoMissing = useCallback((fileId: string, missing: boolean) => {
+    if (!missing) return;
+    setMissingPhotos((prev) => {
+      if (prev.has(fileId)) return prev;
+      const next = new Set(prev);
+      next.add(fileId);
+      return next;
+    });
+  }, []);
+
+  function openEvidence(fileId: string, startIndex: number) {
+    if (!item || missingPhotos.has(fileId)) return;
+    const ids = parsePhotoFileIds(item.shift.photoFileIds);
+    setLightbox({
+      items: ids.map((fid, j) => ({
+        src: getEvidenceFileUrl(fid),
+        label: `Evidence ${j + 1}`,
+      })),
+      startIndex: startIndex >= 0 ? startIndex : 0,
+    });
+  }
+
+  function closeOverflow() {
+    const el = overflowRef.current;
+    if (el?.open) el.open = false;
+  }
 
   function selectFinding(f: Finding) {
     setSelectedId(f.$id);
-    setMode("idle");
     setReason("");
     setToast(null);
     setError(null);
-    window.requestAnimationFrame(() => {
-      const row = listRef.current?.querySelector(
-        `[data-finding-id="${f.$id}"]`,
+  }
+
+  function startOverride(f: Finding) {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    closeOverflow();
+    selectFinding(f);
+    setOverrideTo(f.status === "pass" ? "gap" : "pass");
+    setMode("override");
+  }
+
+  function startAssign(f: Finding) {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    closeOverflow();
+    selectFinding(f);
+    setMode(f.status === "unclear" ? "retake" : "assign");
+  }
+
+  function closeSheet() {
+    setMode("idle");
+    setReason("");
+    setError(null);
+  }
+
+  function focusTask(findingId: string) {
+    setMode("idle");
+    setSelectedId(null);
+    requestAnimationFrame(() => {
+      const row = document.querySelector(
+        `[data-testid="fix-row"][data-finding-id="${findingId}"]`,
       );
       if (row instanceof HTMLElement) {
         row.scrollIntoView({ block: "center", behavior: "smooth" });
+        row.focus();
       }
     });
   }
@@ -350,14 +583,90 @@ export function ManagerShiftDetail() {
     }
   }
 
+  async function requestMissingPhotos() {
+    if (!item || !user) return;
+    const pending = item.findings.filter(
+      (f) =>
+        f.status === "unclear" && !openTasks.some((t) => t.findingId === f.$id),
+    );
+    if (pending.length === 0) return;
+    setError(null);
+    setSaving(true);
+    const assignedTo = item.shift.createdBy;
+    const staff = displayStaffName(resolveStaffLabel(assignedTo));
+    const created: Task[] = [];
+    try {
+      if (source === "demo" || item.shift.$id.startsWith("demo_shift_")) {
+        const now = new Date().toISOString();
+        for (const finding of pending) {
+          created.push({
+            $id: `local_task_${Date.now()}_${finding.$id}`,
+            $createdAt: now,
+            $updatedAt: now,
+            shiftId: item.shift.$id,
+            findingId: finding.$id,
+            title: `Retake: ${glanceLabel(finding.itemId)}`,
+            status: "open",
+            assignedTo,
+            createdBy: user.$id,
+            createdAt: now,
+          });
+        }
+        setTasks((prev) => mergeTasksById(created, prev));
+        setToast(
+          created.length === 1
+            ? `Requested photos from ${staff} (sample).`
+            : `Requested ${created.length} photos from ${staff} (sample).`,
+        );
+      } else {
+        const settled = await Promise.allSettled(
+          pending.map((finding) =>
+            assignFixTask({
+              shiftId: item.shift.$id,
+              findingId: finding.$id,
+              title: `Retake: ${glanceLabel(finding.itemId)}`,
+              userId: user.$id,
+              assignedTo,
+            }),
+          ),
+        );
+        let firstError: unknown = null;
+        for (const result of settled) {
+          if (result.status === "fulfilled") created.push(result.value);
+          else if (!firstError) firstError = result.reason;
+        }
+        if (created.length) {
+          await loadExtras(item.shift.$id, false);
+          setTasks((prev) => mergeTasksById(created, prev));
+          setToast(
+            created.length === 1
+              ? `Requested photos from ${staff}.`
+              : `Requested ${created.length} photos from ${staff}.`,
+          );
+        }
+        if (firstError && created.length === 0) throw firstError;
+        if (firstError) {
+          setError(getErrorMessage(firstError, "Could not request photos"));
+        }
+      }
+    } catch (err) {
+      if (created.length) {
+        setTasks((prev) => mergeTasksById(created, prev));
+      }
+      setError(getErrorMessage(err, "Could not request photos"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function runAssign(kind: "fix" | "retake" = "fix") {
     if (!item || !selected || !user) return;
     setError(null);
     setSaving(true);
     const title =
       kind === "retake"
-        ? `Retake: ${itemLabel(selected.itemId)}`
-        : `Fix: ${itemLabel(selected.itemId)}`;
+        ? `Retake: ${glanceLabel(selected.itemId)}`
+        : `Fix: ${glanceLabel(selected.itemId)}`;
     const assignedTo = item.shift.createdBy;
     try {
       if (source === "demo") {
@@ -373,7 +682,7 @@ export function ManagerShiftDetail() {
           createdBy: user.$id,
           createdAt: new Date().toISOString(),
         };
-        setTasks((prev) => [localTask, ...prev]);
+        setTasks((prev) => mergeTasksById([localTask], prev));
         setEvents((prev) => [
           {
             $id: `local_ev_${Date.now()}`,
@@ -393,7 +702,7 @@ export function ManagerShiftDetail() {
           ...prev,
         ]);
         setToast(
-          `Task assigned to ${resolveStaffLabel(assignedTo)} (sample): ${title}`,
+          `Task assigned to ${displayStaffName(resolveStaffLabel(assignedTo))} (sample): ${title}`,
         );
       } else {
         const created = await assignFixTask({
@@ -403,14 +712,11 @@ export function ManagerShiftDetail() {
           userId: user.$id,
           assignedTo,
         });
-        // Reload extras, then ensure created task stays visible if listTasks lags
+        // Reload extras, then merge so a stale/silent refetch cannot drop it
         await loadExtras(item.shift.$id, false);
-        setTasks((prev) => {
-          if (prev.some((t) => t.$id === created.$id)) return prev;
-          return [created, ...prev];
-        });
+        setTasks((prev) => mergeTasksById([created], prev));
         setToast(
-          `Task assigned to ${resolveStaffLabel(assignedTo)}: ${title}`,
+          `Task assigned to ${displayStaffName(resolveStaffLabel(assignedTo))}: ${title}`,
         );
       }
       setMode("idle");
@@ -449,6 +755,8 @@ export function ManagerShiftDetail() {
 
   async function runClose() {
     if (!item || !user) return;
+    const ok = window.confirm("Close this opening? It leaves the inbox.");
+    if (!ok) return;
     setError(null);
     setSaving(true);
     try {
@@ -537,7 +845,7 @@ export function ManagerShiftDetail() {
 
   /**
    * Manager can also attach re-check (backup). Primary path is staff upload.
-   * Re-check re-scores the finding; task stays open until Mark done.
+   * Live path scores via the Function; sample rows stay Attestation.
    */
   async function onRecheckFile(taskId: string, fileList: FileList | null) {
     if (!fileList?.[0] || !item || !user) return;
@@ -547,17 +855,19 @@ export function ManagerShiftDetail() {
     setRecheckTaskId(taskId);
     try {
       if (source === "demo" || taskId.startsWith("local_")) {
+        // Local demo: staff Attestation — not a fake AI score. Override fields stay.
+        const attestedAt = new Date().toISOString();
+        const recheckFileId = `demo_recheck_${Date.now()}`;
         setTasks((prev) =>
           prev.map((t) =>
             t.$id === taskId
               ? {
                   ...t,
-                  recheckFileId: `demo_recheck_${Date.now()}`,
+                  recheckFileId,
                 }
               : t,
           ),
         );
-        // Local demo: flip matching finding to pass after re-check
         setItem((prev) => {
           if (!prev) return prev;
           const findings = prev.findings.map((f) =>
@@ -565,10 +875,8 @@ export function ManagerShiftDetail() {
               ? {
                   ...f,
                   status: "pass" as const,
-                  confidence: 0.91,
-                  evidenceNote: "Re-check photo confirms compliance after fix.",
-                  source: "ai" as const,
-                  overrideReason: undefined,
+                  evidenceNote: `Staff attested after fix. Re-check photo ${recheckFileId} is the basis.`,
+                  source: "staff_recheck" as const,
                 }
               : f,
           );
@@ -584,33 +892,35 @@ export function ManagerShiftDetail() {
         setEvents((prev) => [
           {
             $id: `local_ev_recheck_${Date.now()}`,
-            $createdAt: new Date().toISOString(),
-            $updatedAt: new Date().toISOString(),
+            $createdAt: attestedAt,
+            $updatedAt: attestedAt,
             shiftId: item.shift.$id,
             type: "task.recheck",
             actorUserId: user.$id,
             payloadJson: JSON.stringify({ taskId, findingId: task.findingId }),
-            createdAt: new Date().toISOString(),
+            createdAt: attestedAt,
           },
           {
-            $id: `local_ev_rescore_${Date.now()}`,
-            $createdAt: new Date().toISOString(),
-            $updatedAt: new Date().toISOString(),
+            $id: `local_ev_attest_${Date.now()}`,
+            $createdAt: attestedAt,
+            $updatedAt: attestedAt,
             shiftId: item.shift.$id,
-            type: "finding.rescored",
+            type: "finding.attested",
             actorUserId: user.$id,
             payloadJson: JSON.stringify({
               findingId: task.findingId,
               status: "pass",
+              attestedBy: user.$id,
+              attestedAt,
             }),
-            createdAt: new Date().toISOString(),
+            createdAt: attestedAt,
           },
           ...prev,
         ]);
-        setToast("Re-check attached (sample). AI re-scored Pass — mark done when ready.");
+        setToast("Re-check attached (sample). Staff attested — mark done when ready.");
       } else {
         const fileId = await uploadEvidence(fileList[0]);
-        await attachRecheckAndRescore({
+        const result = await attachRecheckAndRescore({
           taskId,
           shiftId: item.shift.$id,
           findingId: task.findingId,
@@ -623,7 +933,11 @@ export function ManagerShiftDetail() {
           setSource(refreshed.source);
         }
         await loadExtras(item.shift.$id, false);
-        setToast("Re-check saved. Finding re-scored — mark done when ready.");
+        setToast(
+          result.fallback
+            ? RECHECK_FALLBACK_TOAST
+            : "Re-check scored — mark done when ready.",
+        );
       }
     } catch (err) {
       setError(getErrorMessage(err, "Could not attach re-check photo"));
@@ -640,7 +954,7 @@ export function ManagerShiftDetail() {
         <div className="skeleton-card" style={{ minHeight: "8rem" }} />
         {loadingSlow ? (
           <p className="loading-slow-hint" role="status">
-            Still loading scoreboard…
+            Still loading this opening…
           </p>
         ) : null}
       </div>
@@ -660,80 +974,171 @@ export function ManagerShiftDetail() {
     );
   }
 
+  const remainder =
+    clusterState?.shiftId === shiftId ? clusterState.remainder : null;
+  const clusterReady = clusterState?.shiftId === shiftId;
+
   const openCount = item.gapCount + item.unclearCount;
   const evidenceIds = parsePhotoFileIds(item.shift.photoFileIds);
-  const evidenceSlides: EvidenceSlide[] = evidenceIds.map((fid, j) => ({
-    src: getEvidenceFileUrl(fid),
-    label: `Evidence ${j + 1}`,
-  }));
+  const hasShiftPhotos = evidenceIds.length > 0;
+  const missingPhotoUnclear = unclearFindings.filter(
+    (f) => !openTasks.some((t) => t.findingId === f.$id),
+  );
+  const showRequestPhotos = !hasShiftPhotos && missingPhotoUnclear.length > 0;
+  const stuck = isStuckScoring(item.shift, item.latestJob);
+  const jobFailed = item.latestJob?.status === "failed";
+  const hasFindings = item.findings.length > 0;
+  const failureDetail = scoringFailureDetail(item.latestJob);
+  const tallyParts = [
+    item.gapCount > 0 ? { n: item.gapCount, label: "Gap" } : null,
+    item.unclearCount > 0 ? { n: item.unclearCount, label: "Unclear" } : null,
+    item.passCount > 0 ? { n: item.passCount, label: "Pass" } : null,
+  ].filter((p): p is { n: number; label: string } => p !== null);
 
   return (
-    <div className={`manager-detail ${selected ? "has-sticky" : ""}`}>
-      <div className="app-page stack manager-detail-page staff-settle-in">
+    <div
+      ref={detailRef}
+      className={`manager-detail ${formOpen ? "has-sticky" : ""}`}
+    >
+      <div
+        className="app-page stack manager-detail-page"
+        inert={formOpen ? true : undefined}
+      >
         <div className="manager-detail-nav">
           <Link to="/manager" className="back-link">
             ← Inbox
           </Link>
-          <div className="manager-detail-nav-actions">
-            {item.findings.length > 0 ? (
-              <Link
-                to={`/manager/shifts/${item.shift.$id}/export`}
-                className="text-btn is-accent export-link"
+          {item.findings.length > 0 || item.shift.status !== "closed" ? (
+            <details ref={overflowRef} className="scoreboard-overflow">
+              <summary
+                className="text-btn scoreboard-overflow-trigger"
+                data-testid="scoreboard-overflow"
               >
-                Export pack
-              </Link>
-            ) : null}
-            {item.shift.status !== "closed" ? (
-              <>
-                <Button
-                  variant="quiet"
-                  className="close-opening-btn"
-                  data-testid="reject-check-btn"
-                  disabled={saving}
-                  onClick={() => void runReject()}
-                >
-                  Reject check
-                </Button>
-                <Button
-                  variant="quiet"
-                  className="close-opening-btn"
-                  disabled={saving}
-                  onClick={() => void runClose()}
-                >
-                  Close opening
-                </Button>
-              </>
-            ) : null}
-          </div>
+                More
+              </summary>
+              <div className="scoreboard-overflow-menu">
+                {item.findings.length > 0 ? (
+                  <Link
+                    to={`/manager/shifts/${item.shift.$id}/export`}
+                    className="scoreboard-overflow-item"
+                  >
+                    Export pack
+                  </Link>
+                ) : null}
+                {item.shift.status !== "closed" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="scoreboard-overflow-item"
+                      data-testid="reject-check-btn"
+                      disabled={saving}
+                      onClick={() => void runReject()}
+                    >
+                      Reject check
+                    </button>
+                    <button
+                      type="button"
+                      className="scoreboard-overflow-item"
+                      disabled={saving}
+                      onClick={() => void runClose()}
+                    >
+                      Close opening
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
         </div>
 
-        <header className="stack-sm">
-          <div className="manager-detail-meta">
-            <StatusChip
-              status={item.shift.status}
-              jobFailed={item.latestJob?.status === "failed"}
-            />
-            <span className="caption">
-              {formatWhen(item.shift.submittedAt || item.shift.startedAt)}
-            </span>
-          </div>
-          <h1>Scoreboard</h1>
-          <p className="muted">
-            {item.staffLabel}
-            {source === "demo" ? " · sample data" : ""}
-            {item.shift.status === "closed" ? " · closed" : ""}
-          </p>
+        <header
+          className="stack-sm"
+          data-cluster-ready={clusterReady ? "true" : "false"}
+        >
+          <h1>{scoreboardHeading(item)}</h1>
+          {source === "demo" ? (
+            <p className="caption muted">Sample data</p>
+          ) : null}
+          {!stuck ? (
+            <p
+              className="muted"
+              data-testid="shift-status"
+              data-status={shiftStatusCode(item)}
+            >
+              {shiftStatusSentence(item)}
+            </p>
+          ) : null}
+          {remainder ? (
+            <div className="cluster-remainder">
+              <p
+                className="muted"
+                data-testid="cluster-remainder"
+                role="status"
+              >
+                {remainder.line}
+              </p>
+              <details
+                key={shiftId}
+                className="cluster-siblings"
+                data-testid="cluster-siblings"
+                onToggle={(e) => {
+                  if (!e.currentTarget.open) setSiblingsShowAll(false);
+                }}
+              >
+                <summary className="text-btn cluster-siblings-trigger">
+                  {remainder.action}
+                </summary>
+                <ul className="cluster-sibling-list">
+                  {(siblingsShowAll
+                    ? remainder.siblings
+                    : remainder.siblings.slice(0, CLUSTER_SIBLING_CAP)
+                  ).map((row) => {
+                    const when = formatManagerWhen(
+                      row.shift.submittedAt || row.shift.startedAt,
+                    );
+                    return (
+                      <li key={row.shift.$id}>
+                        <Link
+                          to={`/manager/shifts/${row.shift.$id}`}
+                          className="cluster-sibling-link"
+                        >
+                          {displayStaffName(row.staffLabel)}
+                          {when ? ` · ${when}` : ""}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {remainder.siblings.length > CLUSTER_SIBLING_CAP ? (
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={() => setSiblingsShowAll((v) => !v)}
+                  >
+                    {siblingsShowAll ? "Show fewer" : "Show all"}
+                  </button>
+                ) : null}
+              </details>
+            </div>
+          ) : null}
         </header>
 
-        {isStuckScoring(item.shift) ? (
-          <div className="manager-stuck-banner" role="status">
-            <div>
-              <p className="manager-stuck-title">Scoring is stuck</p>
-              <p className="caption muted">
-                This job has been running too long. Retry it, or close the
-                opening if you are done reviewing.
-              </p>
-            </div>
+        {stuck ? (
+          <div
+            className="manager-stuck-banner"
+            role="status"
+            data-testid="stuck-banner"
+          >
+            <p
+              className="manager-stuck-title"
+              data-testid="shift-status"
+              data-status={jobFailed ? "failed" : "stuck"}
+            >
+              {shiftStatusSentence(item)}
+            </p>
+            {failureDetail ? (
+              <p className="caption muted">{failureDetail}</p>
+            ) : null}
             <Button
               variant="primary"
               loading={saving}
@@ -744,81 +1149,26 @@ export function ManagerShiftDetail() {
           </div>
         ) : null}
 
-        <div className="manager-tally" aria-label="Finding counts">
-          <span>
-            <strong>{item.gapCount}</strong> Gap
-          </span>
-          <span className="tally-sep" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong>{item.unclearCount}</strong> Unclear
-          </span>
-          {showAll || item.passCount > 0 ? (
-            <>
-              <span className="tally-sep" aria-hidden>
-                ·
-              </span>
-              <span>
-                <strong>{item.passCount}</strong> Pass
-              </span>
-            </>
-          ) : null}
-        </div>
+        {hasFindings && tallyParts.length > 0 ? (
+        <p className="manager-tally" aria-label="Finding counts">
+          {tallyParts.map((part, i) => (
+            <span key={part.label}>
+              {i > 0 ? (
+                <span className="tally-sep" aria-hidden>
+                  ·
+                </span>
+              ) : null}
+              <strong>{part.n}</strong> {part.label}
+            </span>
+          ))}
+        </p>
+        ) : null}
 
-        {/* Evidence photos — same bucket staff uploaded to; manager can review frames */}
-        <section
-          className="card stack-sm evidence-gallery"
-          aria-label="Shift evidence photos"
-        >
-          <div className="evidence-gallery-head">
-            <h2>Evidence</h2>
-            <p className="caption">
-              {evidenceIds.length === 0
-                ? "No photos on this shift"
-                : `${evidenceIds.length} photo${evidenceIds.length === 1 ? "" : "s"} from opening check`}
-            </p>
-          </div>
-          {evidenceIds.length > 0 ? (
-            <ul className="list-plain evidence-grid">
-              {evidenceIds.map((id, i) => {
-                const label = `Evidence ${i + 1}`;
-                return (
-                  <li key={id} className="evidence-tile">
-                    <button
-                      type="button"
-                      className="evidence-link"
-                      onClick={() =>
-                        setLightbox({
-                          items: evidenceSlides,
-                          startIndex: i,
-                        })
-                      }
-                      aria-label={`View ${label}`}
-                    >
-                      <EvidenceImg
-                        fileId={id}
-                        alt={label}
-                        className="evidence-img"
-                      />
-                      <span className="evidence-index caption">{i + 1}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="muted caption">
-              Photos appear here once staff uploads and saves evidence.
-            </p>
-          )}
-        </section>
-
-        {agentTrace ? (
+        {agentTrace && hasFindings ? (
           <section
-            className="card stack-sm agent-trace"
+            className="agent-trace"
             data-testid="agent-trace"
-            aria-label="Agent trace"
+            aria-label="How this was scored"
           >
             <button
               type="button"
@@ -827,14 +1177,9 @@ export function ManagerShiftDetail() {
               onClick={() => setTraceOpen((v) => !v)}
             >
               <h2>How this was scored</h2>
-              <span className="caption">
-                {agentTrace.status === "done"
-                  ? "Scoring complete"
-                  : agentTrace.status}
-                {traceOpen ? " · Hide" : " · Show"}
-              </span>
+              <span className="caption">{traceOpen ? "Hide" : "Show"}</span>
             </button>
-            {traceOpen ? (
+            {traceOpen && agentTrace.status !== "failed" ? (
               <>
                 <ol className="agent-trace-steps">
                   {agentTrace.steps
@@ -849,54 +1194,67 @@ export function ManagerShiftDetail() {
                     {citationGaps.length} finding(s) missing
                     clause/quote/confidence.
                   </p>
-                ) : (
-                  <p className="caption" data-testid="citations-ok">
-                    All findings carry clause · quote · confidence.
-                  </p>
-                )}
+                ) : null}
               </>
-            ) : (
-              <p className="caption visually-hidden" data-testid="citations-ok">
-                All findings carry clause · quote · confidence.
-              </p>
-            )}
+            ) : null}
           </section>
         ) : null}
 
-        {unclearFindings.length > 0 ? (
+        {!hasShiftPhotos && hasFindings ? (
           <section
-            className="hero-unclear card"
-            data-testid="hero-unclear"
-            aria-label="Unclear findings need review"
+            className="missing-evidence"
+            data-testid="missing-evidence"
+            aria-label="Missing evidence"
           >
-            <h2>Needs human eyes</h2>
-            <p className="muted">
-              {unclearFindings.length === 1
-                ? "1 photo is unclear — request a retake, don’t assign a fix."
-                : `${unclearFindings.length} photos are unclear — request a retake, don’t assign a fix.`}
-            </p>
+            <p className="missing-evidence-title">No photos on this opening.</p>
+            {showRequestPhotos ? (
+              <Button
+                variant="primary"
+                loading={saving}
+                data-testid="request-photos"
+                onClick={() => void requestMissingPhotos()}
+              >
+                Request photos
+              </Button>
+            ) : null}
           </section>
         ) : null}
 
+        {unclearFindings.length > 0 && hasShiftPhotos ? (
+          <p
+            className="hero-unclear"
+            data-testid="hero-unclear"
+            role="status"
+          >
+            {unclearFindings.length === 1
+              ? "1 photo is unclear — request a retake, don’t assign a fix."
+              : `${unclearFindings.length} photos are unclear — request a retake, don’t assign a fix.`}
+          </p>
+        ) : null}
+
+        {hasFindings ? (
         <div className="manager-filter-row">
           <p className="caption">
             {showAll
               ? "All findings"
               : openCount === 0
-                ? "No open gaps on this shift"
-                : "Open gaps only"}
+                ? "No open items"
+                : "Open items"}
           </p>
-          <button
-            type="button"
-            className="text-btn"
-            onClick={() => setShowAll((v) => !v)}
-            aria-pressed={showAll}
-          >
-            {showAll ? "Hide passes" : "Show all"}
-          </button>
+          {item.passCount > 0 ? (
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => setShowAll((v) => !v)}
+              aria-pressed={showAll}
+            >
+              {showAll ? "Hide passes" : "Show all"}
+            </button>
+          ) : null}
         </div>
+        ) : null}
 
-        {errorShown ? (
+        {errorShown && !formOpen ? (
           <div
             className="error-banner"
             data-enter={!errorExiting ? "true" : undefined}
@@ -921,7 +1279,8 @@ export function ManagerShiftDetail() {
         ) : null}
 
         {visibleFindings.length === 0 ? (
-          <div className="card stack-sm">
+          stuck || jobFailed ? null : (
+          <div className="stack-sm manager-empty-findings">
             <h2>
               {item.findings.length === 0
                 ? item.shift.status === "scored"
@@ -931,19 +1290,19 @@ export function ManagerShiftDetail() {
             </h2>
             <p className="muted">
               {item.findings.length === 0
-                ? "Scoring writes Pass / Gap / Unclear when runShiftScore finishes (C3)."
+                ? "Scores appear here when this opening is scored."
                 : "Show all to review passes."}
             </p>
           </div>
+          )
         ) : (
           <ul
             ref={listRef}
-            className="list-plain finding-list stagger-in"
-            role="listbox"
+            className="list-plain finding-list"
             aria-label="Findings"
           >
             {visibleFindings.map((f) => {
-              const isSelected = f.$id === selectedId;
+              const isSelected = f.$id === selectedId && mode !== "idle";
               const photoId = photoForItem(
                 f.itemId,
                 item.shift.photoFileIds,
@@ -952,52 +1311,60 @@ export function ManagerShiftDetail() {
               const photoIndex = photoId
                 ? evidenceIds.indexOf(photoId)
                 : -1;
+              const note = displayEvidenceNote(f.evidenceNote);
+              const cite = citationForFinding(f, checklistItems);
               return (
                 <li key={f.$id}>
-                  <button
-                    type="button"
-                    role="option"
+                  <article
                     data-finding-id={f.$id}
-                    aria-selected={isSelected}
-                    className={`finding-row card ${isSelected ? "is-selected" : ""}`}
-                    onClick={() => selectFinding(f)}
+                    data-source={f.source}
+                    data-testid="finding-row"
+                    className={`finding-row ${isSelected ? "is-selected" : ""}`}
                   >
                     <div className="finding-row-top">
                       <FindingChip status={f.status} />
-                      <span className="caption citation-clause">{f.clauseId}</span>
                     </div>
                     <div className="finding-title-row">
-                      <p className="finding-title">{itemLabel(f.itemId)}</p>
+                      <p className="finding-title">{glanceLabel(f.itemId)}</p>
                       {photoId ? (
-                        <span
+                        <button
+                          type="button"
                           className="finding-photo"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setLightbox({
-                              items: evidenceSlides,
-                              startIndex: photoIndex >= 0 ? photoIndex : 0,
-                            });
-                          }}
+                          disabled={missingPhotos.has(photoId)}
+                          onClick={() => openEvidence(photoId, photoIndex)}
+                          aria-label={
+                            missingPhotos.has(photoId)
+                              ? "Photo unavailable"
+                              : "View evidence photo"
+                          }
                         >
                           <EvidenceImg
                             fileId={photoId}
                             alt=""
                             className="finding-photo-img"
+                            compact
+                            onMissingChange={onPhotoMissing}
                           />
-                        </span>
+                        </button>
                       ) : null}
                     </div>
-                    {/* Boost #1 forced citation */}
                     <p
                       className="citation-bar caption"
                       data-testid="citation"
+                      data-citation={cite.gap ? "missing" : "ok"}
                     >
-                      {f.clauseId} · conf {Math.round(f.confidence * 100)}%
+                      {cite.gap
+                        ? "No clause cited"
+                        : cite.clauseId}{" "}
+                      · {confidenceBand(f.confidence)}
                     </p>
-                    <p className="finding-quote muted">“{f.quote}”</p>
-                    <p className="finding-note caption">{f.evidenceNote}</p>
-                    {f.source === "manager_override" && f.overrideReason ? (
+                    {cite.quote ? (
+                    <p className="finding-quote muted">“{cite.quote}”</p>
+                    ) : null}
+                    {note ? (
+                      <p className="finding-note caption">{note}</p>
+                    ) : null}
+                    {f.overrideReason ? (
                       <p
                         className="override-reason caption"
                         data-testid="override-reason"
@@ -1005,19 +1372,100 @@ export function ManagerShiftDetail() {
                         Override: {f.overrideReason}
                       </p>
                     ) : null}
-                    <p className="finding-conf caption">
-                      {f.source === "manager_override" ? "Manager override" : "AI"}
-                    </p>
-                  </button>
+                    {f.source && f.source !== "ai" ? (
+                      <p
+                        className="finding-conf caption"
+                        data-testid="finding-source"
+                        data-source={f.source}
+                      >
+                        {formatFindingSource(f.source)}
+                      </p>
+                    ) : null}
+                    <div className="finding-actions">
+                      {openTasks.some((t) => t.findingId === f.$id) ? (
+                        <Button
+                          variant="secondary"
+                          disabled={saving}
+                          onClick={() => focusTask(f.$id)}
+                        >
+                          View open fix
+                        </Button>
+                      ) : f.status === "gap" ||
+                        (f.status === "unclear" && hasShiftPhotos) ? (
+                        <Button
+                          variant={
+                            f.status === "gap" && !hasShiftPhotos
+                              ? "secondary"
+                              : "primary"
+                          }
+                          disabled={saving}
+                          onClick={() => startAssign(f)}
+                        >
+                          {f.status === "unclear"
+                            ? "Request photo"
+                            : "Assign fix"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="quiet"
+                        disabled={saving}
+                        onClick={() => startOverride(f)}
+                      >
+                        Override
+                      </Button>
+                    </div>
+                  </article>
                 </li>
               );
             })}
           </ul>
         )}
 
+        {evidenceIds.length > 0 ? (
+          <section
+            className="evidence-gallery"
+            aria-label="Shift evidence photos"
+          >
+            <div className="evidence-gallery-head">
+              <h2>Evidence</h2>
+              <p className="caption">
+                {evidenceIds.length} photo
+                {evidenceIds.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <ul className="list-plain evidence-grid">
+              {evidenceIds.map((id, i) => {
+                const label = `Evidence ${i + 1}`;
+                const gone = missingPhotos.has(id);
+                return (
+                  <li key={id} className="evidence-tile">
+                    <button
+                      type="button"
+                      className="evidence-link"
+                      disabled={gone}
+                      onClick={() => openEvidence(id, i)}
+                      aria-label={gone ? "Photo unavailable" : `View ${label}`}
+                    >
+                      <EvidenceImg
+                        fileId={id}
+                        alt={label}
+                        className="evidence-img"
+                        onMissingChange={onPhotoMissing}
+                      />
+                      {gone ? null : (
+                        <span className="evidence-index caption">{i + 1}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
         {/* C6 — open fix tasks */}
         {openTasks.length > 0 || tasks.length > 0 ? (
-          <section className="card stack-sm manager-side-panel">
+          <section className="stack-sm manager-side-panel">
             <h2>Fix tasks</h2>
             {openTasks.length === 0 ? (
               <p className="muted caption">
@@ -1025,24 +1473,50 @@ export function ManagerShiftDetail() {
               </p>
             ) : (
               <ul className="list-plain task-list">
-                {openTasks.map((t) => (
-                  <li key={t.$id} className="task-row" data-testid="fix-row">
+                {openTasks.map((t) => {
+                  const linked = item.findings.find(
+                    (f) => f.$id === t.findingId,
+                  );
+                  const canMarkDone =
+                    Boolean(t.recheckFileId) && linked?.status === "pass";
+                  const attested = linked?.source === "staff_recheck";
+                  return (
+                  <li
+                    key={t.$id}
+                    className="task-row"
+                    data-testid="fix-row"
+                    data-finding-id={t.findingId}
+                    tabIndex={-1}
+                  >
                     <div className="stack-sm">
-                      <p className="task-title">{t.title}</p>
+                      <p className="task-title">
+                        {openFixTitle(t, linked)}
+                      </p>
                       <p className="caption">
                         {t.status === "open" ? "Open" : "Done"}
                         {t.assignedTo
-                          ? ` · ${resolveStaffLabel(t.assignedTo)}`
+                          ? ` · ${displayStaffName(resolveStaffLabel(t.assignedTo))}`
                           : ""}
-                        {t.createdAt ? ` · ${formatWhen(t.createdAt)}` : ""}
+                        {t.createdAt ? ` · ${formatManagerWhen(t.createdAt)}` : ""}
                       </p>
                       {t.recheckFileId ? (
-                        <p
-                          className="caption task-recheck-status"
-                          data-testid="task-recheck-status"
-                        >
-                          Re-check on file · AI re-scored — close when ready
-                        </p>
+                        <>
+                          <p
+                            className="caption task-recheck-status"
+                            data-testid="task-recheck-status"
+                          >
+                            {attested
+                              ? "Re-check on file · staff attested — close when ready"
+                              : "Re-check on file"}
+                          </p>
+                          <span data-testid="recheck-photo">
+                            <EvidenceImg
+                              fileId={t.recheckFileId}
+                              alt="Re-check photo"
+                              className="task-recheck-img"
+                            />
+                          </span>
+                        </>
                       ) : t.status === "open" ? (
                         <p className="caption muted">
                           Waiting for staff re-check photo
@@ -1054,7 +1528,7 @@ export function ManagerShiftDetail() {
                         <label className="recheck-upload">
                           <span className="caption">
                             {recheckTaskId === t.$id
-                              ? "Uploading…"
+                              ? "Scoring re-check…"
                               : t.recheckFileId
                                 ? "Replace re-check"
                                 : "Re-check photo"}
@@ -1072,9 +1546,10 @@ export function ManagerShiftDetail() {
                           />
                         </label>
                         <Button
-                          variant={t.recheckFileId ? "primary" : "secondary"}
+                          variant={canMarkDone ? "primary" : "secondary"}
                           className="task-done-btn"
                           data-testid="task-mark-done"
+                          disabled={!canMarkDone}
                           onClick={() => void completeTask(t.$id)}
                         >
                           Mark done
@@ -1082,7 +1557,8 @@ export function ManagerShiftDetail() {
                       </div>
                     ) : null}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </section>
@@ -1090,13 +1566,13 @@ export function ManagerShiftDetail() {
 
         {/* C6 — audit events */}
         {events.length > 0 ? (
-          <section className="card stack-sm manager-side-panel">
+          <section className="stack-sm manager-side-panel">
             <h2>Audit trail</h2>
             <ul className="list-plain event-list">
               {events.slice(0, 12).map((ev) => (
                 <li key={ev.$id} className="event-row caption">
                   <span className="event-type">{formatEventType(ev.type)}</span>
-                  <span>{formatWhen(ev.createdAt || ev.$createdAt)}</span>
+                  <span>{formatManagerWhen(ev.createdAt || ev.$createdAt)}</span>
                 </li>
               ))}
             </ul>
@@ -1104,12 +1580,28 @@ export function ManagerShiftDetail() {
         ) : null}
       </div>
 
-      {selected ? (
-        <div className="manager-sticky" role="region" aria-label="Finding actions">
+      {formOpen && selected ? (
+        <div
+          ref={stickyRef}
+          className="manager-sticky"
+          role="region"
+          aria-modal="true"
+          aria-label="Finding actions"
+          tabIndex={-1}
+        >
           <div className="manager-sticky-inner">
             <p className="manager-sticky-label caption">
-              Selected: {itemLabel(selected.itemId)}
+              {mode === "override"
+                ? `Override ${glanceLabel(selected.itemId)}`
+                : mode === "retake"
+                  ? `Request photo · ${glanceLabel(selected.itemId)}`
+                  : `Assign ${glanceLabel(selected.itemId)}`}
             </p>
+            {errorShown ? (
+              <div className="error-banner" role="alert">
+                {errorShown}
+              </div>
+            ) : null}
 
             {mode === "override" ? (
               <div className="manager-sticky-form stack-sm">
@@ -1131,18 +1623,11 @@ export function ManagerShiftDetail() {
                   <input
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Why are you overriding AI?"
-                    autoFocus
+                    placeholder="Add a short reason"
                   />
                 </label>
                 <div className="manager-sticky-actions">
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setMode("idle");
-                      setReason("");
-                    }}
-                  >
+                  <Button variant="secondary" onClick={closeSheet}>
                     Cancel
                   </Button>
                   <Button
@@ -1154,21 +1639,17 @@ export function ManagerShiftDetail() {
                   </Button>
                 </div>
               </div>
-            ) : mode === "assign" || mode === "retake" ? (
+            ) : (
               <div className="manager-sticky-form stack-sm">
-                <p className="muted">
-                  {mode === "retake" ? "Request retake: " : "Assign fix: "}
-                  <strong>
-                    {mode === "retake" ? "Retake: " : "Fix: "}
-                    {itemLabel(selected.itemId)}
-                  </strong>
-                </p>
                 <p className="caption" data-testid="assign-to-staff">
-                  To {item ? resolveStaffLabel(item.shift.createdBy) : "staff"}{" "}
-                  — they upload a new photo; AI re-scores; you mark done.
+                  To{" "}
+                  {item
+                    ? displayStaffName(resolveStaffLabel(item.shift.createdBy))
+                    : "staff"}{" "}
+                  — they send a new photo; you mark it done.
                 </p>
                 <div className="manager-sticky-actions">
-                  <Button variant="secondary" onClick={() => setMode("idle")}>
+                  <Button variant="secondary" onClick={closeSheet}>
                     Cancel
                   </Button>
                   <Button
@@ -1182,32 +1663,6 @@ export function ManagerShiftDetail() {
                     {mode === "retake" ? "Request photo" : "Assign to staff"}
                   </Button>
                 </div>
-              </div>
-            ) : (
-              <div className="manager-sticky-actions">
-                <Button
-                  variant="secondary"
-                  disabled={saving}
-                  onClick={() => {
-                    setOverrideTo(
-                      selected.status === "pass" ? "gap" : "pass",
-                    );
-                    setMode("override");
-                  }}
-                >
-                  Override
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={saving}
-                  onClick={() =>
-                    setMode(selected.status === "unclear" ? "retake" : "assign")
-                  }
-                >
-                  {selected.status === "unclear"
-                    ? "Request new photo"
-                    : "Assign fix"}
-                </Button>
               </div>
             )}
           </div>
@@ -1225,6 +1680,49 @@ export function ManagerShiftDetail() {
   );
 }
 
+const SHEET_FOCUSABLE = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function sheetFocusables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(SHEET_FOCUSABLE)].filter(
+    (el) => el.getClientRects().length > 0,
+  );
+}
+
+function scrollFindingAboveSheet(
+  list: HTMLUListElement | null,
+  findingId: string,
+  sheet: HTMLElement,
+) {
+  const row = list?.querySelector(
+    `[data-finding-id="${CSS.escape(findingId)}"]`,
+  );
+  if (!(row instanceof HTMLElement)) return;
+  const chrome = document.querySelector(".shell-chrome");
+  const chromeH =
+    chrome instanceof HTMLElement ? chrome.getBoundingClientRect().height : 0;
+  const gap = 12;
+  const vv = window.visualViewport;
+  const viewTop = vv?.offsetTop ?? 0;
+  const viewH = vv?.height ?? window.innerHeight;
+  const sheetH = sheet.getBoundingClientRect().height;
+  const rect = row.getBoundingClientRect();
+  const topMin = viewTop + chromeH + gap;
+  const bottomMax = viewTop + viewH - sheetH - gap;
+  const behavior = prefersReducedMotion() ? "auto" : "smooth";
+  if (rect.height > bottomMax - topMin || rect.top < topMin) {
+    window.scrollBy({ top: rect.top - topMin, behavior });
+  } else if (rect.bottom > bottomMax) {
+    window.scrollBy({ top: rect.bottom - bottomMax, behavior });
+  }
+}
+
 function rank(f: Finding): number {
   if (f.status === "gap") return 0;
   if (f.status === "unclear") return 1;
@@ -1237,15 +1735,90 @@ function stripStepNumber(step: string): string {
   return step.replace(/^\s*\d+\.\s*/, "").trim();
 }
 
-function formatWhen(iso: string): string {
+function glanceLabel(itemId: string): string {
+  return shortItemLabel(itemId) || itemLabel(itemId);
+}
+
+function scoringFailureDetail(job?: { errorMessage?: string } | null): string | null {
+  const raw = job?.errorMessage?.trim();
+  if (!raw) return null;
+  if (/seeded e2e/i.test(raw) || isHarnessName(raw)) return null;
+  return raw;
+}
+
+function formatTitleTime(iso: string): string {
   try {
-    return new Intl.DateTimeFormat(undefined, {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
       hour: "numeric",
       minute: "2-digit",
-      month: "short",
-      day: "numeric",
-    }).format(new Date(iso));
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "");
+    const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+    if (Number.isNaN(hour)) return iso;
+    return `${hour}:${minute}`;
   } catch {
     return iso;
   }
 }
+
+function shiftOutcome(item: ManagerShiftSummary): string {
+  if (item.gapCount > 0) return `${item.gapCount} Gap`;
+  if (item.unclearCount > 0) return `${item.unclearCount} Unclear`;
+  if (item.latestJob?.status === "failed") return "Failed";
+  if (isStuckScoring(item.shift, item.latestJob)) return "Stuck";
+  if (item.shift.status === "submitted" || item.shift.status === "scoring") {
+    return "Scoring";
+  }
+  if (item.shift.status === "closed") return "Closed";
+  if (item.passCount > 0) return "All Pass";
+  return "Waiting";
+}
+
+function shiftStatusCode(item: ManagerShiftSummary): string {
+  if (item.latestJob?.status === "failed") return "failed";
+  if (isStuckScoring(item.shift, item.latestJob)) return "stuck";
+  return item.shift.status;
+}
+
+function shiftStatusSentence(item: ManagerShiftSummary): string {
+  if (item.shift.status === "closed") return "This opening is closed.";
+  if (item.latestJob?.status === "failed") return "Scoring failed.";
+  if (isStuckScoring(item.shift, item.latestJob)) return "Scoring is stuck.";
+  if (
+    item.shift.status === "scoring" ||
+    item.latestJob?.status === "waiting" ||
+    item.latestJob?.status === "running"
+  ) {
+    return "Scoring is in progress.";
+  }
+  if (item.shift.status === "submitted") return "Waiting to score.";
+  if (item.shift.status === "scored") {
+    if (item.gapCount > 0) {
+      return item.gapCount === 1
+        ? "1 gap still open."
+        : `${item.gapCount} gaps still open.`;
+    }
+    if (item.unclearCount > 0) {
+      return parsePhotoFileIds(item.shift.photoFileIds).length === 0
+        ? "Ask staff to send photos."
+        : "Unclear photos need a retake.";
+    }
+    return "All checks passed.";
+  }
+  return "This opening is a draft.";
+}
+
+function scoreboardHeading(item: ManagerShiftSummary): string {
+  const staff = displayStaffName(item.staffLabel);
+  const time = formatTitleTime(item.shift.submittedAt || item.shift.startedAt);
+  return `${staff}, ${time} — ${shiftOutcome(item)}`;
+}
+
+function displayEvidenceNote(note: string | undefined): string | null {
+  if (!note?.trim()) return null;
+  if (/seeded e2e finding\.?/i.test(note.trim())) return null;
+  return note;
+}
+

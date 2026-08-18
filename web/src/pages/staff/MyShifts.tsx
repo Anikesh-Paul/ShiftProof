@@ -111,16 +111,21 @@ export function MyShifts() {
     if (!leftoverEmpty.length) return;
     setDiscarding(true);
     setError(null);
-    try {
-      await Promise.all(leftoverEmpty.map((s) => deleteDraftShift(s.$id)));
-      setShifts((prev) =>
-        prev.filter((s) => !leftoverEmpty.some((d) => d.$id === s.$id)),
-      );
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not discard empty drafts"));
-    } finally {
-      setDiscarding(false);
+    const results = await Promise.allSettled(
+      leftoverEmpty.map((s) => deleteDraftShift(s.$id)),
+    );
+    const deleted = new Set(
+      leftoverEmpty
+        .filter((_, i) => results[i]?.status === "fulfilled")
+        .map((s) => s.$id),
+    );
+    if (deleted.size) {
+      setShifts((prev) => prev.filter((s) => !deleted.has(s.$id)));
     }
+    if (results.some((r) => r.status === "rejected")) {
+      setError("Not everything could be discarded");
+    }
+    setDiscarding(false);
   }
 
   return (
@@ -199,7 +204,11 @@ export function MyShifts() {
       ) : (
         <div className="stack">
         {leftoverEmpty.length > 0 ? (
-          <p className="caption history-clutter">
+          <p
+            className="caption history-clutter"
+            data-testid="history-leftover"
+            data-leftover-ids={leftoverEmpty.map((s) => s.$id).join(" ")}
+          >
             {leftoverEmpty.length} leftover empty draft
             {leftoverEmpty.length === 1 ? "" : "s"}
             <button

@@ -2,7 +2,75 @@
  * Demo inbox + findings for manager UI when live rows are empty or unavailable.
  * Shapes match types/shiftproof — not a second schema.
  */
-import type { AgentJob, Finding, FindingStatus, Shift } from "../types/shiftproof";
+import type {
+  AgentJob,
+  ChecklistItem,
+  Finding,
+  FindingStatus,
+  Shift,
+} from "../types/shiftproof";
+
+export type FindingCitation = {
+  clauseId: string;
+  quote: string;
+  gap: boolean;
+};
+
+/**
+ * Clause + quote for one finding. Prefer the stored citation when it belongs
+ * to this item. If the scorer inherited another item's clause (FS-01 gloves
+ * on Fridge), use this item's own relatedClauseIds / quote. If neither side
+ * has a clause, surface the citation gap — never invent FS-01.
+ */
+export function citationForFinding(
+  finding: { itemId: string; clauseId?: string; quote?: string },
+  items: ChecklistItem[],
+): FindingCitation {
+  const storedClause = finding.clauseId?.trim() ?? "";
+  const storedQuote = finding.quote?.trim() ?? "";
+  const item = items.find((it) => it.id === finding.itemId);
+  const itemClauses = (item?.relatedClauseIds ?? [])
+    .map((id) => String(id).trim())
+    .filter(Boolean);
+  const itemQuote = item?.quote?.trim() ?? "";
+
+  const owner = storedClause
+    ? items.find((it) =>
+        (it.relatedClauseIds ?? []).some((id) => String(id).trim() === storedClause),
+      )
+    : undefined;
+  const inherited = Boolean(owner && owner.id !== finding.itemId);
+  const mismatchesItem =
+    Boolean(item) &&
+    itemClauses.length > 0 &&
+    storedClause.length > 0 &&
+    !itemClauses.includes(storedClause);
+
+  if (inherited || mismatchesItem) {
+    if (itemClauses[0]) {
+      return { clauseId: itemClauses[0], quote: itemQuote, gap: !itemQuote };
+    }
+    return { clauseId: "", quote: "", gap: true };
+  }
+
+  if (storedClause) {
+    return {
+      clauseId: storedClause,
+      quote: storedQuote || itemQuote,
+      gap: false,
+    };
+  }
+
+  if (itemClauses[0]) {
+    return {
+      clauseId: itemClauses[0],
+      quote: storedQuote || itemQuote,
+      gap: !(storedQuote || itemQuote),
+    };
+  }
+
+  return { clauseId: "", quote: storedQuote, gap: true };
+}
 
 function meta(id: string, createdAt: string) {
   return {
@@ -268,6 +336,244 @@ function titleCaseItemId(itemId: string): string {
 
 export function itemLabel(itemId: string): string {
   return liveLabels[itemId] ?? ITEM_LABELS[itemId] ?? titleCaseItemId(itemId);
+}
+
+/** True when the id is on the opening check (static map or hydrated live set). */
+export function isKnownItemId(itemId: string): boolean {
+  if (!itemId || isHarnessName(itemId)) return false;
+  return Object.prototype.hasOwnProperty.call(liveLabels, itemId);
+}
+
+/** e2e / harness ids and titles must never surface in the manager inbox. */
+export function isHarnessName(text: string): boolean {
+  return /\be2e\b/i.test(text) || /durability[-_ ]/i.test(text);
+}
+
+function shortenLabelText(live: string): string {
+  if (live.length <= 28) return live;
+  const beforeMark = live.split(/[?]/)[0]?.trim() ?? live;
+  if (beforeMark.length <= 32) return beforeMark;
+  return beforeMark.split(/\s+/).slice(0, 3).join(" ");
+}
+
+/**
+ * Glanceable inbox label. Prefers the short map so live SOP questions
+ * do not become chips, row previews, or the H1.
+ */
+export function shortItemLabel(itemId: string): string {
+  if (isHarnessName(itemId)) return "";
+  const known = ITEM_LABELS[itemId];
+  if (known) return known;
+  const live = liveLabels[itemId] ?? titleCaseItemId(itemId);
+  if (isHarnessName(live)) return "";
+  return shortenLabelText(live);
+}
+
+/** Match a stored title or id to the short map so Show all can group wobble. */
+export function knownItemFromText(
+  text: string,
+): { itemId: string; label: string } | null {
+  const needle = text.trim().toLowerCase();
+  if (!needle || isHarnessName(text)) return null;
+  for (const [id, label] of Object.entries(liveLabels)) {
+    if (isHarnessName(id) || isHarnessName(label)) continue;
+    if (id.toLowerCase() !== needle && label.toLowerCase() !== needle) {
+      continue;
+    }
+    const short = shortItemLabel(id) || label;
+    if (short && !isHarnessName(short)) return { itemId: id, label: short };
+  }
+  return null;
+}
+
+/** Always `Fix:` / `Retake:` + a short item. Never a bare Fix or a full SOP question. */
+export function openFixTitle(
+  task: { title: string },
+  finding?: { itemId: string },
+): string {
+  const kind = /^retake:/i.test(task.title) ? "Retake" : "Fix";
+  if (finding && !isHarnessName(finding.itemId)) {
+    const label =
+      shortItemLabel(finding.itemId) ||
+      shortenLabelText(itemLabel(finding.itemId));
+    if (label && !isHarnessName(label)) return `${kind}: ${label}`;
+  }
+  const stripped = task.title.replace(/^(Fix|Retake):\s*/i, "").trim();
+  if (stripped && !isHarnessName(stripped)) {
+    const fromId = shortItemLabel(stripped);
+    if (fromId) return `${kind}: ${fromId}`;
+    const shortened = shortenLabelText(stripped);
+    if (shortened && !isHarnessName(shortened)) return `${kind}: ${shortened}`;
+  }
+  return `${kind}: Opening item`;
+}
+
+export type InboxCopyView = "today" | "backlog" | "all";
+
+export type InboxCopyInput = {
+  loading: boolean;
+  itemFilter: string | null;
+  itemKnown: boolean;
+  view: InboxCopyView;
+  listedCount: number;
+  todayGaps: number;
+  todayUnclear: number;
+  checksInProgress: boolean;
+  jobsWaiting: boolean;
+  backlogEmpty: boolean;
+  backlogGaps: number;
+  backlogUnclear: number;
+};
+
+/**
+ * Inbox H1 + lede. All is the ledger (painted row count), not today’s
+ * gap count. An item chip keeps the short label and names how many
+ * openings the list actually paints. Backlog / unknown-item copy is
+ * locked — do not restyle those branches for variety.
+ */
+export function inboxCopy(input: InboxCopyInput): {
+  headline: string;
+  lede: string;
+} {
+  const {
+    loading,
+    itemFilter,
+    itemKnown,
+    view,
+    listedCount,
+    todayGaps,
+    todayUnclear,
+    checksInProgress,
+    jobsWaiting,
+    backlogEmpty,
+    backlogGaps,
+    backlogUnclear,
+  } = input;
+
+  if (loading) {
+    return { headline: "Checking shifts…", lede: "Loading opening checks…" };
+  }
+
+  if (itemFilter) {
+    if (!itemKnown) {
+      return {
+        headline: "No matching item",
+        lede: "This item is not on the opening check.",
+      };
+    }
+    const headline =
+      shortItemLabel(itemFilter) || itemLabel(itemFilter);
+    const lede =
+      listedCount === 0
+        ? "No openings mention this item."
+        : listedCount === 1
+          ? "1 opening mentions this item."
+          : `${listedCount} openings mention this item.`;
+    return { headline, lede };
+  }
+
+  if (view === "backlog") {
+    const headline = backlogEmpty
+      ? "Backlog is empty"
+      : backlogGaps === 0
+        ? backlogUnclear === 1
+          ? "1 older photo needs a look"
+          : `${backlogUnclear} older photos need a look`
+        : backlogGaps === 1
+          ? "1 older gap needs a look"
+          : `${backlogGaps} older gaps need a look`;
+    const lede = backlogEmpty
+      ? "Older openings with open gaps land here."
+      : "Older openings. Today stays on Today.";
+    return { headline, lede };
+  }
+
+  if (view === "all") {
+    const headline =
+      listedCount === 0
+        ? "No openings on file"
+        : listedCount === 1
+          ? "1 opening on file"
+          : `${listedCount} openings on file`;
+    const lede =
+      listedCount === 0
+        ? "When staff submit an opening check, it lands here."
+        : "Every opening on file. Today stays on Today.";
+    return { headline, lede };
+  }
+
+  const headline =
+    todayGaps === 0
+      ? todayUnclear > 0
+        ? todayUnclear === 1
+          ? "1 photo needs a look"
+          : `${todayUnclear} photos need a look`
+        : checksInProgress
+          ? "Checks in progress"
+          : "Nothing needs you today"
+      : todayGaps === 1
+        ? "1 gap needs a look"
+        : `${todayGaps} gaps need a look`;
+  const lede =
+    todayGaps > 0
+      ? "Today’s open gaps first. Older checks sit in Backlog."
+      : todayUnclear > 0
+        ? "Today’s unclear photos need a retake, not a fix task."
+        : jobsWaiting
+          ? "Retry stuck jobs here, or close them from the scoreboard."
+          : "When staff leave open gaps today, they land here first.";
+  return { headline, lede };
+}
+
+/** One manager clock: Asia/Kolkata, 24h. */
+export function formatManagerWhen(
+  iso: string,
+  opts?: { year?: boolean },
+): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      day: "numeric",
+      month: "short",
+      ...(opts?.year ? { year: "numeric" } : {}),
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+/** Same clock, collapsed to a range when openings span minutes. */
+export function formatManagerWhenRange(fromIso: string, toIso: string): string {
+  if (!fromIso) return toIso ? formatManagerWhen(toIso) : "";
+  if (!toIso || fromIso === toIso) return formatManagerWhen(fromIso);
+  try {
+    const zone = "Asia/Kolkata";
+    const dateFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      day: "numeric",
+      month: "short",
+    });
+    const timeFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const from = new Date(fromIso);
+    const to = new Date(toIso);
+    const fromTime = timeFmt.format(from);
+    const toTime = timeFmt.format(to);
+    if (dateFmt.format(from) === dateFmt.format(to)) {
+      if (fromTime === toTime) return formatManagerWhen(fromIso);
+      return `${dateFmt.format(from)}, ${fromTime}–${toTime}`;
+    }
+    return `${formatManagerWhen(fromIso)} – ${formatManagerWhen(toIso)}`;
+  } catch {
+    return formatManagerWhen(fromIso);
+  }
 }
 
 function summarize(

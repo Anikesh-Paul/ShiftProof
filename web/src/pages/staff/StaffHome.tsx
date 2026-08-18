@@ -10,17 +10,21 @@ import {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { EvidenceImg } from "../../components/EvidenceImg";
 import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 import { useSlowLoading } from "../../lib/loading";
 import {
   attachRecheckAndRescore,
+  getFinding,
   listOpenFixTasksForStaff,
 } from "../../lib/manager";
+import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   createDraftShift,
   getChecklist,
   getSite,
+  listFindingsForShift,
   listMyShifts,
   parseChecklistItems,
   parsePhotoFileIds,
@@ -29,7 +33,13 @@ import {
   uploadEvidence,
   validatePhotoFile,
 } from "../../lib/shifts";
-import type { ChecklistItem, Shift, Site, Task } from "../../types/shiftproof";
+import type {
+  ChecklistItem,
+  Finding,
+  Shift,
+  Site,
+  Task,
+} from "../../types/shiftproof";
 import "./StaffHome.css";
 
 const FIX_VISIBLE = 2;
@@ -48,10 +58,15 @@ export function StaffHome() {
   const [error, setError] = useState<string | null>(null);
   const [photoLoaded, setPhotoLoaded] = useState(false);
   const [fixTasks, setFixTasks] = useState<Task[]>([]);
+  const [fixFindings, setFixFindings] = useState<Finding[]>([]);
   const [fixLoading, setFixLoading] = useState(true);
   const [recheckTaskId, setRecheckTaskId] = useState<string | null>(null);
   const [fixToast, setFixToast] = useState<string | null>(null);
   const [resumeDraft, setResumeDraft] = useState<Shift | null>(null);
+  const [draftsStatus, setDraftsStatus] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [draftsError, setDraftsError] = useState<string | null>(null);
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixesExpanded, setFixesExpanded] = useState(false);
 
@@ -70,6 +85,13 @@ export function StaffHome() {
         });
         setFixTasks(tasks);
         setFixError(null);
+        const shiftIds = [...new Set(tasks.map((t) => t.shiftId))];
+        const batches = await Promise.all(
+          shiftIds.map((id) =>
+            listFindingsForShift(id).catch(() => [] as Finding[]),
+          ),
+        );
+        setFixFindings(batches.flat());
       } catch (err) {
         if (!opts?.silent) setFixTasks([]);
         setFixError(
@@ -110,21 +132,26 @@ export function StaffHome() {
     void loadFixTasks(user.$id);
   }, [user, loadFixTasks]);
 
+  const loadDrafts = useCallback(async (userId: string) => {
+    setDraftsStatus("loading");
+    setDraftsError(null);
+    try {
+      const rows = await listMyShifts(userId);
+      setResumeDraft(pickResumableDraft(rows));
+      setDraftsStatus("ready");
+    } catch (err) {
+      setResumeDraft(null);
+      setDraftsError(
+        getErrorMessage(err, "Could not load drafts. Try again."),
+      );
+      setDraftsStatus("error");
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await listMyShifts(user.$id);
-        if (!cancelled) setResumeDraft(pickResumableDraft(rows));
-      } catch {
-        if (!cancelled) setResumeDraft(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+    void loadDrafts(user.$id);
+  }, [user, loadDrafts]);
 
   useEffect(() => {
     if (error) {
@@ -150,7 +177,7 @@ export function StaffHome() {
   }
 
   async function startShift() {
-    if (!user) return;
+    if (!user || draftsStatus !== "ready") return;
     setError(null);
     setStarting(true);
     try {
@@ -180,7 +207,7 @@ export function StaffHome() {
     setRecheckTaskId(task.$id);
     try {
       const fileId = await uploadEvidence(file);
-      await attachRecheckAndRescore({
+      const result = await attachRecheckAndRescore({
         taskId: task.$id,
         shiftId: task.shiftId,
         findingId: task.findingId,
@@ -192,9 +219,19 @@ export function StaffHome() {
           t.$id === task.$id ? { ...t, recheckFileId: fileId } : t,
         ),
       );
-      setFixToast(
-        "Re-check uploaded. AI re-scored this item — manager will close the task.",
-      );
+      if (result.fallback) {
+        setFixToast(RECHECK_FALLBACK_TOAST);
+      }
+      const scored = await getFinding(task.findingId).catch(() => null);
+      if (scored) {
+        setFixFindings((prev) => [
+          ...prev.filter((f) => f.$id !== scored.$id),
+          scored,
+        ]);
+        if (!result.fallback && scored.status === "pass") {
+          setFixToast("Re-check sent · waiting on manager");
+        }
+      }
       await loadFixTasks(user.$id, { silent: true });
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload re-check photo"));
@@ -204,8 +241,17 @@ export function StaffHome() {
   }
 
   const uniqueFixes = uniqueFixTasks(fixTasks);
-  const pendingUnique = uniqueFixes.filter((t) => !t.recheckFileId);
-  const waitingUnique = uniqueFixes.filter((t) => t.recheckFileId);
+  const findingById = new Map(fixFindings.map((f) => [f.$id, f]));
+  const pendingUnique = uniqueFixes.filter((t) => {
+    const status = findingById.get(t.findingId)?.status;
+    return (
+      !t.recheckFileId || status === "gap" || status === "unclear"
+    );
+  });
+  const waitingUnique = uniqueFixes.filter((t) => {
+    const status = findingById.get(t.findingId)?.status;
+    return Boolean(t.recheckFileId) && status !== "gap" && status !== "unclear";
+  });
   const hiddenFixCount = Math.max(0, uniqueFixes.length - FIX_VISIBLE);
   const visibleFixes = (fixesExpanded ? uniqueFixes : uniqueFixes.slice(0, FIX_VISIBLE));
 
@@ -216,7 +262,11 @@ export function StaffHome() {
     : 0;
 
   return (
-    <div className="staff-home" data-testid="staff-opening">
+    <div
+      className="staff-home"
+      data-testid="staff-opening"
+      data-drafts-status={draftsStatus}
+    >
       <div className="app-page stack staff-home-page">
         {!showFixes && !fixLoading ? (
           <div
@@ -269,6 +319,19 @@ export function StaffHome() {
             onAnimationEnd={onErrorExitEnd}
           >
             {errorShown}
+          </div>
+        ) : null}
+
+        {draftsError ? (
+          <div className="error-banner" role="alert" data-testid="drafts-error">
+            {draftsError}
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => user && void loadDrafts(user.$id)}
+            >
+              Try again
+            </button>
           </div>
         ) : null}
 
@@ -325,55 +388,76 @@ export function StaffHome() {
             </div>
 
             <ul className="list-plain staff-fix-list">
-              {visibleFixes.map((t) => (
-                <li
-                  key={t.$id}
-                  className="staff-fix-row"
-                  data-testid="staff-fix-row"
-                  data-state={t.recheckFileId ? "sent" : "needs-photo"}
-                >
-                  <div className="staff-fix-body">
-                    <Link
-                      to={`/staff/shifts/${t.shiftId}`}
-                      className="staff-fix-title"
-                    >
-                      {displayFixTitle(t.title)}
-                    </Link>
-                    {t.recheckFileId ? (
-                      <p className="caption staff-fix-status">
-                        Waiting on manager
-                      </p>
-                    ) : null}
-                  </div>
-                  {!t.recheckFileId ? (
-                    <label className="staff-recheck-upload">
-                      <span>
-                        {recheckTaskId === t.$id
-                          ? "Uploading…"
-                          : "Re-check photo"}
-                      </span>
-                      <input
-                        type="file"
-                        accept={PHOTO_ACCEPT}
-                        className="visually-hidden"
-                        data-testid="staff-recheck-input"
-                        disabled={recheckTaskId === t.$id}
-                        onChange={(e) => {
-                          void onStaffRecheck(t, e.target.files);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                  ) : (
-                    <span
-                      className="staff-fix-done-chip"
-                      data-testid="staff-recheck-done"
-                    >
-                      Sent
-                    </span>
-                  )}
-                </li>
-              ))}
+              {visibleFixes.map((t) => {
+                const status = findingById.get(t.findingId)?.status;
+                const canUpload =
+                  !t.recheckFileId ||
+                  status === "gap" ||
+                  status === "unclear";
+                const waitingOnManager =
+                  Boolean(t.recheckFileId) && !canUpload;
+                return (
+                  <li
+                    key={t.$id}
+                    className="staff-fix-row"
+                    data-testid="staff-fix-row"
+                    data-finding-id={t.findingId}
+                    data-state={waitingOnManager ? "sent" : "needs-photo"}
+                  >
+                    <div className="staff-fix-body">
+                      <Link
+                        to={`/staff/shifts/${t.shiftId}`}
+                        className="staff-fix-title"
+                      >
+                        {displayFixTitle(t.title)}
+                      </Link>
+                      {waitingOnManager ? (
+                        <p className="caption staff-fix-status">
+                          Re-check sent · waiting on manager
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="staff-fix-actions">
+                      {t.recheckFileId ? (
+                        <span data-testid="recheck-photo">
+                          <EvidenceImg
+                            fileId={t.recheckFileId}
+                            alt="Re-check photo"
+                            className="staff-fix-thumb"
+                          />
+                        </span>
+                      ) : null}
+                      {canUpload ? (
+                        <label className="staff-recheck-upload">
+                          <span>
+                            {recheckTaskId === t.$id
+                              ? "Scoring re-check…"
+                              : "Re-check photo"}
+                          </span>
+                          <input
+                            type="file"
+                            accept={PHOTO_ACCEPT}
+                            className="visually-hidden"
+                            data-testid="staff-recheck-input"
+                            disabled={recheckTaskId === t.$id}
+                            onChange={(e) => {
+                              void onStaffRecheck(t, e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      ) : (
+                        <span
+                          className="staff-fix-done-chip"
+                          data-testid="staff-recheck-done"
+                        >
+                          Sent
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
             {hiddenFixCount > 0 ? (
               <button
@@ -447,7 +531,11 @@ export function StaffHome() {
             fullWidth
             variant={pendingUnique.length > 0 ? "secondary" : "primary"}
             loading={starting}
-            disabled={loading || (!resumeDraft && items.length === 0)}
+            disabled={
+              loading ||
+              draftsStatus !== "ready" ||
+              (!resumeDraft && items.length === 0)
+            }
             data-testid="start-opening-check"
             onClick={() => void startShift()}
           >

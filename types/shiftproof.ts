@@ -14,7 +14,7 @@ export type ShiftStatus =
 
 export type FindingStatus = "pass" | "gap" | "unclear";
 
-export type FindingSource = "ai" | "manager_override";
+export type FindingSource = "ai" | "manager_override" | "staff_recheck";
 
 export type AgentJobStatus = "waiting" | "running" | "done" | "failed";
 
@@ -27,6 +27,7 @@ export type EventType =
   | "job.failed"
   | "job.retry"
   | "finding.overridden"
+  | "finding.attested"
   | "finding.rescored"
   | "task.created"
   | "task.recheck"
@@ -59,6 +60,8 @@ export interface ChecklistItem {
   label: string;
   requiredPhoto: boolean;
   relatedClauseIds: string[];
+  /** Verbatim Clause quote from the live set. Lives in itemsJson. */
+  quote?: string;
 }
 
 export interface Checklist extends AppwriteRowMeta {
@@ -175,10 +178,10 @@ export interface CreateAgentJobInput {
   traceJson?: string;
 }
 
-export interface RunShiftScoreRequest {
-  shiftId: string;
-  jobId: string;
-}
+export type RunShiftScoreRequest =
+  | { shiftId: string; jobId: string }
+  | { action: "extract" }
+  | { action: "recheck"; taskId: string };
 
 /** Constants matching live Appwrite project Jammu */
 export const APPWRITE_IDS = {

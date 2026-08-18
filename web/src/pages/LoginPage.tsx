@@ -100,8 +100,6 @@ export function LoginPage() {
     setPassword(account.password);
   }
 
-  const formLocked = submitting || loading;
-
   return (
     <div className="login-page">
       <aside className="login-brand" aria-label="ShiftProof">
@@ -165,7 +163,7 @@ export function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={formLocked}
+                disabled={submitting}
               />
             </div>
             <div className="field">
@@ -175,10 +173,11 @@ export function LoginPage() {
                 name="password"
                 type="password"
                 autoComplete="current-password"
+                placeholder="Password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                disabled={formLocked}
+                disabled={submitting}
                 enterKeyHint="go"
               />
             </div>
@@ -186,7 +185,6 @@ export function LoginPage() {
               type="submit"
               fullWidth
               loading={submitting}
-              disabled={formLocked}
             >
               Sign in
             </Button>
@@ -211,7 +209,7 @@ export function LoginPage() {
                         : "login-demo-chip"
                     }
                     onClick={() => fillDemo(account)}
-                    disabled={formLocked}
+                    disabled={submitting}
                     aria-pressed={selected}
                     title={account.email}
                   >

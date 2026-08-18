@@ -1,4 +1,16 @@
-import type { AuditEvent } from "../types/shiftproof";
+import type { AuditEvent, FindingSource } from "../types/shiftproof";
+
+/** Product labels for finding source. Never present staff_recheck as AI. */
+export function formatFindingSource(source: FindingSource | string): string {
+  switch (source) {
+    case "staff_recheck":
+      return "Staff attested";
+    case "manager_override":
+      return "Manager override";
+    default:
+      return "AI";
+  }
+}
 
 /** Product labels for audit event types. */
 export function formatEventType(type: string): string {
@@ -9,6 +21,8 @@ export function formatEventType(type: string): string {
       return "Task created";
     case "task.recheck":
       return "Re-check photo";
+    case "finding.attested":
+      return "Staff attested";
     case "finding.rescored":
       return "Re-scored";
     case "task.done":

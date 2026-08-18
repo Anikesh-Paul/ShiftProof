@@ -48,6 +48,7 @@ web/scripts/fonts/
 .claude/
 .agents/
 .impeccable/
+/.scratch/
 /plans/
 /unpacked/
 /tpl_s5/

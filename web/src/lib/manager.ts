@@ -6,6 +6,7 @@ import { tables, DB, ID, Query, realtime, Channel } from "./appwrite";
 import {
   APPWRITE_IDS,
   type AgentJob,
+  type ChecklistItem,
   type Finding,
   type FindingStatus,
   type Shift,
@@ -16,13 +17,14 @@ import {
   DEMO_MANAGER_INBOX,
   DEMO_AGENT_TRACE,
   DEMO_REPEAT_OFFENDERS,
+  citationForFinding,
   getDemoShift,
   hydrateItemLabels,
   itemLabel,
   type ManagerShiftSummary,
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
-import { getChecklist, getLatestJob, parseChecklistItems } from "./shifts";
+import { getLatestJob, loadChecklistItems } from "./shifts";
 
 const T = APPWRITE_IDS.tables;
 
@@ -31,11 +33,20 @@ type RowData = Record<string, any>;
 
 export type { ManagerShiftSummary };
 export {
+  citationForFinding,
+  formatManagerWhen,
+  formatManagerWhenRange,
   hydrateItemLabels,
+  inboxCopy,
+  isHarnessName,
+  isKnownItemId,
   itemLabel,
+  openFixTitle,
   openGapCount,
   shiftsWithOpenGaps,
+  shortItemLabel,
 } from "./managerDemo";
+export type { FindingCitation, InboxCopyInput, InboxCopyView } from "./managerDemo";
 export { DEMO_MANAGER_INBOX } from "./managerDemo";
 
 const STUCK_MS = 10 * 60 * 1000;
@@ -59,9 +70,22 @@ export function isSameLocalDay(
   }
 }
 
-/** submitted/scoring longer than 10 minutes — manager can retry or close. */
-export function isStuckScoring(shift: Shift): boolean {
+/**
+ * submitted/scoring longer than 10 minutes — manager can retry or close.
+ * A waiting/running job that is itself not stale means not stuck, even when
+ * submittedAt is old (Retry just created a live job).
+ */
+export function isStuckScoring(
+  shift: Shift,
+  latestJob?: AgentJob | null,
+): boolean {
   if (shift.status !== "submitted" && shift.status !== "scoring") return false;
+  if (
+    latestJob &&
+    (latestJob.status === "waiting" || latestJob.status === "running")
+  ) {
+    return isStaleAgentJob(latestJob);
+  }
   const t = Date.parse(shift.submittedAt || shift.startedAt || "");
   if (Number.isNaN(t)) return true;
   return Date.now() - t > STUCK_MS;
@@ -77,8 +101,7 @@ export function isStaleAgentJob(job: AgentJob): boolean {
 
 async function ensureItemLabels(): Promise<void> {
   try {
-    const checklist = await getChecklist();
-    hydrateItemLabels(parseChecklistItems(checklist));
+    hydrateItemLabels(await loadChecklistItems());
   } catch {
     /* keep static map */
   }
@@ -445,9 +468,16 @@ function byTaskRecency(a: Task, b: Task) {
   return (b.createdAt || b.$createdAt).localeCompare(a.createdAt || a.$createdAt);
 }
 
+export type RecheckAttachResult = {
+  task: Task;
+  /** True when the Function or wait failed and the client wrote Attestation. */
+  fallback: boolean;
+};
+
 /**
- * Phase 3 / boost #3 — attach re-check photo, re-score finding, leave task open.
- * Manager marks done after reviewing the re-score.
+ * Persist the Re-check file on the Task, then score it via runShiftScore.
+ * Function writes the Finding (AI Pass / Gap / Unclear). Task stays open.
+ * Function or wait failure: client writes Attestation; Function wrote nothing.
  */
 export async function attachRecheckAndRescore(opts: {
   taskId: string;
@@ -455,9 +485,7 @@ export async function attachRecheckAndRescore(opts: {
   findingId: string;
   recheckFileId: string;
   userId: string;
-}): Promise<Task> {
-  const finding = await getFinding(opts.findingId);
-
+}): Promise<RecheckAttachResult> {
   const row = await tables.updateRow({
     databaseId: DB,
     tableId: T.tasks,
@@ -486,6 +514,30 @@ export async function attachRecheckAndRescore(opts: {
     } as RowData,
   });
 
+  const task = row as unknown as Task;
+
+  if (opts.shiftId.startsWith("demo_shift_")) {
+    await writeStaffAttestation(opts);
+    return { task, fallback: false };
+  }
+
+  const { runRecheckScore } = await import("./shifts");
+  try {
+    await runRecheckScore(opts.taskId);
+    return { task, fallback: false };
+  } catch {
+    await writeStaffAttestation(opts);
+    return { task, fallback: true };
+  }
+}
+
+async function writeStaffAttestation(opts: {
+  findingId: string;
+  shiftId: string;
+  recheckFileId: string;
+  userId: string;
+}): Promise<void> {
+  const finding = await getFinding(opts.findingId);
   const { rescoreFindingAfterRecheck } = await import("./scoreShift");
   await rescoreFindingAfterRecheck({
     findingId: opts.findingId,
@@ -494,29 +546,6 @@ export async function attachRecheckAndRescore(opts: {
     recheckFileId: opts.recheckFileId,
     actorUserId: opts.userId,
   });
-
-  return row as unknown as Task;
-}
-
-/**
- * @deprecated Prefer attachRecheckAndRescore (leaves task open for manager close).
- * Kept for any callers that expect close-on-upload.
- */
-export async function attachRecheckAndComplete(opts: {
-  taskId: string;
-  recheckFileId: string;
-}): Promise<Task> {
-  const row = await tables.updateRow({
-    databaseId: DB,
-    tableId: T.tasks,
-    rowId: opts.taskId,
-    data: {
-      recheckFileId: opts.recheckFileId,
-      status: "done",
-      doneAt: new Date().toISOString(),
-    } as RowData,
-  });
-  return row as unknown as Task;
 }
 
 /** API.md manager §9 — mark a stale waiting/running job failed. Shift unchanged. */
@@ -616,6 +645,23 @@ export async function listOpenTasks(): Promise<Task[]> {
   return result.rows as unknown as Task[];
 }
 
+/** Union by `$id`. `preferred` wins on conflict and keeps its order first. */
+export function mergeTasksById(preferred: Task[], other: Task[]): Task[] {
+  const seen = new Set<string>();
+  const out: Task[] = [];
+  for (const t of preferred) {
+    if (seen.has(t.$id)) continue;
+    seen.add(t.$id);
+    out.push(t);
+  }
+  for (const t of other) {
+    if (seen.has(t.$id)) continue;
+    seen.add(t.$id);
+    out.push(t);
+  }
+  return out;
+}
+
 /** API.md manager §6 — audit events for a shift. */
 export async function listEvents(shiftId: string): Promise<AuditEvent[]> {
   const result = await tables.listRows({
@@ -705,7 +751,7 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
       }))
       .filter((r) => r.count >= 2)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+      .slice(0, 4);
   } catch {
     return DEMO_REPEAT_OFFENDERS;
   }
@@ -714,10 +760,15 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
 export { DEMO_AGENT_TRACE, DEMO_REPEAT_OFFENDERS };
 
 /** Boost #1 — every finding must expose clause + quote + confidence. */
-export function hasForcedCitation(f: Finding): boolean {
+export function hasForcedCitation(
+  f: Finding,
+  items: ChecklistItem[] = [],
+): boolean {
+  const cite = citationForFinding(f, items);
   return Boolean(
-    f.clauseId?.trim() &&
-      f.quote?.trim() &&
+    !cite.gap &&
+      cite.clauseId &&
+      cite.quote &&
       typeof f.confidence === "number" &&
       f.confidence >= 0 &&
       f.confidence <= 1,
