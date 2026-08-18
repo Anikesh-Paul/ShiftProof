@@ -49,6 +49,11 @@ import {
   retryShiftScore,
   uploadSopPdf,
 } from "../../lib/shifts";
+import {
+  asInboxClusters,
+  clusterInboxRows,
+  todayInboxNeeds,
+} from "../../lib/inboxCluster";
 import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type { ChecklistItem, Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
@@ -298,24 +303,8 @@ export function ManagerHome() {
         return s.gapCount > 0 || s.unclearCount > 0;
       });
     }
-    const todayNeeds = todayItems.filter((s) => {
-      if (isStuckScoring(s.shift, s.latestJob)) return false;
-      if (
-        s.latestJob?.status === "failed" &&
-        s.gapCount === 0 &&
-        s.unclearCount === 0
-      ) {
-        return false;
-      }
-      return (
-        s.gapCount > 0 ||
-        s.unclearCount > 0 ||
-        s.shift.status === "submitted" ||
-        s.shift.status === "scoring"
-      );
-    });
-    return sortTodayInbox(todayNeeds);
-  }, [itemFilter, view, items, timeZone, todayItems]);
+    return todayInboxNeeds(items, timeZone);
+  }, [itemFilter, view, items, timeZone]);
 
   const listed = useMemo(
     () => (view === "all" ? asInboxClusters(defaultList) : clusterInboxRows(defaultList)),
@@ -1024,115 +1013,6 @@ function OpenFixRow({
       </Link>
     </li>
   );
-}
-
-function todayInboxRank(row: ManagerShiftSummary): number {
-  if (row.gapCount > 0) return 0;
-  if (row.unclearCount > 0) return 1;
-  if (row.latestJob?.status === "failed") return 3;
-  if (
-    isStuckScoring(row.shift, row.latestJob) ||
-    row.shift.status === "submitted" ||
-    row.shift.status === "scoring"
-  ) {
-    return 2;
-  }
-  return 4;
-}
-
-function sortTodayInbox(
-  rows: ManagerShiftSummary[],
-): ManagerShiftSummary[] {
-  return [...rows].sort((a, b) => todayInboxRank(a) - todayInboxRank(b));
-}
-
-type InboxCluster = {
-  row: ManagerShiftSummary;
-  count: number;
-  from: string;
-  to: string;
-};
-
-function clusterSubmittedAt(row: ManagerShiftSummary): string {
-  return row.shift.submittedAt || row.shift.startedAt || "";
-}
-
-function inboxClusterKey(row: ManagerShiftSummary): string {
-  const staff = row.shift.createdBy || displayStaffName(row.staffLabel);
-  const kind =
-    row.gapCount > 0
-      ? "gap"
-      : row.unclearCount > 0
-        ? "unclear"
-        : inboxRowKind(row, "today");
-  const open = row.findings
-    .filter((f) => f.status === "gap" || f.status === "unclear")
-    .map((f) => `${f.itemId}:${f.status}`)
-    .sort()
-    .join(",");
-  return `${staff}|${kind}|${open}`;
-}
-
-function stamp(iso: string): number {
-  const n = Date.parse(iso);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function pickClusterRepresentative(
-  members: ManagerShiftSummary[],
-): ManagerShiftSummary {
-  const first = members[0];
-  if (!first) {
-    throw new Error("inbox cluster is empty");
-  }
-  let best = first;
-  for (const row of members) {
-    const rank = todayInboxRank(row) - todayInboxRank(best);
-    if (rank < 0) {
-      best = row;
-      continue;
-    }
-    if (
-      rank === 0 &&
-      stamp(clusterSubmittedAt(row)) > stamp(clusterSubmittedAt(best))
-    ) {
-      best = row;
-    }
-  }
-  return best;
-}
-
-function asInboxClusters(rows: ManagerShiftSummary[]): InboxCluster[] {
-  return rows.map((row) => {
-    const when = clusterSubmittedAt(row);
-    return { row, count: 1, from: when, to: when };
-  });
-}
-
-function clusterInboxRows(rows: ManagerShiftSummary[]): InboxCluster[] {
-  const groups = new Map<string, ManagerShiftSummary[]>();
-  const order: string[] = [];
-  for (const row of rows) {
-    const key = inboxClusterKey(row);
-    const list = groups.get(key);
-    if (list) {
-      list.push(row);
-    } else {
-      groups.set(key, [row]);
-      order.push(key);
-    }
-  }
-  return order.map((key) => {
-    const members = groups.get(key) ?? [];
-    const row = pickClusterRepresentative(members);
-    const times = members.map(clusterSubmittedAt).filter(Boolean).sort();
-    return {
-      row,
-      count: members.length,
-      from: times[0] || clusterSubmittedAt(row),
-      to: times[times.length - 1] || clusterSubmittedAt(row),
-    };
-  });
 }
 
 function inboxRowKind(

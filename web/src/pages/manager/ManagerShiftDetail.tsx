@@ -37,6 +37,7 @@ import {
   itemLabel,
   listEvents,
   listTasks,
+  loadManagerInbox,
   loadManagerShift,
   markTaskDone,
   mergeTasksById,
@@ -52,12 +53,19 @@ import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   getChecklist,
   getEvidenceFileUrl,
+  getSite,
   parseChecklistItems,
   parsePhotoFileIds,
   photoForItem,
   retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
+import {
+  CLUSTER_SIBLING_CAP,
+  clusterRemainderCopy,
+  todayClusterForShift,
+  type ClusterRemainder,
+} from "../../lib/inboxCluster";
 import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type {
   AuditEvent,
@@ -115,6 +123,11 @@ export function ManagerShiftDetail() {
   const [missingPhotos, setMissingPhotos] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [clusterState, setClusterState] = useState<{
+    shiftId: string;
+    remainder: ClusterRemainder | null;
+  } | null>(null);
+  const [siblingsShowAll, setSiblingsShowAll] = useState(false);
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
@@ -249,6 +262,32 @@ export function ManagerShiftDetail() {
       cancelled = true;
     };
   }, [shiftId, loadExtras, user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSiblingsShowAll(false);
+    if (!shiftId) return;
+    void (async () => {
+      try {
+        const [inbox, site] = await Promise.all([
+          loadManagerInbox(),
+          getSite().catch(() => null),
+        ]);
+        if (cancelled) return;
+        const tz = site?.timezone || "Asia/Kolkata";
+        const cluster = todayClusterForShift(inbox.items, shiftId, tz);
+        setClusterState({
+          shiftId,
+          remainder: cluster ? clusterRemainderCopy(cluster, shiftId) : null,
+        });
+      } catch {
+        if (!cancelled) setClusterState({ shiftId, remainder: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shiftId]);
 
   useEffect(() => {
     if (source !== "live" || !shiftId) return;
@@ -918,6 +957,10 @@ export function ManagerShiftDetail() {
     );
   }
 
+  const remainder =
+    clusterState?.shiftId === shiftId ? clusterState.remainder : null;
+  const clusterReady = clusterState?.shiftId === shiftId;
+
   const openCount = item.gapCount + item.unclearCount;
   const evidenceIds = parsePhotoFileIds(item.shift.photoFileIds);
   const hasShiftPhotos = evidenceIds.length > 0;
@@ -991,7 +1034,10 @@ export function ManagerShiftDetail() {
           ) : null}
         </div>
 
-        <header className="stack-sm">
+        <header
+          className="stack-sm"
+          data-cluster-ready={clusterReady ? "true" : "false"}
+        >
           <h1>{scoreboardHeading(item)}</h1>
           {source === "demo" ? (
             <p className="caption muted">Sample data</p>
@@ -1004,6 +1050,59 @@ export function ManagerShiftDetail() {
             >
               {shiftStatusSentence(item)}
             </p>
+          ) : null}
+          {remainder ? (
+            <div className="cluster-remainder">
+              <p
+                className="muted"
+                data-testid="cluster-remainder"
+                role="status"
+              >
+                {remainder.line}
+              </p>
+              <details
+                key={shiftId}
+                className="cluster-siblings"
+                data-testid="cluster-siblings"
+                onToggle={(e) => {
+                  if (!e.currentTarget.open) setSiblingsShowAll(false);
+                }}
+              >
+                <summary className="text-btn cluster-siblings-trigger">
+                  {remainder.action}
+                </summary>
+                <ul className="cluster-sibling-list">
+                  {(siblingsShowAll
+                    ? remainder.siblings
+                    : remainder.siblings.slice(0, CLUSTER_SIBLING_CAP)
+                  ).map((row) => {
+                    const when = formatManagerWhen(
+                      row.shift.submittedAt || row.shift.startedAt,
+                    );
+                    return (
+                      <li key={row.shift.$id}>
+                        <Link
+                          to={`/manager/shifts/${row.shift.$id}`}
+                          className="cluster-sibling-link"
+                        >
+                          {displayStaffName(row.staffLabel)}
+                          {when ? ` · ${when}` : ""}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {remainder.siblings.length > CLUSTER_SIBLING_CAP ? (
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={() => setSiblingsShowAll((v) => !v)}
+                  >
+                    {siblingsShowAll ? "Show fewer" : "Show all"}
+                  </button>
+                ) : null}
+              </details>
+            </div>
           ) : null}
         </header>
 

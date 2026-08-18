@@ -220,4 +220,52 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
     assertNoPageErrors(errors);
   });
+
+  test("a Today cluster names the other openings on the representative", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    await login(page, MANAGER.email, MANAGER.password);
+    await expect(page.getByRole("tab", { name: /^today$/i })).toBeVisible({
+      timeout: 25_000,
+    });
+    await expect(page.getByRole("heading", { level: 1 }))
+      .not.toHaveText(/Checking shifts/i, { timeout: 25_000 });
+
+    const unique = page.locator("li:not([data-cluster-count]) > a.manager-row");
+    const cluster = page.locator("li[data-cluster-count]").first();
+    await expect(cluster).toBeVisible({ timeout: 25_000 });
+    const count = await cluster.getAttribute("data-cluster-count");
+    expect(Number(count)).toBeGreaterThan(1);
+
+    if (await unique.count()) {
+      await unique.first().click();
+      await page
+        .getByRole("heading", { level: 1 })
+        .filter({ hasNotText: /Checking/i })
+        .waitFor({ timeout: 25_000 });
+      await expect(page.locator("header[data-cluster-ready='true']")).toBeVisible({
+        timeout: 25_000,
+      });
+      await expect(page.getByTestId("cluster-remainder")).toHaveCount(0);
+      await page.getByRole("link", { name: /inbox/i }).click();
+      await expect(page.getByRole("tab", { name: /^today$/i })).toBeVisible({
+        timeout: 25_000,
+      });
+    }
+
+    await cluster.locator("a.manager-row").click();
+    await expect(page.locator("header[data-cluster-ready='true']")).toBeVisible({
+      timeout: 25_000,
+    });
+    const remainder = page.getByTestId("cluster-remainder");
+    await expect(remainder).toBeVisible({ timeout: 25_000 });
+    await expect(remainder).toContainText(`1 of ${count}`);
+    await expect(remainder).toContainText(/same-staff/i);
+    const siblings = page.getByTestId("cluster-siblings");
+    await expect(siblings.getByText(/see the other/i)).toBeVisible();
+    await siblings.locator("summary").click();
+    await expect(siblings.getByRole("link").first()).toBeVisible();
+    assertNoPageErrors(errors);
+  });
 });
