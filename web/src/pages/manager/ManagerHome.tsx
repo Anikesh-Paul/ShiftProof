@@ -53,8 +53,13 @@ import {
 import {
   asInboxClusters,
   clusterInboxRows,
-  todayInboxNeeds,
+  inboxRowsForView,
+  sortBacklogClusters,
 } from "../../lib/inboxCluster";
+import {
+  groupOpenFixesByItem,
+  type OpenFixItemGroup,
+} from "../../lib/openFixGroups";
 import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type { ChecklistItem, Sop, Task } from "../../types/shiftproof";
 import "./ManagerHome.css";
@@ -284,33 +289,16 @@ export function ManagerHome() {
   const todayGaps = todayItems.reduce((n, s) => n + s.gapCount, 0);
   const todayUnclear = todayItems.reduce((n, s) => n + s.unclearCount, 0);
 
-  const defaultList = useMemo(() => {
-    if (itemFilter) {
-      return items.filter((s) =>
-        s.findings.some(
-          (f) =>
-            f.itemId === itemFilter &&
-            (f.status === "gap" || f.status === "unclear"),
-        ),
-      );
-    }
-    if (view === "all") return items;
-    if (view === "backlog") {
-      return items.filter((s) => {
-        if (isSameLocalDay(s.shift.submittedAt || s.shift.startedAt, timeZone)) {
-          return false;
-        }
-        if (isStuckScoring(s.shift, s.latestJob)) return false;
-        return s.gapCount > 0 || s.unclearCount > 0;
-      });
-    }
-    return todayInboxNeeds(items, timeZone);
-  }, [itemFilter, view, items, timeZone]);
-
-  const listed = useMemo(
-    () => (view === "all" ? asInboxClusters(defaultList) : clusterInboxRows(defaultList)),
-    [defaultList, view],
+  const defaultList = useMemo(
+    () => inboxRowsForView(items, view, timeZone, itemFilter),
+    [itemFilter, view, items, timeZone],
   );
+
+  const listed = useMemo(() => {
+    if (view === "all") return asInboxClusters(defaultList);
+    const clusters = clusterInboxRows(defaultList);
+    return view === "backlog" ? sortBacklogClusters(clusters) : clusters;
+  }, [defaultList, view]);
 
   const sopReady = isSopFileReady(sop?.fileId);
   const waitingTasks = openTasks.filter((t) => !t.recheckFileId);
@@ -499,6 +487,20 @@ export function ManagerHome() {
         : failedCount === 1
           ? "1 score failed"
           : `${failedCount} scores failed`;
+  const emptyTodayDesk = view === "today" && todayGaps === 0 && !itemFilter;
+  const jobsUnderLede =
+    emptyTodayDesk && !loading && jobTargets.length > 0;
+  const hideTodayGlance = view === "today" && todayGaps === 0;
+  const hideTodayFixes = view === "today" && todayGaps === 0;
+  const jobsBanner = (
+    <JobsBanner
+      jobsLine={jobsLine}
+      retrying={retryingJobs}
+      toast={jobsToast}
+      onShowAll={() => setView("all")}
+      onRetry={() => void retryStuckJobs()}
+    />
+  );
 
   return (
     <div className="app-page stack manager-home">
@@ -515,6 +517,7 @@ export function ManagerHome() {
         <p className="muted manager-lede" data-testid="inbox-lede">
           {lede}
         </p>
+        {jobsUnderLede ? jobsBanner : null}
       </header>
 
       {source === "demo" && !loading ? (
@@ -608,7 +611,7 @@ export function ManagerHome() {
         </div>
       ) : null}
 
-      {!loading && openTasks.length > 0 ? (
+      {!loading && openTasks.length > 0 && !hideTodayFixes ? (
         <section
           className="manager-inbox"
           aria-label="Open fixes"
@@ -635,36 +638,18 @@ export function ManagerHome() {
           </button>
           {fixesExpanded ? (
             <div className="manager-fixes-expanded">
-              {waitingTasks.length > 0 ? (
-                <div className="manager-fix-group">
-                  <p className="manager-fix-group-label">
-                    Waiting on staff ({waitingTasks.length})
-                  </p>
-                  <ul className="list-plain manager-list">
-                    {(fixesShowAll
-                      ? waitingTasks
-                      : waitingTasks.slice(0, OPEN_FIX_CAP)
-                    ).map((task) => (
-                      <OpenFixRow key={task.$id} task={task} items={items} />
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {recheckTasks.length > 0 ? (
-                <div className="manager-fix-group">
-                  <p className="manager-fix-group-label">
-                    Re-check on file ({recheckTasks.length})
-                  </p>
-                  <ul className="list-plain manager-list">
-                    {(fixesShowAll
-                      ? recheckTasks
-                      : recheckTasks.slice(0, OPEN_FIX_CAP)
-                    ).map((task) => (
-                      <OpenFixRow key={task.$id} task={task} items={items} />
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+              <OpenFixBucket
+                label="Waiting on staff"
+                tasks={waitingTasks}
+                items={items}
+                showAll={fixesShowAll}
+              />
+              <OpenFixBucket
+                label="Re-check on file"
+                tasks={recheckTasks}
+                items={items}
+                showAll={fixesShowAll}
+              />
               {openFixOverflow ? (
                 <button
                   type="button"
@@ -700,7 +685,9 @@ export function ManagerHome() {
           ))}
         </div>
 
-        {!loading && (glanceChips.length > 0 || (itemFilter && !itemKnown)) ? (
+        {!loading &&
+        !hideTodayGlance &&
+        (glanceChips.length > 0 || (itemFilter && !itemKnown)) ? (
           <div
             className="manager-repeat-chips"
             data-testid="repeat-offender"
@@ -751,37 +738,13 @@ export function ManagerHome() {
           </div>
         ) : null}
 
-        {view === "today" && !itemFilter && !loading && jobTargets.length > 0 ? (
-          <div
-            className="manager-jobs-banner"
-            role="status"
-            data-testid="inbox-jobs"
-          >
-            <button
-              type="button"
-              className="manager-jobs-copy"
-              aria-label={`${jobsLine}. Show on All.`}
-              onClick={() => setView("all")}
-            >
-              {jobsLine}
-            </button>
-            <div className="manager-jobs-actions">
-              <Button
-                variant="quiet"
-                loading={retryingJobs}
-                data-testid="retry-stuck-jobs"
-                onClick={() => void retryStuckJobs()}
-              >
-                Retry all
-              </Button>
-              {jobsToast ? (
-                <p className="manager-sop-toast" role="status">
-                  {jobsToast}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        {!jobsUnderLede &&
+        view === "today" &&
+        !itemFilter &&
+        !loading &&
+        jobTargets.length > 0
+          ? jobsBanner
+          : null}
 
         {loading ? (
           <div className="stack-sm">
@@ -943,6 +906,105 @@ export function ManagerHome() {
         )}
       </section>
     </div>
+  );
+}
+
+function JobsBanner({
+  jobsLine,
+  retrying,
+  toast,
+  onShowAll,
+  onRetry,
+}: {
+  jobsLine: string;
+  retrying: boolean;
+  toast: string | null;
+  onShowAll: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      className="manager-jobs-banner"
+      role="status"
+      data-testid="inbox-jobs"
+    >
+      <button
+        type="button"
+        className="manager-jobs-copy"
+        aria-label={`${jobsLine}. Show on All.`}
+        onClick={onShowAll}
+      >
+        {jobsLine}
+      </button>
+      <div className="manager-jobs-actions">
+        <Button
+          variant="quiet"
+          loading={retrying}
+          data-testid="retry-stuck-jobs"
+          onClick={onRetry}
+        >
+          Retry all
+        </Button>
+        {toast ? (
+          <p className="manager-sop-toast" role="status">
+            {toast}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OpenFixBucket({
+  label,
+  tasks,
+  items,
+  showAll,
+}: {
+  label: string;
+  tasks: Task[];
+  items: ManagerShiftSummary[];
+  showAll: boolean;
+}) {
+  if (tasks.length === 0) return null;
+  const groups = showAll ? groupOpenFixesByItem(tasks, items) : [];
+  return (
+    <div className="manager-fix-group">
+      <p className="manager-fix-group-label">
+        {label} ({tasks.length})
+      </p>
+      <ul className="list-plain manager-list">
+        {showAll
+          ? groups.map((group) => (
+              <OpenFixItemRow
+                key={group.label.toLowerCase()}
+                group={group}
+              />
+            ))
+          : tasks.slice(0, OPEN_FIX_CAP).map((task) => (
+              <OpenFixRow key={task.$id} task={task} items={items} />
+            ))}
+      </ul>
+    </div>
+  );
+}
+
+function OpenFixItemRow({ group }: { group: OpenFixItemGroup }) {
+  const lead = group.tasks[0];
+  if (!lead) return null;
+  return (
+    <li data-item-id={group.itemId} data-group-count={group.count}>
+      <Link to={`/manager/shifts/${lead.shiftId}`} className="manager-row">
+        <div className="manager-row-main">
+          <p className="manager-row-staff">
+            {group.label} · {group.count}
+          </p>
+        </div>
+        <span className="manager-row-go" aria-hidden>
+          Review
+        </span>
+      </Link>
+    </li>
   );
 }
 

@@ -76,6 +76,10 @@
   max-width: 36ch;
 }
 
+.manager-home-header .manager-jobs-banner {
+  margin-top: var(--space-2);
+}
+
 /* —— Section chrome —— */
 
 .manager-inbox {

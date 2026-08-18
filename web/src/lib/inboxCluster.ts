@@ -1,10 +1,20 @@
 /**
  * Today inbox clustering: same staff + kind + open-item signature.
  * All stays an unclustered ledger — call asInboxClusters there.
+ * Backlog clusters sort with backlogInboxRank (photo + N Gap first).
  */
 import { displayStaffName } from "./staffNames";
 import { isSameLocalDay, isStuckScoring } from "./manager";
 import { shortItemLabel, type ManagerShiftSummary } from "./managerDemo";
+import { clusterSubmittedAt } from "./inboxRank";
+
+export {
+  backlogInboxRank,
+  clusterSubmittedAt,
+  rowHasInboxPhoto,
+  sortBacklogClusters,
+  sortBacklogInbox,
+} from "./inboxRank";
 
 export const CLUSTER_SIBLING_CAP = 4;
 
@@ -34,10 +44,6 @@ export function sortTodayInbox(
   rows: ManagerShiftSummary[],
 ): ManagerShiftSummary[] {
   return [...rows].sort((a, b) => todayInboxRank(a) - todayInboxRank(b));
-}
-
-export function clusterSubmittedAt(row: ManagerShiftSummary): string {
-  return row.shift.submittedAt || row.shift.startedAt || "";
 }
 
 export function inboxClusterKey(row: ManagerShiftSummary): string {
@@ -147,6 +153,51 @@ export function todayInboxNeeds(
     );
   });
   return sortTodayInbox(todayNeeds);
+}
+
+export type InboxListView = "today" | "backlog" | "all";
+
+function backlogInboxNeeds(
+  items: ManagerShiftSummary[],
+  timeZone: string,
+): ManagerShiftSummary[] {
+  return items.filter((s) => {
+    if (isSameLocalDay(s.shift.submittedAt || s.shift.startedAt, timeZone)) {
+      return false;
+    }
+    if (isStuckScoring(s.shift, s.latestJob)) return false;
+    return s.gapCount > 0 || s.unclearCount > 0;
+  });
+}
+
+function matchesInboxItem(
+  row: ManagerShiftSummary,
+  itemId: string,
+): boolean {
+  return row.findings.some(
+    (f) =>
+      f.itemId === itemId &&
+      (f.status === "gap" || f.status === "unclear"),
+  );
+}
+
+/**
+ * View first, then item. A chip must not replace Today with the all-time list.
+ */
+export function inboxRowsForView(
+  items: ManagerShiftSummary[],
+  view: InboxListView,
+  timeZone: string,
+  itemFilter?: string | null,
+): ManagerShiftSummary[] {
+  const scoped =
+    view === "all"
+      ? items
+      : view === "backlog"
+        ? backlogInboxNeeds(items, timeZone)
+        : todayInboxNeeds(items, timeZone);
+  if (!itemFilter) return scoped;
+  return scoped.filter((row) => matchesInboxItem(row, itemFilter));
 }
 
 export function todayClusterForShift(

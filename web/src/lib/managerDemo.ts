@@ -369,6 +369,23 @@ export function shortItemLabel(itemId: string): string {
   return shortenLabelText(live);
 }
 
+/** Match a stored title or id to the short map so Show all can group wobble. */
+export function knownItemFromText(
+  text: string,
+): { itemId: string; label: string } | null {
+  const needle = text.trim().toLowerCase();
+  if (!needle || isHarnessName(text)) return null;
+  for (const [id, label] of Object.entries(liveLabels)) {
+    if (isHarnessName(id) || isHarnessName(label)) continue;
+    if (id.toLowerCase() !== needle && label.toLowerCase() !== needle) {
+      continue;
+    }
+    const short = shortItemLabel(id) || label;
+    if (short && !isHarnessName(short)) return { itemId: id, label: short };
+  }
+  return null;
+}
+
 /** Always `Fix:` / `Retake:` + a short item. Never a bare Fix or a full SOP question. */
 export function openFixTitle(
   task: { title: string },
