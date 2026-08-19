@@ -16,9 +16,13 @@
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
 const { Client, TablesDB, Storage, ID, Query } = require("node-appwrite");
-const { thinkingConfigFor, fallbackModels, extractCallPolicy } = require(
-  __dirname.endsWith("src") ? "./thinking" : "./src/thinking",
-);
+const {
+  thinkingConfigFor,
+  fallbackModels,
+  scoringModels,
+  shouldSwitchGeminiModel,
+  extractCallPolicy,
+} = require(__dirname.endsWith("src") ? "./thinking" : "./src/thinking");
 const {
   parseExtractPayload,
   toChecklistItems,
@@ -390,9 +394,10 @@ async function callGeminiFlashOnce({
 }
 
 /**
- * Up to 3 attempts on 429/503/500/timeout. Skip daily-quota 429s (retrying
- * burns the same empty bucket). Drop thinking config once if Gemini 400s it.
- * Still fails cleanly if exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
+ * One attempt per model on 429/503/500/timeout. Scoring switches model on
+ * 503 or timeout so a hanging 3.6 does not burn the Function. Skip daily-quota
+ * 429s. Drop thinking config once if Gemini 400s it. Still fails cleanly if
+ * exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
  */
 async function callGeminiFlash({
   apiKey,
@@ -402,9 +407,10 @@ async function callGeminiFlash({
   log,
   thinkingLevel,
 }) {
-  const maxAttempts = 3;
+  const models =
+    thinkingLevel === "HIGH" ? fallbackModels(model) : scoringModels(model);
+  const maxAttempts = models.length;
   const started = Date.now();
-  const models = fallbackModels(model);
   let modelIdx = 0;
   let currentModel = models[0];
   let thinkingConfig = thinkingConfigFor(currentModel, thinkingLevel);
@@ -454,12 +460,15 @@ async function callGeminiFlash({
         String((e && e.message) || ""),
       );
       const retryable =
-        timedOut || isRetryableGeminiHttp(status) || (thinkingLevel === "HIGH" && noAnswer);
+        timedOut || isRetryableGeminiHttp(status) || noAnswer;
       if (attempt < maxAttempts && retryable) {
-        const switchModel =
-          thinkingLevel === "HIGH"
-            ? modelIdx + 1 < models.length
-            : status === 503 && modelIdx + 1 < models.length;
+        const switchModel = shouldSwitchGeminiModel({
+          thinkingLevel,
+          status,
+          timedOut,
+          noAnswer,
+          hasNext: modelIdx + 1 < models.length,
+        });
         if (switchModel) {
           modelIdx += 1;
           currentModel = models[modelIdx];

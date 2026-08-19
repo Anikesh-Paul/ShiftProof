@@ -24,7 +24,9 @@ Score one Re-check photo against that Task’s Finding (sync wait; no Agent job;
 
 Re-check loads `task.recheckFileId` + the linked Finding’s live Clause only. `ALLOW_DEMO_STUB_SCORES` is ignored. On Gemini error the Function writes nothing.
 
-Extract uses `thinkingLevel: HIGH` on the same Flash ladder as scoring: `gemini-3.7-flash`, then `gemini-3.6-flash`, then `gemini-3.5-flash-lite` if a model gives no answer. No 2.x fallback, no MEDIUM retry. Success rewrites `opening_fs.itemsJson` (3–8 items). Failure writes nothing to the Checklist.
+Extract uses `thinkingLevel: HIGH` on 3.x only: `gemini-3.7-flash`, then `gemini-3.6-flash`, then `gemini-3.5-flash-lite`. No 2.x fallback, no MEDIUM retry. Success rewrites `opening_fs.itemsJson` (3–8 items). Failure writes nothing to the Checklist.
+
+Scoring (`MEDIUM`) tries `GEMINI_MODEL` (default `gemini-flash-latest` → 3.7), then `gemini-3.5-flash-lite`, then `gemini-3.6-flash`. A 503, timeout, or empty answer switches model immediately — it does not retry the same hanging model. 2.x models 404 on new AI Studio keys.
 
 ## Default path (Gemini Flash)
 
