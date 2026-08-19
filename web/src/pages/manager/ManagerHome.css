@@ -239,14 +239,6 @@
   border-color: transparent;
 }
 
-.manager-row.is-pass {
-  background: transparent;
-  border-color: transparent;
-  border-bottom: 1px solid var(--separator);
-  border-radius: 0;
-  padding-inline: 0;
-}
-
 .manager-row-thumb {
   width: 2.5rem;
   height: 2.5rem;
@@ -647,7 +639,7 @@
     font-size: 2rem;
   }
 
-  .manager-row:not(.is-pass) {
+  .manager-row {
     padding: var(--space-3) var(--space-5);
   }
 }
