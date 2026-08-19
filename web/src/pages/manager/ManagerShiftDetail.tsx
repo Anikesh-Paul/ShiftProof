@@ -1037,6 +1037,7 @@ export function ManagerShiftDetail() {
         className="app-page stack manager-detail-page"
         inert={formOpen ? true : undefined}
       >
+        <div className="manager-detail-top">
         <div className="manager-detail-nav">
           <Link to="/manager" className="back-link">
             ← Inbox
@@ -1085,7 +1086,7 @@ export function ManagerShiftDetail() {
         </div>
 
         <header
-          className="stack-sm"
+          className="manager-detail-identity"
           data-cluster-ready={clusterReady ? "true" : "false"}
         >
           <h1>{scoreboardHeading(item)}</h1>
@@ -1099,6 +1100,20 @@ export function ManagerShiftDetail() {
               data-status={shiftStatusCode(item)}
             >
               {shiftStatusSentence(item)}
+            </p>
+          ) : null}
+          {hasFindings && tallyParts.length > 0 ? (
+            <p className="manager-tally" aria-label="Finding counts">
+              {tallyParts.map((part, i) => (
+                <span key={part.label}>
+                  {i > 0 ? (
+                    <span className="tally-sep" aria-hidden>
+                      ·
+                    </span>
+                  ) : null}
+                  <strong>{part.n}</strong> {part.label}
+                </span>
+              ))}
             </p>
           ) : null}
           {remainder ? (
@@ -1155,6 +1170,7 @@ export function ManagerShiftDetail() {
             </div>
           ) : null}
         </header>
+        </div>
 
         {stuck ? (
           <div
@@ -1182,21 +1198,7 @@ export function ManagerShiftDetail() {
           </div>
         ) : null}
 
-        {hasFindings && tallyParts.length > 0 ? (
-        <p className="manager-tally" aria-label="Finding counts">
-          {tallyParts.map((part, i) => (
-            <span key={part.label}>
-              {i > 0 ? (
-                <span className="tally-sep" aria-hidden>
-                  ·
-                </span>
-              ) : null}
-              <strong>{part.n}</strong> {part.label}
-            </span>
-          ))}
-        </p>
-        ) : null}
-
+        <div className="manager-findings-block">
         {agentTrace && hasFindings ? (
           <section
             className="agent-trace"
@@ -1352,100 +1354,101 @@ export function ManagerShiftDetail() {
                     data-finding-id={f.$id}
                     data-source={f.source}
                     data-testid="finding-row"
-                    className={`finding-row ${isSelected ? "is-selected" : ""}`}
+                    className={`finding-row${isSelected ? " is-selected" : ""}${photoId ? " has-photo" : ""}`}
                   >
-                    <div className="finding-row-top">
-                      <FindingChip status={f.status} />
-                    </div>
-                    <div className="finding-title-row">
-                      <p className="finding-title">{glanceLabel(f.itemId)}</p>
-                      {photoId ? (
-                        <button
-                          type="button"
-                          className="finding-photo"
-                          disabled={missingPhotos.has(photoId)}
-                          onClick={() => openEvidence(photoId, photoIndex)}
-                          aria-label={
-                            missingPhotos.has(photoId)
-                              ? "Photo unavailable"
-                              : "View evidence photo"
-                          }
-                        >
-                          <EvidenceImg
-                            fileId={photoId}
-                            alt=""
-                            className="finding-photo-img"
-                            compact
-                            onMissingChange={onPhotoMissing}
-                          />
-                        </button>
-                      ) : null}
-                    </div>
-                    <p
-                      className="citation-bar caption"
-                      data-testid="citation"
-                      data-citation={cite.gap ? "missing" : "ok"}
-                    >
-                      {cite.gap
-                        ? "No clause cited"
-                        : cite.clauseId}{" "}
-                      · {confidenceBand(f.confidence)}
-                    </p>
-                    {cite.quote ? (
-                    <p className="finding-quote muted">“{cite.quote}”</p>
+                    {photoId ? (
+                      <button
+                        type="button"
+                        className="finding-photo"
+                        disabled={missingPhotos.has(photoId)}
+                        onClick={() => openEvidence(photoId, photoIndex)}
+                        aria-label={
+                          missingPhotos.has(photoId)
+                            ? "Photo unavailable"
+                            : "View evidence photo"
+                        }
+                      >
+                        <EvidenceImg
+                          fileId={photoId}
+                          alt=""
+                          className="finding-photo-img"
+                          compact
+                          onMissingChange={onPhotoMissing}
+                        />
+                      </button>
                     ) : null}
-                    {note ? (
-                      <p className="finding-note caption">{note}</p>
-                    ) : null}
-                    {f.overrideReason ? (
+                    <div className="finding-main">
+                      <div className="finding-heading">
+                        <FindingChip status={f.status} />
+                        <p className="finding-title">{glanceLabel(f.itemId)}</p>
+                      </div>
                       <p
-                        className="override-reason caption"
-                        data-testid="override-reason"
+                        className="citation-bar caption"
+                        data-testid="citation"
+                        data-citation={cite.gap ? "missing" : "ok"}
                       >
-                        Override: {f.overrideReason}
+                        {cite.gap
+                          ? "No clause cited"
+                          : cite.clauseId}{" "}
+                        · {confidenceBand(f.confidence)}
                       </p>
-                    ) : null}
-                    {f.source && f.source !== "ai" ? (
-                      <p
-                        className="finding-conf caption"
-                        data-testid="finding-source"
-                        data-source={f.source}
-                      >
-                        {formatFindingSource(f.source)}
-                      </p>
-                    ) : null}
-                    <div className="finding-actions">
-                      {openTasks.some((t) => t.findingId === f.$id) ? (
-                        <Button
-                          variant="secondary"
-                          disabled={saving}
-                          onClick={() => focusTask(f.$id)}
-                        >
-                          View open fix
-                        </Button>
-                      ) : f.status === "gap" ||
-                        (f.status === "unclear" && hasShiftPhotos) ? (
-                        <Button
-                          variant={
-                            f.status === "gap" && !hasShiftPhotos
-                              ? "secondary"
-                              : "primary"
-                          }
-                          disabled={saving}
-                          onClick={() => startAssign(f)}
-                        >
-                          {f.status === "unclear"
-                            ? "Request photo"
-                            : "Assign fix"}
-                        </Button>
+                      {cite.quote ? (
+                      <p className="finding-quote muted">“{cite.quote}”</p>
                       ) : null}
-                      <Button
-                        variant="quiet"
-                        disabled={saving}
-                        onClick={() => startOverride(f)}
-                      >
-                        Override
-                      </Button>
+                      {note ? (
+                        <p className="finding-note caption">{note}</p>
+                      ) : null}
+                      {f.overrideReason ? (
+                        <p
+                          className="override-reason caption"
+                          data-testid="override-reason"
+                        >
+                          Override: {f.overrideReason}
+                        </p>
+                      ) : null}
+                      {f.source && f.source !== "ai" ? (
+                        <p
+                          className="finding-conf caption"
+                          data-testid="finding-source"
+                          data-source={f.source}
+                        >
+                          {formatFindingSource(f.source)}
+                        </p>
+                      ) : null}
+                      <div className="finding-actions">
+                        {openTasks.some((t) => t.findingId === f.$id) ? (
+                          <Button
+                            variant="secondary"
+                            disabled={saving}
+                            onClick={() => focusTask(f.$id)}
+                          >
+                            View open fix
+                          </Button>
+                        ) : f.status === "gap" ||
+                          (f.status === "unclear" && hasShiftPhotos) ? (
+                          <Button
+                            variant={
+                              f.status === "gap" && !hasShiftPhotos
+                                ? "secondary"
+                                : "primary"
+                            }
+                            disabled={saving}
+                            onClick={() => startAssign(f)}
+                          >
+                            {f.status === "unclear"
+                              ? "Request photo"
+                              : "Assign fix"}
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="quiet"
+                          className="finding-override"
+                          disabled={saving}
+                          onClick={() => startOverride(f)}
+                        >
+                          Override
+                        </Button>
+                      </div>
                     </div>
                   </article>
                 </li>
@@ -1453,6 +1456,7 @@ export function ManagerShiftDetail() {
             })}
           </ul>
         )}
+        </div>
 
         {evidenceIds.length > 0 ? (
           <section

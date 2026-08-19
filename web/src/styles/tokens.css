@@ -41,6 +41,8 @@
   --chrome-bg: var(--bg-elevated);
   --chrome-border: oklch(0.2 0.02 40 / 0.07);
   --scrim: oklch(0.15 0.02 30 / 0.4);
+  --scrim-subtle: oklch(0 0 0 / 0.5);
+  --scrim-photo: oklch(0 0 0 / 0.55);
 
   --radius-sm: 10px;
   --radius-md: 14px;
@@ -59,6 +61,16 @@
   --content-wide: 36rem;
   --shell-max: 42rem;
   --touch: 48px;
+
+  /* Typography scale */
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.875rem;
 
   /* Stylish product pair: serif display + geometric sans UI */
   --font: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -105,6 +117,9 @@
     --warning-soft: oklch(0.84 0.12 85 / 0.14);
     --chrome-bg: var(--bg-elevated);
     --chrome-border: oklch(0.95 0.01 80 / 0.08);
+    --scrim: oklch(0 0 0 / 0.6);
+    --scrim-subtle: oklch(0 0 0 / 0.6);
+    --scrim-photo: oklch(0 0 0 / 0.65);
     --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.35);
     --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 24px oklch(0 0 0 / 0.35);
     --shadow-sticky: 0 -8px 28px oklch(0 0 0 / 0.4);
