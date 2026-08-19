@@ -105,19 +105,30 @@
   margin: var(--space-2) 0 0;
 }
 
+/* SOP + open-fixes: quiet lines, not 48px rows above the inbox */
+.manager-desk-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.manager-desk-lines .manager-fixes {
+  gap: var(--space-2);
+}
+
 .manager-fixes-summary {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: var(--touch);
+  min-height: 0;
   margin: 0;
-  padding: 0;
+  padding: 0.2rem 0;
   border: none;
   background: transparent;
   font: inherit;
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--label-secondary);
   text-align: left;
   cursor: pointer;
@@ -132,6 +143,7 @@
 .manager-fixes-summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .manager-fixes-expanded {
@@ -396,6 +408,7 @@
 .manager-repeat-chip {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-1);
   flex: 0 0 auto;
   min-height: var(--touch);
   margin: 0;
@@ -409,6 +422,12 @@
   letter-spacing: -0.015em;
   color: var(--label-secondary);
   cursor: pointer;
+}
+
+.manager-repeat-chip-rate {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  opacity: 0.82;
 }
 
 @media (min-width: 768px) {
@@ -454,15 +473,12 @@
   background: var(--warning-soft);
 }
 
-.manager-jobs-copy {
-  appearance: none;
+.text-btn.manager-jobs-copy {
   display: inline-flex;
   align-items: center;
   min-height: var(--touch);
   margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
+  padding: 0 var(--space-1);
   font: inherit;
   font-size: 0.875rem;
   font-weight: 600;
@@ -470,19 +486,22 @@
   color: var(--warning-ink);
   text-align: left;
   cursor: pointer;
+  border-radius: var(--radius-sm);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .manager-jobs-copy:hover {
+  .text-btn.manager-jobs-copy:hover {
+    color: var(--warning-ink);
     text-decoration: underline;
     text-underline-offset: 0.2em;
   }
 }
 
-.manager-jobs-copy:focus-visible {
+.text-btn.manager-jobs-copy:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+  box-shadow: var(--ring);
 }
 
 .manager-jobs-actions {
@@ -492,6 +511,31 @@
   gap: var(--space-3);
 }
 
+.text-btn.manager-jobs-retry {
+  min-height: 0;
+  padding-block: 0.15rem;
+  padding-inline: var(--space-1);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--warning-ink);
+  border-radius: var(--radius-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .text-btn.manager-jobs-retry:hover {
+    color: var(--warning-ink);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+}
+
+.text-btn.manager-jobs-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--ring);
+}
+
 /* —— SOP: Missing + Upload, or Opening check disclosure + Replace —— */
 
 .manager-sop-missing,
@@ -499,8 +543,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: var(--space-3);
-  font-size: 0.875rem;
+  gap: var(--space-2);
+  font-size: 0.8125rem;
   font-weight: 500;
   color: var(--label-secondary);
 }
@@ -533,17 +577,26 @@
 .manager-sop-details summary {
   display: flex;
   align-items: center;
-  min-height: var(--touch);
+  min-height: 0;
+  padding-block: 0.2rem;
   cursor: pointer;
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--label-secondary);
 }
 
 .manager-sop-panel > .text-btn,
 .manager-sop-missing > .text-btn {
-  min-height: var(--touch);
-  padding-inline: var(--space-3);
+  min-height: 0;
+  padding-block: 0.2rem;
+  padding-inline: 0;
+  font-weight: 500;
+}
+
+.manager-sop-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .manager-sop-details[open] summary {

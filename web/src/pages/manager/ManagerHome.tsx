@@ -542,132 +542,137 @@ export function ManagerHome() {
         </div>
       ) : null}
 
-      {!sopLoading ? (
-        <div
-          className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
-          data-testid="sop-upload"
-        >
-          <input
-            ref={sopInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="manager-sop-file"
-            tabIndex={-1}
-            onChange={(e) => void onSopFileChange(e)}
-            disabled={sopUploading}
-          />
-          {!sopReady ? (
-            <>
-              <span>Missing</span>
-              <button
-                type="button"
-                className="text-btn"
-                disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Upload
-              </button>
-            </>
-          ) : (
-            <>
-              <details className="manager-sop-details">
-                <summary>
-                  {liveItems.length > 0
-                    ? `Opening check · ${liveItems.length} items`
-                    : "Opening check"}
-                </summary>
-                {liveItems.length > 0 ? (
-                  <ol
-                    className="manager-sop-clauses"
-                    data-testid="live-clause-set"
-                  >
-                    {liveItems.map((item) => (
-                      <li key={item.id}>{item.label}</li>
-                    ))}
-                  </ol>
-                ) : null}
-              </details>
-              <button
-                type="button"
-                className="text-btn"
-                disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Replace
-              </button>
-            </>
-          )}
-          {sopUploading ? (
-            <p className="manager-sop-toast" role="status">
-              Reading the SOP…
-            </p>
-          ) : sopMessage ? (
-            <p className="manager-sop-toast" role="status">
-              {sopMessage}
-            </p>
-          ) : null}
-          {sopError ? (
-            <div className="error-banner" role="alert">
-              {sopError}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {!loading && openTasks.length > 0 && !hideTodayFixes ? (
-        <section
-          className="manager-inbox"
-          aria-label="Open fixes"
-          data-testid="open-fixes"
-        >
-          <button
-            type="button"
-            className="manager-fixes-summary"
-            aria-expanded={fixesExpanded}
-            onClick={() => {
-              setFixesExpanded((v) => {
-                if (v) setFixesShowAll(false);
-                return !v;
-              });
-            }}
-          >
-            {openTasks.length === 1
-              ? "1 open fix"
-              : `${openTasks.length} open fixes`}
-            {" · "}
-            {waitingOnStaff === 1
-              ? "1 waiting on staff"
-              : `${waitingOnStaff} waiting on staff`}
-          </button>
-          {fixesExpanded ? (
+      {(!sopLoading ||
+        (!loading && openTasks.length > 0 && !hideTodayFixes)) ? (
+        <div className="manager-desk-lines">
+          {!sopLoading ? (
             <div
-              className={`manager-fixes-expanded${fixesShowAll ? " is-show-all" : ""}`}
+              className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
+              data-testid="sop-upload"
             >
-              <OpenFixBucket
-                label="Waiting on staff"
-                tasks={waitingTasks}
-                items={items}
-                showAll={fixesShowAll}
+              <input
+                ref={sopInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="manager-sop-file"
+                tabIndex={-1}
+                onChange={(e) => void onSopFileChange(e)}
+                disabled={sopUploading}
               />
-              <OpenFixBucket
-                label="Re-check on file"
-                tasks={recheckTasks}
-                items={items}
-                showAll={fixesShowAll}
-              />
-              {openFixOverflow ? (
-                <button
-                  type="button"
-                  className="text-btn"
-                  aria-pressed={fixesShowAll}
-                  onClick={() => setFixesShowAll((v) => !v)}
-                >
-                  {fixesShowAll ? "Show less" : "Show all"}
-                </button>
+              {!sopReady ? (
+                <>
+                  <span>Missing</span>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    disabled={sopUploading}
+                    onClick={() => sopInputRef.current?.click()}
+                  >
+                    Upload
+                  </button>
+                </>
+              ) : (
+                <>
+                  <details className="manager-sop-details">
+                    <summary>
+                      {liveItems.length > 0
+                        ? `Opening check · ${liveItems.length} items`
+                        : "Opening check"}
+                    </summary>
+                    {liveItems.length > 0 ? (
+                      <ol
+                        className="manager-sop-clauses"
+                        data-testid="live-clause-set"
+                      >
+                        {liveItems.map((item) => (
+                          <li key={item.id}>{item.label}</li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </details>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    disabled={sopUploading}
+                    onClick={() => sopInputRef.current?.click()}
+                  >
+                    Replace
+                  </button>
+                </>
+              )}
+              {sopUploading ? (
+                <p className="manager-sop-toast" role="status">
+                  Reading the SOP…
+                </p>
+              ) : sopMessage ? (
+                <p className="manager-sop-toast" role="status">
+                  {sopMessage}
+                </p>
+              ) : null}
+              {sopError ? (
+                <div className="error-banner" role="alert">
+                  {sopError}
+                </div>
               ) : null}
             </div>
           ) : null}
-        </section>
+
+          {!loading && openTasks.length > 0 && !hideTodayFixes ? (
+            <section
+              className="manager-inbox manager-fixes"
+              aria-label="Open fixes"
+              data-testid="open-fixes"
+            >
+              <button
+                type="button"
+                className="manager-fixes-summary"
+                aria-expanded={fixesExpanded}
+                onClick={() => {
+                  setFixesExpanded((v) => {
+                    if (v) setFixesShowAll(false);
+                    return !v;
+                  });
+                }}
+              >
+                {openTasks.length === 1
+                  ? "1 open fix"
+                  : `${openTasks.length} open fixes`}
+                {" · "}
+                {waitingOnStaff === 1
+                  ? "1 waiting on staff"
+                  : `${waitingOnStaff} waiting on staff`}
+              </button>
+              {fixesExpanded ? (
+                <div
+                  className={`manager-fixes-expanded${fixesShowAll ? " is-show-all" : ""}`}
+                >
+                  <OpenFixBucket
+                    label="Waiting on staff"
+                    tasks={waitingTasks}
+                    items={items}
+                    showAll={fixesShowAll}
+                  />
+                  <OpenFixBucket
+                    label="Re-check on file"
+                    tasks={recheckTasks}
+                    items={items}
+                    showAll={fixesShowAll}
+                  />
+                  {openFixOverflow ? (
+                    <button
+                      type="button"
+                      className="text-btn"
+                      aria-pressed={fixesShowAll}
+                      onClick={() => setFixesShowAll((v) => !v)}
+                    >
+                      {fixesShowAll ? "Show less" : "Show all"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+        </div>
       ) : null}
 
       <section className="manager-inbox" aria-label="Inbox">
@@ -715,11 +720,18 @@ export function ManagerHome() {
                 type="button"
                 className={`manager-repeat-chip${itemFilter === r.itemId ? " is-active" : ""}`}
                 aria-pressed={itemFilter === r.itemId}
+                aria-label={`${shortItemLabel(r.itemId)}: gap in ${r.count} of last ${r.of} shifts`}
+                title={`Gap in ${r.count} of last ${r.of} shifts`}
                 onClick={() =>
                   setItemFilter(itemFilter === r.itemId ? null : r.itemId)
                 }
               >
-                {shortItemLabel(r.itemId)} {r.count}/{r.of}
+                <span className="manager-repeat-chip-label">
+                  {shortItemLabel(r.itemId)}
+                </span>{" "}
+                <span className="manager-repeat-chip-rate" aria-hidden="true">
+                  {r.count}/{r.of}
+                </span>
               </button>
             ))}
           </div>
@@ -935,21 +947,23 @@ function JobsBanner({
     >
       <button
         type="button"
-        className="manager-jobs-copy"
+        className="text-btn manager-jobs-copy"
         aria-label={`${jobsLine}. Show on All.`}
         onClick={onShowAll}
       >
         {jobsLine}
       </button>
       <div className="manager-jobs-actions">
-        <Button
-          variant="quiet"
-          loading={retrying}
+        <button
+          type="button"
+          className="text-btn manager-jobs-retry"
           data-testid="retry-stuck-jobs"
+          disabled={retrying}
+          aria-busy={retrying || undefined}
           onClick={onRetry}
         >
-          Retry all
-        </Button>
+          {retrying ? "Retrying…" : "Retry all"}
+        </button>
         {toast ? (
           <p className="manager-sop-toast" role="status">
             {toast}
