@@ -184,10 +184,10 @@
 }
 
 .shell-nav-link {
-  min-height: 2.25rem;
+  min-height: 2.625rem;
   display: inline-flex;
   align-items: center;
-  padding: 0 0.7rem;
+  padding: 0 0.8rem;
   border-radius: var(--radius-pill);
   color: var(--label-secondary);
   font-size: 0.8125rem;
@@ -202,6 +202,11 @@
 
 .shell-nav-link:active {
   transform: scale(0.97);
+}
+
+.shell-nav-link:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -375,29 +375,31 @@ export function ShiftPhotos() {
     newLocals.forEach((l) => cancelledLocals.current.delete(l.localId));
     setLocals((prev) => [...prev, ...newLocals]);
 
-    for (const local of newLocals) {
-      try {
-        const fileId = await uploadEvidence(local.file);
-        await commitUploadedFile(local.localId, fileId);
-      } catch (err) {
-        if (cancelledLocals.current.has(local.localId)) {
-          cancelledLocals.current.delete(local.localId);
-          continue;
+    await Promise.all(
+      newLocals.map(async (local) => {
+        try {
+          const fileId = await uploadEvidence(local.file);
+          await commitUploadedFile(local.localId, fileId);
+        } catch (err) {
+          if (cancelledLocals.current.has(local.localId)) {
+            cancelledLocals.current.delete(local.localId);
+            return;
+          }
+          setLocals((prev) =>
+            prev.map((p) =>
+              p.localId === local.localId
+                ? {
+                    ...p,
+                    uploading: false,
+                    error: getErrorMessage(err, "Upload failed"),
+                  }
+                : p,
+            ),
+          );
+          setError(getErrorMessage(err, "Upload failed"));
         }
-        setLocals((prev) =>
-          prev.map((p) =>
-            p.localId === local.localId
-              ? {
-                  ...p,
-                  uploading: false,
-                  error: getErrorMessage(err, "Upload failed"),
-                }
-              : p,
-          ),
-        );
-        setError(getErrorMessage(err, "Upload failed"));
-      }
-    }
+      }),
+    );
   }
 
   async function retryLocal(item: LocalPhoto) {
@@ -715,6 +717,11 @@ export function ShiftPhotos() {
                           {note}
                         </p>
                       ) : null}
+                      {f.status === "unclear" ? (
+                        <p className="caption staff-unclear-tip">
+                          Tip: Frame clearly with direct lighting and ensure gauges or labels are visible.
+                        </p>
+                      ) : null}
                       {assigned &&
                       (!assigned.recheckFileId || f.status !== "pass") ? (
                         <div className="staff-score-recheck-open">
@@ -883,7 +890,6 @@ export function ShiftPhotos() {
         ref={inputRef}
         type="file"
         accept={PHOTO_ACCEPT}
-        capture="environment"
         multiple
         className="visually-hidden"
         data-testid="staff-evidence-input"
@@ -979,14 +985,33 @@ export function ShiftPhotos() {
       ) : null}
 
       {canAddPhoto ? (
-        <button
-          type="button"
-          className="text-btn"
-          data-testid="add-photo-btn"
-          onClick={() => inputRef.current?.click()}
-        >
-          Add photos
-        </button>
+        fileIds.length === 0 && locals.length === 0 ? (
+          <button
+            type="button"
+            className="photo-empty-dropzone"
+            data-testid="add-photo-btn"
+            onClick={() => inputRef.current?.click()}
+          >
+            <span className="photo-empty-icon" aria-hidden>
+              📷
+            </span>
+            <span className="photo-empty-copy">
+              <span className="photo-empty-title">Add photos</span>
+              <span className="photo-empty-sub caption">
+                3–8 photos covering the checklist above
+              </span>
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="text-btn photo-add-more-btn"
+            data-testid="add-photo-btn"
+            onClick={() => inputRef.current?.click()}
+          >
+            Add photos
+          </button>
+        )
       ) : null}
 
       <p className="caption photo-formats">

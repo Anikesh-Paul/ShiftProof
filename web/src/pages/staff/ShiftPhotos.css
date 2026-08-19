@@ -522,7 +522,7 @@
   width: 3.25rem;
   height: 3.25rem;
   margin: 0 auto;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--success-soft);
   color: var(--success);
   display: flex;
@@ -531,3 +531,83 @@
   font-size: 1.5rem;
   font-weight: 700;
 }
+
+.photo-empty-dropzone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4);
+  border: 1.5px dashed var(--separator-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  min-height: var(--touch);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--dur-ui) var(--ease-out),
+    background-color var(--dur-ui) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.photo-empty-dropzone:hover {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.photo-empty-dropzone:active {
+  transform: scale(0.985);
+}
+
+.photo-empty-dropzone:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.photo-empty-icon {
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-pill);
+  background: var(--fill-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.photo-empty-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.photo-empty-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  letter-spacing: -0.015em;
+  color: var(--label);
+}
+
+.photo-empty-sub {
+  margin: 0;
+  color: var(--label-secondary);
+}
+
+.photo-add-more-btn {
+  min-height: var(--touch);
+  display: inline-flex;
+  align-items: center;
+}
+
+.staff-unclear-tip {
+  margin: 0.15rem 0 0;
+  color: var(--warning-ink);
+  font-size: 0.8125rem;
+}
+

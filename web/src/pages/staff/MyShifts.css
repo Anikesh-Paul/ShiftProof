@@ -80,8 +80,8 @@
 }
 
 .history-filter {
-  min-height: 2.25rem;
-  padding: 0 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
   border: none;
   border-radius: var(--radius-pill);
   background: var(--fill);
@@ -90,11 +90,29 @@
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color var(--dur-ui) var(--ease-out),
+    color var(--dur-ui) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.history-filter:active {
+  transform: scale(0.97);
+}
+
+.history-filter:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .history-filter.is-active {
   background: var(--fill-strong);
   color: var(--label);
 }
+
 
 
