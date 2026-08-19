@@ -416,6 +416,8 @@ export type InboxCopyInput = {
   itemKnown: boolean;
   view: InboxCopyView;
   listedCount: number;
+  /** True when the recency page is not the whole board. */
+  listTruncated?: boolean;
   todayGaps: number;
   todayUnclear: number;
   checksInProgress: boolean;
@@ -427,9 +429,10 @@ export type InboxCopyInput = {
 
 /**
  * Inbox H1 + lede. All is the ledger (painted row count), not today’s
- * gap count. An item chip keeps the short label and names how many
- * openings the list actually paints. Backlog / unknown-item copy is
- * locked — do not restyle those branches for variety.
+ * gap count. When the recency page is a window, All must not say every
+ * opening is on file. An item chip keeps the short label and names how
+ * many openings the list actually paints. Backlog / unknown-item copy
+ * is locked — do not restyle those branches for variety.
  */
 export function inboxCopy(input: InboxCopyInput): {
   headline: string;
@@ -441,6 +444,7 @@ export function inboxCopy(input: InboxCopyInput): {
     itemKnown,
     view,
     listedCount,
+    listTruncated = false,
     todayGaps,
     todayUnclear,
     checksInProgress,
@@ -498,7 +502,9 @@ export function inboxCopy(input: InboxCopyInput): {
     const lede =
       listedCount === 0
         ? "When staff submit an opening check, it lands here."
-        : "Every opening on file. Today stays on Today.";
+        : listTruncated
+          ? "Latest openings on file. Today stays on Today."
+          : "Every opening on file. Today stays on Today.";
     return { headline, lede };
   }
 

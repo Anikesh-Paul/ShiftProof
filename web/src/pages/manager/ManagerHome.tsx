@@ -85,6 +85,7 @@ export function ManagerHome() {
 
   const [items, setItems] = useState<ManagerShiftSummary[]>([]);
   const [source, setSource] = useState<"live" | "demo">("demo");
+  const [listTruncated, setListTruncated] = useState(false);
   const [siteName, setSiteName] = useState("");
   const [timeZone, setTimeZone] = useState("Asia/Kolkata");
   const [loading, setLoading] = useState(true);
@@ -150,6 +151,7 @@ export function ManagerHome() {
       }
       setItems(inbox.items);
       setSource(inbox.source);
+      setListTruncated(inbox.source === "live" && inbox.truncated);
       if (site?.name) setSiteName(site.name);
       if (site?.timezone) setTimeZone(site.timezone);
       setRepeatOffenders(
@@ -328,6 +330,7 @@ export function ManagerHome() {
     itemKnown,
     view,
     listedCount: listed.length,
+    listTruncated,
     todayGaps,
     todayUnclear,
     checksInProgress: stuckItems.length > 0 || waitingShifts.length > 0,
@@ -637,7 +640,9 @@ export function ManagerHome() {
               : `${waitingOnStaff} waiting on staff`}
           </button>
           {fixesExpanded ? (
-            <div className="manager-fixes-expanded">
+            <div
+              className={`manager-fixes-expanded${fixesShowAll ? " is-show-all" : ""}`}
+            >
               <OpenFixBucket
                 label="Waiting on staff"
                 tasks={waitingTasks}

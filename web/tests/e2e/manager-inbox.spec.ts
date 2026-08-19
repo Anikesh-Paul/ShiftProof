@@ -369,7 +369,7 @@ test.describe("manager Inbox rows name the work", () => {
       /opening(s)? on file/i,
     );
     await expect(page.getByTestId("inbox-lede")).toHaveText(
-      /Every opening on file/i,
+      /(Every|Latest) openings on file/i,
     );
     await expect(page.getByTestId("inbox-jobs")).toHaveCount(0);
     await expect(

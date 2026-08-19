@@ -140,6 +140,12 @@
   gap: var(--space-4);
 }
 
+.manager-fixes-expanded.is-show-all {
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .manager-fix-group {
   display: flex;
   flex-direction: column;

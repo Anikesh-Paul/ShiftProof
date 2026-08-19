@@ -34,6 +34,18 @@ test("All is the ledger, not today’s gap count", () => {
   assert.doesNotMatch(copy.lede, /Today’s open gaps first/);
 });
 
+test("All does not claim completeness when the recency page is a window", () => {
+  const copy = inboxCopy({
+    ...todayGaps,
+    view: "all",
+    listedCount: 51,
+    listTruncated: true,
+  });
+  assert.equal(copy.headline, "51 openings on file");
+  assert.equal(copy.lede, "Latest openings on file. Today stays on Today.");
+  assert.doesNotMatch(copy.lede, /Every opening/);
+});
+
 test("All empty is a ledger empty, not All clear today", () => {
   const copy = inboxCopy({
     ...todayGaps,

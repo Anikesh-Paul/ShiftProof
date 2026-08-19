@@ -25,6 +25,12 @@ import {
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
 import { getLatestJob, loadChecklistItems } from "./shifts";
+import {
+  INBOX_EVIDENCE_PAGES,
+  INBOX_RECENCY_LIMIT,
+  inboxRecencyTruncated,
+  mergeRecencyWithEvidence,
+} from "./inboxFetch";
 
 const T = APPWRITE_IDS.tables;
 
@@ -115,18 +121,65 @@ function countByStatus(findings: Finding[]) {
   };
 }
 
-/** API.md manager §1 — list shifts by status. */
-export async function listManagerShifts(): Promise<Shift[]> {
+async function listManagerShiftPage(opts?: {
+  offset?: number;
+}): Promise<{ rows: Shift[]; total: number }> {
+  const queries = [
+    Query.equal("status", ["submitted", "scoring", "scored"]),
+    Query.orderDesc("submittedAt"),
+    Query.limit(INBOX_RECENCY_LIMIT),
+  ];
+  if (opts?.offset) queries.push(Query.offset(opts.offset));
   const result = await tables.listRows({
     databaseId: DB,
     tableId: T.shifts,
-    queries: [
-      Query.equal("status", ["submitted", "scoring", "scored"]),
-      Query.orderDesc("submittedAt"),
-      Query.limit(50),
-    ],
+    queries,
   });
-  return result.rows as unknown as Shift[];
+  return {
+    rows: result.rows as unknown as Shift[],
+    total: result.total,
+  };
+}
+
+/** Recency page only — glance chips stay on the latest scored openings. */
+export async function listManagerShifts(): Promise<Shift[]> {
+  const page = await listManagerShiftPage();
+  return page.rows;
+}
+
+/**
+ * Recency 50 plus older photo rows that the recency page dropped.
+ * Today still day-scopes; Backlog rank can lift photo + N Gap.
+ */
+export async function listManagerInboxWindow(): Promise<{
+  shifts: Shift[];
+  truncated: boolean;
+}> {
+  const recent = await listManagerShiftPage();
+  const knownMore = inboxRecencyTruncated(recent.total, recent.rows.length);
+  const maybeMore =
+    recent.total === 0 && recent.rows.length === INBOX_RECENCY_LIMIT;
+  if (!knownMore && !maybeMore) {
+    return { shifts: recent.rows, truncated: false };
+  }
+
+  const older: Shift[] = [];
+  try {
+    for (let i = 1; i <= INBOX_EVIDENCE_PAGES; i++) {
+      const page = await listManagerShiftPage({
+        offset: INBOX_RECENCY_LIMIT * i,
+      });
+      older.push(...page.rows);
+      if (page.rows.length < INBOX_RECENCY_LIMIT) break;
+    }
+  } catch {
+    /* Recency page still paints. */
+  }
+
+  return {
+    shifts: mergeRecencyWithEvidence(recent.rows, older),
+    truncated: knownMore || older.length > 0,
+  };
 }
 
 /** API.md manager §2 / staff §6 — findings by shiftId. */
@@ -163,12 +216,13 @@ function toSummary(
 export async function loadManagerInbox(): Promise<{
   items: ManagerShiftSummary[];
   source: "live" | "demo";
+  truncated: boolean;
 }> {
   try {
     await ensureItemLabels();
-    const shifts = await listManagerShifts();
+    const { shifts, truncated } = await listManagerInboxWindow();
     if (shifts.length === 0) {
-      return { items: DEMO_MANAGER_INBOX, source: "demo" };
+      return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
     }
 
     // Parallel findings — sequential listFindings made inbox feel stuck
@@ -183,9 +237,9 @@ export async function loadManagerInbox(): Promise<{
         return toSummary(shift, findings, undefined, latestJob);
       }),
     );
-    return { items, source: "live" };
+    return { items, source: "live", truncated };
   } catch {
-    return { items: DEMO_MANAGER_INBOX, source: "demo" };
+    return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
   }
 }
 
