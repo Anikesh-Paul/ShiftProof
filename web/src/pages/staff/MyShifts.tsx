@@ -172,8 +172,7 @@ export function MyShifts() {
             {[0, 1].map((i) => (
               <li
                 key={i}
-                className="skeleton-card"
-                style={{ minHeight: "5rem" }}
+                className="skeleton-card skeleton-shift-row"
               />
             ))}
           </ul>

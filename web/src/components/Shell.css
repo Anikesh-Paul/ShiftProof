@@ -122,6 +122,19 @@
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
+  transform-origin: top right;
+  animation: menu-pop var(--dur-ui) var(--ease-out);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .shell-account-role,
@@ -269,6 +282,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .shell-account-menu {
+    animation: none;
+  }
+
   .shell-nav-link {
     transition: none;
   }

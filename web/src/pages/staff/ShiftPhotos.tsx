@@ -131,7 +131,7 @@ export function ShiftPhotos() {
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
-  const [sopExpanded, setSopExpanded] = useState(true);
+  const [sopExpanded, setSopExpanded] = useState(false);
   const [clearingPhotos, setClearingPhotos] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -456,6 +456,13 @@ export function ShiftPhotos() {
 
   async function clearAllPhotos() {
     if ((fileIds.length === 0 && locals.length === 0) || !shiftId || shift?.status !== "draft") return;
+    const total = fileIds.length + locals.length;
+    if (total > 0) {
+      const ok = window.confirm(
+        `Remove all ${total} photo${total === 1 ? "" : "s"} from this check? This cannot be undone.`,
+      );
+      if (!ok) return;
+    }
     setClearingPhotos(true);
     setError(null);
     try {
@@ -615,8 +622,8 @@ export function ShiftPhotos() {
   if (loading) {
     return (
       <div className="app-page stack">
-        <div className="skeleton-card" style={{ minHeight: "3rem" }} />
-        <div className="skeleton-card" style={{ minHeight: "12rem" }} />
+        <div className="skeleton-card skeleton-header" />
+        <div className="skeleton-card skeleton-gallery" />
         {loadingSlow ? (
           <p className="loading-slow-hint" role="status">
             Still loading evidence…
@@ -729,6 +736,23 @@ export function ShiftPhotos() {
             Try scoring again
           </Button>
         ) : null}
+
+        <div className="staff-submission-card" data-testid="staff-submission-card">
+          <div className="staff-submission-header">
+            <div className="staff-submission-icon" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+            </div>
+            <div className="staff-submission-info">
+              <h2 className="staff-submission-title">Opening Proof Submitted</h2>
+              <p className="staff-submission-meta caption">
+                {savedIds.length} photo{savedIds.length === 1 ? "" : "s"} logged · {items.length > 0 ? `${items.length} SOP items checked` : "Ready for review"}
+              </p>
+            </div>
+          </div>
+        </div>
 
         {findings.length > 0 ? (
           <section className="staff-scores" aria-label="Scores">
@@ -929,6 +953,9 @@ export function ShiftPhotos() {
           </div>
           <p className="photo-hint">{hint}</p>
         </div>
+        <p className="photo-guidance caption">
+          Tip: 1 photo can cover multiple checklist items (e.g. coffee bar & grinders in one frame).
+        </p>
       </div>
 
       {errorShown ? (
@@ -961,17 +988,10 @@ export function ShiftPhotos() {
           className="photo-shot-card"
           aria-label="What to cover"
         >
-          <div
+          <button
+            type="button"
             className="photo-shot-head"
-            role="button"
-            tabIndex={0}
             onClick={() => setSopExpanded((prev) => !prev)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setSopExpanded((prev) => !prev);
-              }
-            }}
             aria-expanded={sopExpanded}
           >
             <div className="photo-shot-title-group">
@@ -999,7 +1019,7 @@ export function ShiftPhotos() {
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </div>
-          </div>
+          </button>
 
           {sopExpanded ? (
             <ol className="photo-shot-list">
@@ -1016,11 +1036,6 @@ export function ShiftPhotos() {
                   <div className="photo-shot-row-content">
                     <div className="photo-shot-row-top">
                       <span className="photo-shot-label">{item.label}</span>
-                      {item.relatedClauseIds?.[0] ? (
-                        <span className="photo-shot-clause-tag">
-                          {item.relatedClauseIds[0]}
-                        </span>
-                      ) : null}
                     </div>
                     {item.quote ? (
                       <p className="photo-shot-quote">{item.quote}</p>
