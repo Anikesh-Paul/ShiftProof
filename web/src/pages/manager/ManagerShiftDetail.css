@@ -25,6 +25,8 @@
 }
 
 .scoreboard-overflow {
+  position: relative;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -44,15 +46,31 @@
 }
 
 .scoreboard-overflow-menu {
-  position: static;
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 30;
   width: max-content;
   min-width: 11.5rem;
-  margin-top: var(--space-1);
+  margin: 0;
   padding: var(--space-1);
   background: var(--bg-elevated);
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
+  transform-origin: top right;
+  animation: menu-pop var(--dur-ui) var(--ease-out);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .scoreboard-overflow-item {
@@ -73,6 +91,14 @@
   text-align: left;
   text-decoration: none;
   cursor: pointer;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-ui) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.scoreboard-overflow-item:not(:disabled):active {
+  transform: scale(0.98);
 }
 
 .scoreboard-overflow-item:disabled {
@@ -83,6 +109,16 @@
 @media (hover: hover) and (pointer: fine) {
   .scoreboard-overflow-item:not(:disabled):hover {
     background: var(--fill);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scoreboard-overflow-menu {
+    animation: none;
+  }
+
+  .scoreboard-overflow-item:not(:disabled):active {
+    transform: none;
   }
 }
 
@@ -439,6 +475,24 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  animation: trace-expand var(--dur-ui) var(--ease-out);
+}
+
+@keyframes trace-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-trace-steps {
+    animation: none;
+  }
 }
 
 .citation-bar {
@@ -549,6 +603,8 @@
 }
 
 .finding-row {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -564,12 +620,27 @@
   box-shadow: none;
   transition:
     transform var(--dur-press) var(--ease-out),
-    background-color var(--dur-ui) var(--ease-out);
+    border-color var(--dur-ui) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
+}
+
+.finding-row::before {
+  content: "";
+  position: absolute;
+  inset: 0.2rem calc(-1 * var(--space-3));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  pointer-events: none;
+  z-index: -1;
+  transition: background-color var(--dur-ui) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .finding-row:hover {
+    border-bottom-color: transparent;
+  }
+
+  .finding-row:hover::before {
     background: var(--fill);
   }
 }
@@ -579,12 +650,20 @@
 }
 
 .finding-row.is-selected {
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  padding-inline: var(--space-3);
   border-bottom-color: transparent;
   scroll-margin-top: 5rem;
   scroll-margin-bottom: calc(var(--sticky-sheet-height) + var(--space-4));
+}
+
+.finding-row.is-selected::before,
+.finding-row.is-selected:hover::before {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finding-row::before {
+    transition: none;
+  }
 }
 
 .finding-row-top {
@@ -661,6 +740,11 @@
   animation: manager-sticky-in var(--dur-enter) var(--ease-drawer) both;
 }
 
+.manager-sticky[data-exit="true"] {
+  animation: manager-sticky-out var(--dur-exit) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
 @keyframes manager-sticky-in {
   from {
     opacity: 0;
@@ -672,9 +756,25 @@
   }
 }
 
+@keyframes manager-sticky-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .manager-sticky:not(.manager-sticky-hint) {
     animation: none;
+  }
+
+  .manager-sticky[data-exit="true"] {
+    animation: none;
+    opacity: 0;
   }
 }
 
