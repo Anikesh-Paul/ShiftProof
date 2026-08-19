@@ -105,6 +105,13 @@
   margin: var(--space-2) 0 0;
 }
 
+.manager-assign-preview-hint {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--label-secondary);
+}
+
 /* SOP + open-fixes: quiet lines, not 48px rows above the inbox */
 .manager-desk-lines {
   display: flex;
@@ -275,6 +282,8 @@
 .manager-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  box-shadow: var(--ring);
+  border-color: var(--separator-strong);
 }
 
 .manager-row-main {

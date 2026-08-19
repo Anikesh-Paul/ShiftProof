@@ -340,22 +340,67 @@ export function ManagerHome() {
     backlogUnclear,
   });
 
-  function setView(next: InboxView) {
-    const nextParams = new URLSearchParams(params);
-    if (next === "today") nextParams.delete("view");
-    else nextParams.set("view", next);
-    nextParams.delete("item");
-    setParams(nextParams);
-  }
+  const assignPreview = useMemo(() => {
+    if (view !== "today" || itemFilter || todayGaps === 0) return null;
+    const openFindingIds = new Set(openTasks.map((t) => t.findingId));
+    let gapCount = 0;
+    let shiftCount = 0;
+    const staffNames = new Set<string>();
+    for (const row of todayItems.filter((s) => s.shift.status === "scored")) {
+      let rowHasGap = false;
+      for (const finding of row.findings) {
+        if (finding.status !== "gap") continue;
+        if (openFindingIds.has(finding.$id)) continue;
+        gapCount++;
+        rowHasGap = true;
+      }
+      if (rowHasGap) {
+        shiftCount++;
+        if (row.staffLabel) staffNames.add(displayStaffName(row.staffLabel));
+      }
+    }
+    if (gapCount === 0) return null;
+    const staffList = Array.from(staffNames);
+    const staffStr =
+      staffList.length === 1
+        ? staffList[0]
+        : staffList.length === 2
+          ? `${staffList[0]} and ${staffList[1]}`
+          : staffList.length > 2
+            ? `${staffList[0]} and ${staffList.length - 1} others`
+            : "staff";
+    const shiftsStr = shiftCount === 1 ? "1 shift" : `${shiftCount} shifts`;
+    const gapsStr = gapCount === 1 ? "1 gap" : `${gapCount} gaps`;
+    return {
+      gapCount,
+      shiftCount,
+      staffSummary: staffStr,
+      summaryText: `Assign ${gapsStr} across ${shiftsStr} to ${staffStr}`,
+    };
+  }, [view, itemFilter, todayGaps, openTasks, todayItems]);
 
-  function setItemFilter(itemId: string | null) {
-    const nextParams = new URLSearchParams(params);
-    if (itemId) nextParams.set("item", itemId);
-    else nextParams.delete("item");
-    setParams(nextParams);
-  }
+  const setView = useCallback(
+    (next: InboxView) => {
+      const nextParams = new URLSearchParams(params);
+      if (next === "today") nextParams.delete("view");
+      else nextParams.set("view", next);
+      nextParams.delete("item");
+      setParams(nextParams);
+    },
+    [params, setParams],
+  );
 
-  async function assignTodayGaps() {
+  const setItemFilter = useCallback(
+    (itemId: string | null) => {
+      const nextParams = new URLSearchParams(params);
+      if (itemId) nextParams.set("item", itemId);
+      else nextParams.delete("item");
+      setParams(nextParams);
+    },
+    [params, setParams],
+  );
+
+  const assignTodayGaps = useCallback(async () => {
     if (!user || assigning) return;
     setAssigning(true);
     setAssignToast(null);
@@ -439,7 +484,128 @@ export function ManagerHome() {
     } finally {
       setAssigning(false);
     }
-  }
+  }, [user, assigning, openTasks, todayItems, source, reload]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable ||
+          target.getAttribute("role") === "textbox")
+      ) {
+        return;
+      }
+
+      if (e.key === "1") {
+        e.preventDefault();
+        setView("today");
+        return;
+      }
+      if (e.key === "2") {
+        e.preventDefault();
+        setView("backlog");
+        return;
+      }
+      if (e.key === "3") {
+        e.preventDefault();
+        setView("all");
+        return;
+      }
+
+      if (e.key === "a" || e.key === "A") {
+        if (
+          view === "today" &&
+          !itemFilter &&
+          todayGaps > 0 &&
+          !loading &&
+          !assigning
+        ) {
+          e.preventDefault();
+          void assignTodayGaps();
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (itemFilter) {
+          e.preventDefault();
+          setItemFilter(null);
+        } else if (fixesExpanded) {
+          e.preventDefault();
+          setFixesExpanded(false);
+        }
+        return;
+      }
+
+      if (e.key === "j" || e.key === "J" || e.key === "ArrowDown") {
+        const rows = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            ".manager-list a.manager-row",
+          ),
+        );
+        if (rows.length === 0) return;
+        const activeIdx = rows.findIndex((r) => r === document.activeElement);
+        e.preventDefault();
+        let nextIdx = 0;
+        if (activeIdx >= 0) {
+          nextIdx = Math.min(activeIdx + 1, rows.length - 1);
+        }
+        const nextRow = rows[nextIdx];
+        if (nextRow) {
+          nextRow.focus({ preventScroll: false });
+          nextRow.scrollIntoView({
+            block: "nearest",
+            behavior: prefersReducedMotion() ? "instant" : "smooth",
+          });
+        }
+        return;
+      }
+
+      if (e.key === "k" || e.key === "K" || e.key === "ArrowUp") {
+        const rows = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            ".manager-list a.manager-row",
+          ),
+        );
+        if (rows.length === 0) return;
+        const activeIdx = rows.findIndex((r) => r === document.activeElement);
+        e.preventDefault();
+        let prevIdx = rows.length - 1;
+        if (activeIdx >= 0) {
+          prevIdx = Math.max(activeIdx - 1, 0);
+        }
+        const prevRow = rows[prevIdx];
+        if (prevRow) {
+          prevRow.focus({ preventScroll: false });
+          prevRow.scrollIntoView({
+            block: "nearest",
+            behavior: prefersReducedMotion() ? "instant" : "smooth",
+          });
+        }
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    view,
+    itemFilter,
+    todayGaps,
+    loading,
+    assigning,
+    fixesExpanded,
+    assignTodayGaps,
+    setView,
+    setItemFilter,
+  ]);
 
   async function retryStuckJobs() {
     if (!user || retryingJobs || jobTargets.length === 0) return;
@@ -743,10 +909,29 @@ export function ManagerHome() {
               variant="primary"
               loading={assigning}
               data-testid="assign-today-gaps"
+              title={
+                assignPreview
+                  ? `${assignPreview.summaryText} (or press 'a')`
+                  : undefined
+              }
+              aria-label={
+                assignPreview
+                  ? `Assign today’s gaps: ${assignPreview.summaryText}`
+                  : "Assign today’s gaps"
+              }
               onClick={() => void assignTodayGaps()}
             >
               Assign today’s gaps
             </Button>
+            {assignPreview ? (
+              <span
+                className="manager-assign-preview-hint"
+                role="status"
+                aria-live="polite"
+              >
+                {assignPreview.summaryText}
+              </span>
+            ) : null}
             {assignToast ? (
               <p className="manager-sop-toast" role="status">
                 {assignToast}
