@@ -22,6 +22,7 @@ import {
 import { RECHECK_FALLBACK_TOAST } from "../../lib/scoreShift";
 import {
   createDraftShift,
+  deleteDraftShift,
   getChecklist,
   getSite,
   listFindingsForShift,
@@ -176,19 +177,44 @@ export function StaffHome() {
     setErrorExiting(false);
   }
 
-  async function startShift() {
+  async function startFreshShift() {
     if (!user || draftsStatus !== "ready") return;
     setError(null);
     setStarting(true);
     try {
-      if (resumeDraft) {
-        navigate(`/staff/shifts/${resumeDraft.$id}`);
-        return;
-      }
       const shift = await createDraftShift(user.$id);
       navigate(`/staff/shifts/${shift.$id}`);
     } catch (err) {
       setError(getErrorMessage(err, "Could not start shift"));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function resumeDraftShift() {
+    if (!resumeDraft) return;
+    navigate(`/staff/shifts/${resumeDraft.$id}`);
+  }
+
+  async function discardResumeDraft() {
+    if (!resumeDraft || !user) return;
+    const count = parsePhotoFileIds(resumeDraft.photoFileIds).length;
+    if (count > 0) {
+      const ok = window.confirm(
+        `Discard this draft and ${count} photo${count === 1 ? "" : "s"} to start a fresh check?`,
+      );
+      if (!ok) return;
+    }
+    setStarting(true);
+    setError(null);
+    try {
+      await deleteDraftShift(
+        resumeDraft.$id,
+        parsePhotoFileIds(resumeDraft.photoFileIds),
+      );
+      await loadDrafts(user.$id);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not discard draft"));
     } finally {
       setStarting(false);
     }
@@ -479,7 +505,17 @@ export function StaffHome() {
           data-testid="staff-checklist"
         >
           <div className="staff-checklist-head">
-            <h2 id="photo-list-title">What to photograph</h2>
+            <div className="staff-checklist-title-group">
+              <h2 id="photo-list-title">What to photograph</h2>
+              <p className="staff-checklist-subtitle">
+                Opening checklist & SOP standards for today&apos;s shift
+              </p>
+            </div>
+            {!loading && items.length > 0 ? (
+              <span className="staff-checklist-badge">
+                {items.length} items
+              </span>
+            ) : null}
           </div>
 
           {loading ? (
@@ -498,11 +534,23 @@ export function StaffHome() {
           ) : items.length > 0 ? (
             <ol className="staff-checklist stagger-in">
               {items.map((item, i) => (
-                <li key={item.id}>
+                <li key={item.id} className="staff-checklist-row">
                   <span className="checklist-index" aria-hidden>
                     {String(i + 1).padStart(2, "0")}
                   </span>
-                  <span className="checklist-label">{item.label}</span>
+                  <div className="checklist-item-content">
+                    <div className="checklist-item-top">
+                      <span className="checklist-label">{item.label}</span>
+                      {item.relatedClauseIds?.[0] ? (
+                        <span className="checklist-clause-tag">
+                          {item.relatedClauseIds[0]}
+                        </span>
+                      ) : null}
+                    </div>
+                    {item.quote ? (
+                      <p className="checklist-quote">{item.quote}</p>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ol>
@@ -515,32 +563,48 @@ export function StaffHome() {
       <div
         className="staff-cta-bar"
         role="region"
-        aria-label={
-          resumeDraft ? "Continue opening check" : "Start opening check"
-        }
+        aria-label="Opening check actions"
       >
         <div className="staff-cta-inner">
-          {resumeDraft && pendingUnique.length === 0 ? (
+          {resumeDraft && resumePhotoCount > 0 && pendingUnique.length === 0 ? (
             <p className="staff-cta-hint caption">
-              {resumePhotoCount === 0
-                ? "Draft waiting — add photos to finish"
-                : `${resumePhotoCount} photo${resumePhotoCount === 1 ? "" : "s"} saved · finish and submit`}
+              Draft in progress · {resumePhotoCount} photo{resumePhotoCount === 1 ? "" : "s"} saved
             </p>
           ) : null}
           <Button
             fullWidth
-            variant={pendingUnique.length > 0 ? "secondary" : "primary"}
+            variant="primary"
             loading={starting}
             disabled={
               loading ||
               draftsStatus !== "ready" ||
-              (!resumeDraft && items.length === 0)
+              items.length === 0
             }
             data-testid="start-opening-check"
-            onClick={() => void startShift()}
+            onClick={() => void startFreshShift()}
           >
-            {resumeDraft ? "Continue opening check" : "Start opening check"}
+            Start opening check
           </Button>
+          {resumeDraft && resumePhotoCount > 0 ? (
+            <Button
+              fullWidth
+              variant="secondary"
+              disabled={starting}
+              onClick={() => resumeDraftShift()}
+            >
+              Resume draft ({resumePhotoCount} photos)
+            </Button>
+          ) : null}
+          {resumeDraft ? (
+            <button
+              type="button"
+              className="text-btn staff-discard-draft-btn"
+              disabled={starting}
+              onClick={() => void discardResumeDraft()}
+            >
+              Discard previous draft
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

@@ -131,6 +131,9 @@ export function ShiftPhotos() {
 
   const [errorShown, setErrorShown] = useState<string | null>(null);
   const [errorExiting, setErrorExiting] = useState(false);
+  const [sopExpanded, setSopExpanded] = useState(true);
+  const [clearingPhotos, setClearingPhotos] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const markReady = useCallback((id: string) => {
     setReadyIds((prev) => {
@@ -449,6 +452,48 @@ export function ShiftPhotos() {
   function removeLocal(localId: string) {
     cancelledLocals.current.add(localId);
     dropLocal(localId);
+  }
+
+  async function clearAllPhotos() {
+    if ((fileIds.length === 0 && locals.length === 0) || !shiftId || shift?.status !== "draft") return;
+    setClearingPhotos(true);
+    setError(null);
+    try {
+      for (const loc of locals) {
+        cancelledLocals.current.add(loc.localId);
+      }
+      setLocals([]);
+      const toDelete = [...fileIds];
+      await persistUpdate(() => []);
+      for (const fid of toDelete) {
+        void deleteEvidenceFile(fid);
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not clear photos"));
+    } finally {
+      setClearingPhotos(false);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void addFiles(e.dataTransfer.files);
+    }
   }
 
   async function discardDraft() {
@@ -841,14 +886,26 @@ export function ShiftPhotos() {
         <Link to="/staff" className="back-link">
           ← Opening
         </Link>
-        <button
-          type="button"
-          className="text-btn"
-          disabled={discarding || uploading}
-          onClick={() => void discardDraft()}
-        >
-          {discarding ? "Discarding…" : "Discard draft"}
-        </button>
+        <div className="photo-toolbar-actions">
+          {fileIds.length > 0 ? (
+            <button
+              type="button"
+              className="text-btn photo-clear-btn"
+              disabled={discarding || uploading || clearingPhotos}
+              onClick={() => void clearAllPhotos()}
+            >
+              {clearingPhotos ? "Clearing…" : "Clear all photos"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="text-btn photo-discard-btn"
+            disabled={discarding || uploading || clearingPhotos}
+            onClick={() => void discardDraft()}
+          >
+            {discarding ? "Discarding…" : "Discard draft"}
+          </button>
+        </div>
       </div>
 
       <header className="stack-sm">
@@ -900,24 +957,107 @@ export function ShiftPhotos() {
       />
 
       {items.length > 0 ? (
-        <section className="photo-shot-list stack-sm" aria-label="What to cover">
-          <h2 className="photo-shot-heading">What to cover</h2>
-          <ol>
-            {items.map((item, i) => (
-              <li key={item.id} data-testid="cover-item" data-item-id={item.id}>
-                <span className="photo-shot-index" aria-hidden>
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>{item.label}</span>
-              </li>
-            ))}
-          </ol>
+        <section
+          className="photo-shot-card"
+          aria-label="What to cover"
+        >
+          <div
+            className="photo-shot-head"
+            role="button"
+            tabIndex={0}
+            onClick={() => setSopExpanded((prev) => !prev)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setSopExpanded((prev) => !prev);
+              }
+            }}
+            aria-expanded={sopExpanded}
+          >
+            <div className="photo-shot-title-group">
+              <h2 className="photo-shot-heading">What to cover</h2>
+              <p className="photo-shot-subtitle">
+                {items.length} SOP items required for opening verification
+              </p>
+            </div>
+            <div className="photo-shot-toggle">
+              <span className="photo-shot-toggle-text">
+                {sopExpanded ? "Hide" : "View"}
+              </span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className={`photo-shot-chevron${sopExpanded ? " is-open" : ""}`}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+          </div>
+
+          {sopExpanded ? (
+            <ol className="photo-shot-list">
+              {items.map((item, i) => (
+                <li
+                  key={item.id}
+                  className="photo-shot-row"
+                  data-testid="cover-item"
+                  data-item-id={item.id}
+                >
+                  <span className="photo-shot-index" aria-hidden>
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div className="photo-shot-row-content">
+                    <div className="photo-shot-row-top">
+                      <span className="photo-shot-label">{item.label}</span>
+                      {item.relatedClauseIds?.[0] ? (
+                        <span className="photo-shot-clause-tag">
+                          {item.relatedClauseIds[0]}
+                        </span>
+                      ) : null}
+                    </div>
+                    {item.quote ? (
+                      <p className="photo-shot-quote">{item.quote}</p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : null}
         </section>
       ) : null}
 
       {fileIds.length > 0 || locals.length > 0 ? (
-        <section className="stack-sm" aria-label="Evidence photos">
-          <div className="photo-grid" data-testid="photo-grid">
+        <section className="photo-gallery-section" aria-label="Evidence photos">
+          <div className="photo-gallery-head">
+            <h2 className="photo-gallery-title">
+              Uploaded photos ({totalCount + inFlightCount}/{PHOTO_MAX})
+            </h2>
+            {fileIds.length > 0 ? (
+              <button
+                type="button"
+                className="text-btn photo-clear-inline"
+                disabled={uploading || discarding || clearingPhotos}
+                onClick={() => void clearAllPhotos()}
+              >
+                Clear all
+              </button>
+            ) : null}
+          </div>
+
+          <div
+            className={`photo-grid${isDragging ? " is-dragging" : ""}`}
+            data-testid="photo-grid"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             {fileIds.map((id, i) => {
               const ready = readyIds.has(id);
               const label = `Evidence ${i + 1}`;
@@ -943,8 +1083,22 @@ export function ShiftPhotos() {
                     className="photo-remove"
                     onClick={() => void removePhoto(id)}
                     aria-label={`Remove photo ${i + 1}`}
+                    title={`Remove photo ${i + 1}`}
                   >
-                    ×
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
                   </button>
                   <div className="photo-badge caption">{i + 1}</div>
                 </div>
@@ -956,6 +1110,7 @@ export function ShiftPhotos() {
                 {p.uploading ? (
                   <div className="photo-overlay">
                     <span className="spinner" />
+                    <span className="photo-overlay-label">Uploading…</span>
                   </div>
                 ) : null}
                 {p.error ? (
@@ -975,47 +1130,110 @@ export function ShiftPhotos() {
                   className="photo-remove"
                   onClick={() => removeLocal(p.localId)}
                   aria-label="Remove photo"
+                  title="Remove photo"
                 >
-                  ×
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
               </div>
             ))}
+
+            {canAddPhoto ? (
+              <button
+                type="button"
+                className="photo-tile photo-tile-add"
+                data-testid="add-photo-btn"
+                onClick={() => inputRef.current?.click()}
+                aria-label="Add more photos"
+              >
+                <div className="photo-tile-add-icon" aria-hidden>
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </div>
+                <span className="photo-tile-add-title">Add photo</span>
+                <span className="photo-tile-add-meta">
+                  {totalCount + inFlightCount} of {PHOTO_MAX}
+                </span>
+              </button>
+            ) : null}
           </div>
+
+          {canAddPhoto ? (
+            <div className="photo-actions-row">
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={() => inputRef.current?.click()}
+              >
+                Choose photos from device
+              </Button>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
-      {canAddPhoto ? (
-        fileIds.length === 0 && locals.length === 0 ? (
-          <button
-            type="button"
-            className="photo-empty-dropzone"
-            data-testid="add-photo-btn"
-            onClick={() => inputRef.current?.click()}
-          >
-            <span className="photo-empty-icon" aria-hidden>
-              📷
+      {canAddPhoto && fileIds.length === 0 && locals.length === 0 ? (
+        <button
+          type="button"
+          className={`photo-empty-dropzone${isDragging ? " is-dragging" : ""}`}
+          data-testid="add-photo-btn"
+          onClick={() => inputRef.current?.click()}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <div className="photo-empty-icon-wrap" aria-hidden>
+            <svg
+              width="26"
+              height="26"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+              <circle cx="12" cy="13" r="4" />
+            </svg>
+          </div>
+          <div className="photo-empty-copy">
+            <span className="photo-empty-title">Upload evidence photos</span>
+            <span className="photo-empty-sub">
+              Add 3–8 photos covering the checklist above
             </span>
-            <span className="photo-empty-copy">
-              <span className="photo-empty-title">Add photos</span>
-              <span className="photo-empty-sub caption">
-                3–8 photos covering the checklist above
-              </span>
+            <span className="photo-empty-cue">
+              Click to choose files or drop photos here
             </span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="text-btn photo-add-more-btn"
-            data-testid="add-photo-btn"
-            onClick={() => inputRef.current?.click()}
-          >
-            Add photos
-          </button>
-        )
+          </div>
+        </button>
       ) : null}
 
       <p className="caption photo-formats">
-        JPG, PNG, or WebP · max 10 MB
+        JPG, PNG, or WebP · max 10 MB per photo
       </p>
 
       <div className="photo-submit-bar">

@@ -313,13 +313,12 @@
   border: 1px solid var(--separator);
 }
 
-/* —— Checklist panel (one calm surface) —— */
+/* —— Checklist panel (calm editorial surface) —— */
 
 .staff-checklist-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   border: 1px solid var(--separator);
@@ -328,22 +327,46 @@
 
 .staff-checklist-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--separator);
+}
+
+.staff-checklist-title-group {
+  display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.15rem;
+  min-width: 0;
 }
 
 .staff-checklist-head h2 {
   margin: 0;
-  font-size: 0.9375rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
+  color: var(--label);
 }
 
-.staff-checklist-lede {
+.staff-checklist-subtitle {
   margin: 0;
-  max-width: 36ch;
   font-size: 0.8125rem;
+  color: var(--label-secondary);
   line-height: 1.4;
+}
+
+.staff-checklist-badge {
+  flex-shrink: 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  border: 1px solid var(--separator);
+  color: var(--label-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .staff-list-skeleton {
@@ -356,47 +379,77 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  counter-reset: none;
 }
 
 .staff-checklist li {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
-  padding: 0.7rem 0;
+  padding: 0.85rem 0;
   border-bottom: 1px solid var(--separator);
-  min-height: 2.75rem;
-}
-
-.staff-checklist li:first-child {
-  padding-top: 0;
 }
 
 .staff-checklist li:last-child {
   border-bottom: none;
-  padding-bottom: 0;
+  padding-bottom: 0.25rem;
 }
 
-/* Quiet tabular index — no ember pill on every row */
 .staff-checklist .checklist-index {
   flex-shrink: 0;
   min-width: 1.5rem;
-  font-family: var(--font);
+  font-family: var(--font-mono);
   font-size: 0.75rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   color: var(--label-tertiary);
-  line-height: 1;
+  line-height: 1.5;
+  padding-top: 0.05rem;
+}
+
+.staff-checklist .checklist-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.staff-checklist .checklist-item-top {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .staff-checklist .checklist-label {
   font-weight: 600;
   letter-spacing: -0.016em;
-  font-size: 0.9375rem;
-  line-height: 1.3;
+  font-size: 0.95rem;
+  line-height: 1.35;
   color: var(--label);
+}
+
+.staff-checklist .checklist-clause-tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  border: 1px solid var(--separator);
+  color: var(--label-tertiary);
+  letter-spacing: 0.02em;
+}
+
+.staff-checklist .checklist-quote {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--label-secondary);
 }
 
 /* —— Sticky start —— */
@@ -427,6 +480,21 @@
   text-align: center;
   color: var(--label-tertiary);
   font-weight: 500;
+}
+
+.staff-discard-draft-btn {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--label-tertiary);
+  align-self: center;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--dur-ui) var(--ease-out);
+}
+
+.staff-discard-draft-btn:hover {
+  color: var(--danger);
 }
 
 @media (min-width: 768px) {
