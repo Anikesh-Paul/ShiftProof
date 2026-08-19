@@ -25,7 +25,7 @@ import {
   deleteDraftShift,
   getChecklist,
   getSite,
-  listFindingsForShift,
+  listFindingsByShiftIds,
   listMyShifts,
   parseChecklistItems,
   parsePhotoFileIds,
@@ -87,12 +87,8 @@ export function StaffHome() {
         setFixTasks(tasks);
         setFixError(null);
         const shiftIds = [...new Set(tasks.map((t) => t.shiftId))];
-        const batches = await Promise.all(
-          shiftIds.map((id) =>
-            listFindingsForShift(id).catch(() => [] as Finding[]),
-          ),
-        );
-        setFixFindings(batches.flat());
+        const byShift = await listFindingsByShiftIds(shiftIds);
+        setFixFindings([...byShift.values()].flat());
       } catch (err) {
         if (!opts?.silent) setFixTasks([]);
         setFixError(
@@ -179,6 +175,31 @@ export function StaffHome() {
 
   async function startFreshShift() {
     if (!user || draftsStatus !== "ready") return;
+    if (resumeDraft) {
+      const count = parsePhotoFileIds(resumeDraft.photoFileIds).length;
+      if (count > 0) {
+        const ok = window.confirm(
+          `Discard this draft and ${count} photo${count === 1 ? "" : "s"} to start a fresh check?`,
+        );
+        if (!ok) return;
+      }
+      setStarting(true);
+      setError(null);
+      try {
+        await deleteDraftShift(
+          resumeDraft.$id,
+          parsePhotoFileIds(resumeDraft.photoFileIds),
+        );
+        const shift = await createDraftShift(user.$id);
+        navigate(`/staff/shifts/${shift.$id}`);
+      } catch (err) {
+        setError(getErrorMessage(err, "Could not start shift"));
+      } finally {
+        setStarting(false);
+      }
+      return;
+    }
+
     setError(null);
     setStarting(true);
     try {
@@ -194,30 +215,6 @@ export function StaffHome() {
   function resumeDraftShift() {
     if (!resumeDraft) return;
     navigate(`/staff/shifts/${resumeDraft.$id}`);
-  }
-
-  async function discardResumeDraft() {
-    if (!resumeDraft || !user) return;
-    const count = parsePhotoFileIds(resumeDraft.photoFileIds).length;
-    if (count > 0) {
-      const ok = window.confirm(
-        `Discard this draft and ${count} photo${count === 1 ? "" : "s"} to start a fresh check?`,
-      );
-      if (!ok) return;
-    }
-    setStarting(true);
-    setError(null);
-    try {
-      await deleteDraftShift(
-        resumeDraft.$id,
-        parsePhotoFileIds(resumeDraft.photoFileIds),
-      );
-      await loadDrafts(user.$id);
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not discard draft"));
-    } finally {
-      setStarting(false);
-    }
   }
 
   async function onStaffRecheck(task: Task, fileList: FileList | null) {
@@ -541,11 +538,6 @@ export function StaffHome() {
                   <div className="checklist-item-content">
                     <div className="checklist-item-top">
                       <span className="checklist-label">{item.label}</span>
-                      {item.relatedClauseIds?.[0] ? (
-                        <span className="checklist-clause-tag">
-                          {item.relatedClauseIds[0]}
-                        </span>
-                      ) : null}
                     </div>
                     {item.quote ? (
                       <p className="checklist-quote">{item.quote}</p>
@@ -571,40 +563,51 @@ export function StaffHome() {
               Draft in progress · {resumePhotoCount} photo{resumePhotoCount === 1 ? "" : "s"} saved
             </p>
           ) : null}
-          <Button
-            fullWidth
-            variant="primary"
-            loading={starting}
-            disabled={
-              loading ||
-              draftsStatus !== "ready" ||
-              items.length === 0
+          <div
+            className={
+              resumeDraft && resumePhotoCount > 0
+                ? "staff-cta-actions staff-cta-actions--dual"
+                : "staff-cta-actions"
             }
-            data-testid="start-opening-check"
-            onClick={() => void startFreshShift()}
           >
-            Start opening check
-          </Button>
-          {resumeDraft && resumePhotoCount > 0 ? (
-            <Button
-              fullWidth
-              variant="secondary"
-              disabled={starting}
-              onClick={() => resumeDraftShift()}
-            >
-              Resume draft ({resumePhotoCount} photos)
-            </Button>
-          ) : null}
-          {resumeDraft ? (
-            <button
-              type="button"
-              className="text-btn staff-discard-draft-btn"
-              disabled={starting}
-              onClick={() => void discardResumeDraft()}
-            >
-              Discard previous draft
-            </button>
-          ) : null}
+            {resumeDraft && resumePhotoCount > 0 ? (
+              <>
+                <Button
+                  fullWidth
+                  variant="primary"
+                  loading={starting}
+                  disabled={loading || draftsStatus !== "ready"}
+                  data-testid="start-opening-check"
+                  onClick={() => resumeDraftShift()}
+                >
+                  Resume draft ({resumePhotoCount} photos)
+                </Button>
+                <Button
+                  fullWidth
+                  variant="secondary"
+                  disabled={starting || loading || draftsStatus !== "ready" || items.length === 0}
+                  onClick={() => void startFreshShift()}
+                >
+                  Start fresh check
+                </Button>
+              </>
+            ) : (
+              <Button
+                fullWidth
+                variant="primary"
+                loading={starting}
+                disabled={
+                  loading ||
+                  draftsStatus !== "ready" ||
+                  items.length === 0
+                }
+                data-testid="start-opening-check"
+                onClick={() => void startFreshShift()}
+              >
+                Start opening check
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

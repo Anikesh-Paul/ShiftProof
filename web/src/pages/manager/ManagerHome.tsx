@@ -137,38 +137,73 @@ export function ManagerHome() {
     setErrorExiting(false);
   }
 
+  const inflightReload = useRef<Promise<void> | null>(null);
+  const queuedSilent = useRef(false);
+
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+    const silent = Boolean(opts?.silent);
+    if (inflightReload.current) {
+      queuedSilent.current = true;
+      await inflightReload.current;
+      return;
+    }
+
+    const run = async () => {
+      let passSilent = silent;
+      do {
+        queuedSilent.current = false;
+        if (!passSilent) setLoading(true);
+        try {
+          if (passSilent) {
+            const inbox = await loadManagerInbox({ fresh: true });
+            setItems(inbox.items);
+            setSource(inbox.source);
+            setListTruncated(inbox.source === "live" && inbox.truncated);
+            setError(null);
+          } else {
+            const [inbox, site, offenders, tasks] = await Promise.all([
+              loadManagerInbox({ fresh: true }),
+              getSite().catch(() => null),
+              loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
+              listOpenTasks().catch(() => [] as Task[]),
+            ]);
+            if (user && inbox.source === "live") {
+              await sweepStaleJobs(inbox.items, user.$id);
+            }
+            setItems(inbox.items);
+            setSource(inbox.source);
+            setListTruncated(inbox.source === "live" && inbox.truncated);
+            if (site?.name) setSiteName(site.name);
+            if (site?.timezone) setTimeZone(site.timezone);
+            setRepeatOffenders(
+              offenders.length
+                ? offenders
+                : inbox.source === "demo"
+                  ? DEMO_REPEAT_OFFENDERS
+                  : [],
+            );
+            setOpenTasks((prev) =>
+              inbox.source === "demo" ? [] : mergeTasksById(prev, tasks),
+            );
+            setError(null);
+          }
+        } catch (err) {
+          if (!passSilent) {
+            setError(getErrorMessage(err, "Could not load inbox"));
+          }
+        } finally {
+          setLoading(false);
+        }
+        passSilent = true;
+      } while (queuedSilent.current);
+    };
+
+    const pending = run();
+    inflightReload.current = pending;
     try {
-      const [inbox, site, offenders, tasks] = await Promise.all([
-        loadManagerInbox(),
-        getSite().catch(() => null),
-        loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
-        listOpenTasks().catch(() => [] as Task[]),
-      ]);
-      if (user && inbox.source === "live") {
-        await sweepStaleJobs(inbox.items, user.$id);
-      }
-      setItems(inbox.items);
-      setSource(inbox.source);
-      setListTruncated(inbox.source === "live" && inbox.truncated);
-      if (site?.name) setSiteName(site.name);
-      if (site?.timezone) setTimeZone(site.timezone);
-      setRepeatOffenders(
-        offenders.length
-          ? offenders
-          : inbox.source === "demo"
-            ? DEMO_REPEAT_OFFENDERS
-            : [],
-      );
-      setOpenTasks((prev) =>
-        inbox.source === "demo" ? [] : mergeTasksById(prev, tasks),
-      );
-      setError(null);
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not load inbox"));
+      await pending;
     } finally {
-      setLoading(false);
+      if (inflightReload.current === pending) inflightReload.current = null;
     }
   }, [user]);
 

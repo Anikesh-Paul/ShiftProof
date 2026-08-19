@@ -24,7 +24,12 @@ import {
   type ManagerShiftSummary,
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
-import { getLatestJob, loadChecklistItems } from "./shifts";
+import {
+  getLatestJob,
+  listFindingsByShiftIds,
+  listLatestJobsByShiftIds,
+  loadChecklistItems,
+} from "./shifts";
 import {
   INBOX_EVIDENCE_PAGES,
   INBOX_RECENCY_LIMIT,
@@ -184,12 +189,8 @@ export async function listManagerInboxWindow(): Promise<{
 
 /** API.md manager §2 / staff §6 — findings by shiftId. */
 export async function listFindings(shiftId: string): Promise<Finding[]> {
-  const result = await tables.listRows({
-    databaseId: DB,
-    tableId: T.findings,
-    queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
-  });
-  return result.rows as unknown as Finding[];
+  const map = await listFindingsByShiftIds([shiftId]);
+  return map.get(shiftId) ?? [];
 }
 
 function toSummary(
@@ -207,17 +208,34 @@ function toSummary(
   };
 }
 
+const INBOX_MEMO_MS = 8_000;
+
+type InboxLoad = {
+  items: ManagerShiftSummary[];
+  source: "live" | "demo";
+  truncated: boolean;
+};
+
+let inboxMemo: { at: number; result: InboxLoad } | null = null;
+
 /**
  * Live inbox first (API.md). Demo pack only when:
  * - network/permission failure, or
  * - zero live shifts (empty café).
  * Never hide real submitted shifts behind demo.
+ * `fresh` skips the short memo used when navigating inbox → detail.
  */
-export async function loadManagerInbox(): Promise<{
-  items: ManagerShiftSummary[];
-  source: "live" | "demo";
-  truncated: boolean;
-}> {
+export async function loadManagerInbox(opts?: {
+  fresh?: boolean;
+}): Promise<InboxLoad> {
+  if (
+    !opts?.fresh &&
+    inboxMemo &&
+    inboxMemo.result.source === "live" &&
+    Date.now() - inboxMemo.at < INBOX_MEMO_MS
+  ) {
+    return inboxMemo.result;
+  }
   try {
     await ensureItemLabels();
     const { shifts, truncated } = await listManagerInboxWindow();
@@ -225,19 +243,26 @@ export async function loadManagerInbox(): Promise<{
       return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
     }
 
-    // Parallel findings — sequential listFindings made inbox feel stuck
-    const items = await Promise.all(
-      shifts.map(async (shift) => {
-        const needsJob =
-          shift.status === "submitted" || shift.status === "scoring";
-        const [findings, latestJob] = await Promise.all([
-          listFindings(shift.$id).catch(() => [] as Finding[]),
-          needsJob ? getLatestJob(shift.$id).catch(() => null) : Promise.resolve(null),
-        ]);
-        return toSummary(shift, findings, undefined, latestJob);
-      }),
+    const scoringIds = shifts
+      .filter((s) => s.status === "submitted" || s.status === "scoring")
+      .map((s) => s.$id);
+    const [findingsByShift, jobsByShift] = await Promise.all([
+      listFindingsByShiftIds(shifts.map((s) => s.$id)),
+      scoringIds.length
+        ? listLatestJobsByShiftIds(scoringIds)
+        : Promise.resolve(new Map<string, AgentJob>()),
+    ]);
+    const items = shifts.map((shift) =>
+      toSummary(
+        shift,
+        findingsByShift.get(shift.$id) ?? [],
+        undefined,
+        jobsByShift.get(shift.$id) ?? null,
+      ),
     );
-    return { items, source: "live", truncated };
+    const result: InboxLoad = { items, source: "live", truncated };
+    inboxMemo = { at: Date.now(), result };
+    return result;
   } catch {
     return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
   }
@@ -784,8 +809,11 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
     if (scored.length === 0) return [];
 
     const counts = new Map<string, number>();
+    const findingsByShift = await listFindingsByShiftIds(
+      scored.map((s) => s.$id),
+    );
     for (const s of scored) {
-      const findings = await listFindings(s.$id);
+      const findings = findingsByShift.get(s.$id) ?? [];
       const bad = new Set(
         findings
           .filter((f) => f.status === "gap" || f.status === "unclear")
@@ -829,9 +857,13 @@ export function hasForcedCitation(
   );
 }
 
+/** Scoring writes many rows; collapse them into one inbox refresh. */
+export const MANAGER_REALTIME_DEBOUNCE_MS = 1_200;
+
 /**
  * API.md Realtime — subscribe to shifts, findings, agent_jobs, tasks.
  * Channel: tablesdb.{db}.tables.{table}.rows
+ * Hidden tabs do not refetch; the pending event flushes on focus.
  */
 export function subscribeManagerTables(
   onEvent: () => void,
@@ -845,10 +877,33 @@ export function subscribeManagerTables(
   ];
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const debounced = () => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => onEvent(), 400);
+  let pending = false;
+
+  const fire = () => {
+    timer = null;
+    if (typeof document !== "undefined" && document.hidden) {
+      pending = true;
+      return;
+    }
+    pending = false;
+    onEvent();
   };
+
+  const debounced = () => {
+    pending = true;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fire, MANAGER_REALTIME_DEBOUNCE_MS);
+  };
+
+  const onVisibility = () => {
+    if (typeof document === "undefined" || document.hidden || !pending) return;
+    if (timer) clearTimeout(timer);
+    fire();
+  };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
 
   const sub = realtime.subscribe(channels, () => {
     debounced();
@@ -856,6 +911,10 @@ export function subscribeManagerTables(
 
   return () => {
     if (timer) clearTimeout(timer);
+    pending = false;
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
     // SDK may return Promise or unsubscribe object
     void Promise.resolve(sub).then((s) => {
       if (s && typeof (s as { close?: () => void }).close === "function") {

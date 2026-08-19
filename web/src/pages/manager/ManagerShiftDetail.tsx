@@ -183,39 +183,42 @@ export function ManagerShiftDetail() {
     setToastExiting(false);
   }
 
-  const loadExtras = useCallback(async (id: string, isDemo: boolean) => {
-    if (isDemo || id.startsWith("demo_shift_")) {
-      setAgentTrace(DEMO_AGENT_TRACE);
-      // Phase 3 — sample open task assigned to shift staff for re-check demo
-      setTasks([
-        {
-          $id: "local_task_demo",
-          $createdAt: new Date().toISOString(),
-          $updatedAt: new Date().toISOString(),
-          shiftId: id,
-          findingId: "fa1",
-          title: "Fix: Gloves at prep",
-          status: "open",
-          assignedTo: "demo_staff",
-          createdBy: "demo_manager",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      return;
-    }
-    try {
-      const [t, e, trace] = await Promise.all([
-        listTasks(id),
-        listEvents(id),
-        getAgentJobTrace(id).catch(() => null),
-      ]);
-      setTasks((prev) => mergeTasksById(t, prev));
-      setEvents(e);
-      setAgentTrace(trace);
-    } catch {
-      // Non-blocking for the findings table
-    }
-  }, []);
+  const loadExtras = useCallback(
+    async (id: string, isDemo: boolean, light = false) => {
+      if (isDemo || id.startsWith("demo_shift_")) {
+        setAgentTrace(DEMO_AGENT_TRACE);
+        // Phase 3 — sample open task assigned to shift staff for re-check demo
+        setTasks([
+          {
+            $id: "local_task_demo",
+            $createdAt: new Date().toISOString(),
+            $updatedAt: new Date().toISOString(),
+            shiftId: id,
+            findingId: "fa1",
+            title: "Fix: Gloves at prep",
+            status: "open",
+            assignedTo: "demo_staff",
+            createdBy: "demo_manager",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+      try {
+        const [t, e, trace] = await Promise.all([
+          listTasks(id),
+          light ? Promise.resolve(null) : listEvents(id),
+          getAgentJobTrace(id).catch(() => null),
+        ]);
+        setTasks((prev) => mergeTasksById(t, prev));
+        if (e) setEvents(e);
+        setAgentTrace(trace);
+      } catch {
+        // Non-blocking for the findings table
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -310,7 +313,7 @@ export function ManagerShiftDetail() {
           if (cancelled || !result) return;
           setItem(result.item);
           setSource(result.source);
-          void loadExtras(result.item.shift.$id, result.source === "demo");
+          void loadExtras(result.item.shift.$id, result.source === "demo", true);
         } catch {
           /* keep the painted summary */
         }
@@ -328,6 +331,36 @@ export function ManagerShiftDetail() {
   );
   const formOpen = Boolean(selected) && mode !== "idle";
 
+  const [sheetFinding, setSheetFinding] = useState<Finding | null>(null);
+  const [sheetMode, setSheetMode] = useState<StickyMode>("idle");
+  const [sheetExiting, setSheetExiting] = useState(false);
+
+  useEffect(() => {
+    if (formOpen && selected) {
+      setSheetFinding(selected);
+      setSheetMode(mode);
+      setSheetExiting(false);
+      return;
+    }
+    if (sheetFinding && !sheetExiting) {
+      if (prefersReducedMotion()) {
+        setSheetFinding(null);
+        setSheetMode("idle");
+        setSheetExiting(false);
+      } else {
+        setSheetExiting(true);
+      }
+    }
+  }, [formOpen, selected, mode, sheetFinding, sheetExiting]);
+
+  function onStickyAnimationEnd(e: AnimationEvent<HTMLDivElement>) {
+    if (!sheetExiting) return;
+    if (e.animationName && e.animationName !== "manager-sticky-out") return;
+    setSheetFinding(null);
+    setSheetMode("idle");
+    setSheetExiting(false);
+  }
+
   useEffect(() => {
     setChromeInert(formOpen);
     return () => setChromeInert(false);
@@ -335,7 +368,7 @@ export function ManagerShiftDetail() {
 
   useLayoutEffect(() => {
     const root = detailRef.current;
-    if (!formOpen) {
+    if (!formOpen && !sheetExiting) {
       root?.style.removeProperty("--sticky-sheet-height");
       return;
     }
@@ -348,7 +381,7 @@ export function ManagerShiftDetail() {
     const ro = new ResizeObserver(apply);
     ro.observe(sheet);
     return () => ro.disconnect();
-  }, [formOpen, mode]);
+  }, [formOpen, sheetExiting, mode]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -998,7 +1031,7 @@ export function ManagerShiftDetail() {
   return (
     <div
       ref={detailRef}
-      className={`manager-detail ${formOpen ? "has-sticky" : ""}`}
+      className={`manager-detail ${formOpen || sheetExiting ? "has-sticky" : ""}`}
     >
       <div
         className="app-page stack manager-detail-page"
@@ -1580,22 +1613,24 @@ export function ManagerShiftDetail() {
         ) : null}
       </div>
 
-      {formOpen && selected ? (
+      {sheetFinding && sheetMode !== "idle" ? (
         <div
           ref={stickyRef}
           className="manager-sticky"
+          data-exit={sheetExiting ? "true" : undefined}
           role="region"
           aria-modal="true"
           aria-label="Finding actions"
           tabIndex={-1}
+          onAnimationEnd={onStickyAnimationEnd}
         >
           <div className="manager-sticky-inner">
             <p className="manager-sticky-label caption">
-              {mode === "override"
-                ? `Override ${glanceLabel(selected.itemId)}`
-                : mode === "retake"
-                  ? `Request photo · ${glanceLabel(selected.itemId)}`
-                  : `Assign ${glanceLabel(selected.itemId)}`}
+              {sheetMode === "override"
+                ? `Override ${glanceLabel(sheetFinding.itemId)}`
+                : sheetMode === "retake"
+                  ? `Request photo · ${glanceLabel(sheetFinding.itemId)}`
+                  : `Assign ${glanceLabel(sheetFinding.itemId)}`}
             </p>
             {errorShown ? (
               <div className="error-banner" role="alert">
@@ -1603,7 +1638,7 @@ export function ManagerShiftDetail() {
               </div>
             ) : null}
 
-            {mode === "override" ? (
+            {sheetMode === "override" ? (
               <div className="manager-sticky-form stack-sm">
                 <label className="field">
                   <span>Set status</span>
@@ -1657,10 +1692,10 @@ export function ManagerShiftDetail() {
                     loading={saving}
                     data-testid="create-task-btn"
                     onClick={() =>
-                      void runAssign(mode === "retake" ? "retake" : "fix")
+                      void runAssign(sheetMode === "retake" ? "retake" : "fix")
                     }
                   >
-                    {mode === "retake" ? "Request photo" : "Assign to staff"}
+                    {sheetMode === "retake" ? "Request photo" : "Assign to staff"}
                   </Button>
                 </div>
               </div>
