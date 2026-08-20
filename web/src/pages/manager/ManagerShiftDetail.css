@@ -214,6 +214,19 @@
   display: block;
 }
 
+.finding-photo.is-empty {
+  display: grid;
+  place-items: center;
+  cursor: default;
+  pointer-events: none;
+  color: var(--label-tertiary);
+}
+
+.finding-photo.is-empty svg {
+  width: 32%;
+  height: 32%;
+}
+
 .manager-detail.has-sticky .manager-detail-page {
   padding-bottom: calc(
     var(--sticky-sheet-height) + var(--space-6) + env(safe-area-inset-bottom)
@@ -628,11 +641,14 @@
 }
 
 .finding-row {
+  --finding-thumb: 4.5rem;
   position: relative;
   isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: var(--finding-thumb) minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  align-items: start;
   width: 100%;
   text-align: left;
   font: inherit;
@@ -649,28 +665,19 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.finding-row.has-photo {
-  --finding-thumb: 4.5rem;
-  display: grid;
-  grid-template-columns: var(--finding-thumb) minmax(0, 1fr);
-  column-gap: var(--space-4);
-  row-gap: var(--space-2);
-  align-items: start;
-}
-
 @media (min-width: 768px) {
-  .finding-row.has-photo {
+  .finding-row {
     --finding-thumb: 6rem;
   }
 }
 
-.finding-row.has-photo > .finding-photo {
+.finding-row > .finding-photo {
   grid-column: 1;
   grid-row: 1;
   z-index: 0;
 }
 
-.finding-row.has-photo > .finding-main {
+.finding-row > .finding-main {
   grid-column: 2;
   grid-row: 1;
   z-index: 1;
