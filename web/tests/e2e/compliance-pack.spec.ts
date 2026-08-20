@@ -218,4 +218,42 @@ test.describe("Compliance pack is an operational proof", () => {
 
     assertNoPageErrors(errors);
   });
+
+  test("print / save PDF keeps the labeled scoreboard stack, not a 7-column table", async ({
+    page,
+  }) => {
+    const errors = collectPageErrors(page);
+    const shiftId = await seedSubmittedShift({ photoFileIds: [] });
+    await seedFinding(shiftId, { itemId: "gloves_worn", status: "pass" });
+    await markShiftScored(shiftId);
+
+    await login(page, MANAGER.email, MANAGER.password);
+    await page.goto(`/manager/shifts/${shiftId}/export`);
+    await expect(page.getByRole("heading", { name: /compliance pack/i })).toBeVisible({
+      timeout: 25_000,
+    });
+
+    await page.emulateMedia({ media: "print" });
+
+    await expect(page.locator(".export-table thead")).toBeHidden();
+    await expect(page.locator(".shell-chrome")).toBeHidden();
+    await expect(page.getByRole("button", { name: /print \/ save pdf/i })).toBeHidden();
+
+    const row = page.locator(".export-table tbody tr.export-row").first();
+    await expect(row).toBeVisible();
+    expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("grid");
+
+    const quoteBefore = await page
+      .locator(".export-cell-quote")
+      .first()
+      .evaluate((el) => getComputedStyle(el, "::before").content);
+    expect(quoteBefore).toMatch(/quote/i);
+
+    const summaryCols = await page
+      .locator(".export-summary")
+      .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+    expect(summaryCols).toBe(4);
+
+    assertNoPageErrors(errors);
+  });
 });

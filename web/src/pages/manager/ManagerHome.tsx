@@ -85,6 +85,7 @@ export function ManagerHome() {
 
   const [items, setItems] = useState<ManagerShiftSummary[]>([]);
   const [source, setSource] = useState<"live" | "demo">("demo");
+  const [listTruncated, setListTruncated] = useState(false);
   const [siteName, setSiteName] = useState("");
   const [timeZone, setTimeZone] = useState("Asia/Kolkata");
   const [loading, setLoading] = useState(true);
@@ -136,37 +137,73 @@ export function ManagerHome() {
     setErrorExiting(false);
   }
 
+  const inflightReload = useRef<Promise<void> | null>(null);
+  const queuedSilent = useRef(false);
+
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+    const silent = Boolean(opts?.silent);
+    if (inflightReload.current) {
+      queuedSilent.current = true;
+      await inflightReload.current;
+      return;
+    }
+
+    const run = async () => {
+      let passSilent = silent;
+      do {
+        queuedSilent.current = false;
+        if (!passSilent) setLoading(true);
+        try {
+          if (passSilent) {
+            const inbox = await loadManagerInbox({ fresh: true });
+            setItems(inbox.items);
+            setSource(inbox.source);
+            setListTruncated(inbox.source === "live" && inbox.truncated);
+            setError(null);
+          } else {
+            const [inbox, site, offenders, tasks] = await Promise.all([
+              loadManagerInbox({ fresh: true }),
+              getSite().catch(() => null),
+              loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
+              listOpenTasks().catch(() => [] as Task[]),
+            ]);
+            if (user && inbox.source === "live") {
+              await sweepStaleJobs(inbox.items, user.$id);
+            }
+            setItems(inbox.items);
+            setSource(inbox.source);
+            setListTruncated(inbox.source === "live" && inbox.truncated);
+            if (site?.name) setSiteName(site.name);
+            if (site?.timezone) setTimeZone(site.timezone);
+            setRepeatOffenders(
+              offenders.length
+                ? offenders
+                : inbox.source === "demo"
+                  ? DEMO_REPEAT_OFFENDERS
+                  : [],
+            );
+            setOpenTasks((prev) =>
+              inbox.source === "demo" ? [] : mergeTasksById(prev, tasks),
+            );
+            setError(null);
+          }
+        } catch (err) {
+          if (!passSilent) {
+            setError(getErrorMessage(err, "Could not load inbox"));
+          }
+        } finally {
+          setLoading(false);
+        }
+        passSilent = true;
+      } while (queuedSilent.current);
+    };
+
+    const pending = run();
+    inflightReload.current = pending;
     try {
-      const [inbox, site, offenders, tasks] = await Promise.all([
-        loadManagerInbox(),
-        getSite().catch(() => null),
-        loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
-        listOpenTasks().catch(() => [] as Task[]),
-      ]);
-      if (user && inbox.source === "live") {
-        await sweepStaleJobs(inbox.items, user.$id);
-      }
-      setItems(inbox.items);
-      setSource(inbox.source);
-      if (site?.name) setSiteName(site.name);
-      if (site?.timezone) setTimeZone(site.timezone);
-      setRepeatOffenders(
-        offenders.length
-          ? offenders
-          : inbox.source === "demo"
-            ? DEMO_REPEAT_OFFENDERS
-            : [],
-      );
-      setOpenTasks((prev) =>
-        inbox.source === "demo" ? [] : mergeTasksById(prev, tasks),
-      );
-      setError(null);
-    } catch (err) {
-      setError(getErrorMessage(err, "Could not load inbox"));
+      await pending;
     } finally {
-      setLoading(false);
+      if (inflightReload.current === pending) inflightReload.current = null;
     }
   }, [user]);
 
@@ -328,6 +365,7 @@ export function ManagerHome() {
     itemKnown,
     view,
     listedCount: listed.length,
+    listTruncated,
     todayGaps,
     todayUnclear,
     checksInProgress: stuckItems.length > 0 || waitingShifts.length > 0,
@@ -337,22 +375,67 @@ export function ManagerHome() {
     backlogUnclear,
   });
 
-  function setView(next: InboxView) {
-    const nextParams = new URLSearchParams(params);
-    if (next === "today") nextParams.delete("view");
-    else nextParams.set("view", next);
-    nextParams.delete("item");
-    setParams(nextParams);
-  }
+  const assignPreview = useMemo(() => {
+    if (view !== "today" || itemFilter || todayGaps === 0) return null;
+    const openFindingIds = new Set(openTasks.map((t) => t.findingId));
+    let gapCount = 0;
+    let shiftCount = 0;
+    const staffNames = new Set<string>();
+    for (const row of todayItems.filter((s) => s.shift.status === "scored")) {
+      let rowHasGap = false;
+      for (const finding of row.findings) {
+        if (finding.status !== "gap") continue;
+        if (openFindingIds.has(finding.$id)) continue;
+        gapCount++;
+        rowHasGap = true;
+      }
+      if (rowHasGap) {
+        shiftCount++;
+        if (row.staffLabel) staffNames.add(displayStaffName(row.staffLabel));
+      }
+    }
+    if (gapCount === 0) return null;
+    const staffList = Array.from(staffNames);
+    const staffStr =
+      staffList.length === 1
+        ? staffList[0]
+        : staffList.length === 2
+          ? `${staffList[0]} and ${staffList[1]}`
+          : staffList.length > 2
+            ? `${staffList[0]} and ${staffList.length - 1} others`
+            : "staff";
+    const shiftsStr = shiftCount === 1 ? "1 shift" : `${shiftCount} shifts`;
+    const gapsStr = gapCount === 1 ? "1 gap" : `${gapCount} gaps`;
+    return {
+      gapCount,
+      shiftCount,
+      staffSummary: staffStr,
+      summaryText: `Assign ${gapsStr} across ${shiftsStr} to ${staffStr}`,
+    };
+  }, [view, itemFilter, todayGaps, openTasks, todayItems]);
 
-  function setItemFilter(itemId: string | null) {
-    const nextParams = new URLSearchParams(params);
-    if (itemId) nextParams.set("item", itemId);
-    else nextParams.delete("item");
-    setParams(nextParams);
-  }
+  const setView = useCallback(
+    (next: InboxView) => {
+      const nextParams = new URLSearchParams(params);
+      if (next === "today") nextParams.delete("view");
+      else nextParams.set("view", next);
+      nextParams.delete("item");
+      setParams(nextParams);
+    },
+    [params, setParams],
+  );
 
-  async function assignTodayGaps() {
+  const setItemFilter = useCallback(
+    (itemId: string | null) => {
+      const nextParams = new URLSearchParams(params);
+      if (itemId) nextParams.set("item", itemId);
+      else nextParams.delete("item");
+      setParams(nextParams);
+    },
+    [params, setParams],
+  );
+
+  const assignTodayGaps = useCallback(async () => {
     if (!user || assigning) return;
     setAssigning(true);
     setAssignToast(null);
@@ -436,7 +519,128 @@ export function ManagerHome() {
     } finally {
       setAssigning(false);
     }
-  }
+  }, [user, assigning, openTasks, todayItems, source, reload]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable ||
+          target.getAttribute("role") === "textbox")
+      ) {
+        return;
+      }
+
+      if (e.key === "1") {
+        e.preventDefault();
+        setView("today");
+        return;
+      }
+      if (e.key === "2") {
+        e.preventDefault();
+        setView("backlog");
+        return;
+      }
+      if (e.key === "3") {
+        e.preventDefault();
+        setView("all");
+        return;
+      }
+
+      if (e.key === "a" || e.key === "A") {
+        if (
+          view === "today" &&
+          !itemFilter &&
+          todayGaps > 0 &&
+          !loading &&
+          !assigning
+        ) {
+          e.preventDefault();
+          void assignTodayGaps();
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (itemFilter) {
+          e.preventDefault();
+          setItemFilter(null);
+        } else if (fixesExpanded) {
+          e.preventDefault();
+          setFixesExpanded(false);
+        }
+        return;
+      }
+
+      if (e.key === "j" || e.key === "J" || e.key === "ArrowDown") {
+        const rows = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            ".manager-list a.manager-row",
+          ),
+        );
+        if (rows.length === 0) return;
+        const activeIdx = rows.findIndex((r) => r === document.activeElement);
+        e.preventDefault();
+        let nextIdx = 0;
+        if (activeIdx >= 0) {
+          nextIdx = Math.min(activeIdx + 1, rows.length - 1);
+        }
+        const nextRow = rows[nextIdx];
+        if (nextRow) {
+          nextRow.focus({ preventScroll: false });
+          nextRow.scrollIntoView({
+            block: "nearest",
+            behavior: prefersReducedMotion() ? "instant" : "smooth",
+          });
+        }
+        return;
+      }
+
+      if (e.key === "k" || e.key === "K" || e.key === "ArrowUp") {
+        const rows = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            ".manager-list a.manager-row",
+          ),
+        );
+        if (rows.length === 0) return;
+        const activeIdx = rows.findIndex((r) => r === document.activeElement);
+        e.preventDefault();
+        let prevIdx = rows.length - 1;
+        if (activeIdx >= 0) {
+          prevIdx = Math.max(activeIdx - 1, 0);
+        }
+        const prevRow = rows[prevIdx];
+        if (prevRow) {
+          prevRow.focus({ preventScroll: false });
+          prevRow.scrollIntoView({
+            block: "nearest",
+            behavior: prefersReducedMotion() ? "instant" : "smooth",
+          });
+        }
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    view,
+    itemFilter,
+    todayGaps,
+    loading,
+    assigning,
+    fixesExpanded,
+    assignTodayGaps,
+    setView,
+    setItemFilter,
+  ]);
 
   async function retryStuckJobs() {
     if (!user || retryingJobs || jobTargets.length === 0) return;
@@ -539,130 +743,137 @@ export function ManagerHome() {
         </div>
       ) : null}
 
-      {!sopLoading ? (
-        <div
-          className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
-          data-testid="sop-upload"
-        >
-          <input
-            ref={sopInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="manager-sop-file"
-            tabIndex={-1}
-            onChange={(e) => void onSopFileChange(e)}
-            disabled={sopUploading}
-          />
-          {!sopReady ? (
-            <>
-              <span>Missing</span>
-              <button
-                type="button"
-                className="text-btn"
+      {(!sopLoading ||
+        (!loading && openTasks.length > 0 && !hideTodayFixes)) ? (
+        <div className="manager-desk-lines">
+          {!sopLoading ? (
+            <div
+              className={sopReady ? "manager-sop-panel" : "manager-sop-missing"}
+              data-testid="sop-upload"
+            >
+              <input
+                ref={sopInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="manager-sop-file"
+                tabIndex={-1}
+                onChange={(e) => void onSopFileChange(e)}
                 disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Upload
-              </button>
-            </>
-          ) : (
-            <>
-              <details className="manager-sop-details">
-                <summary>
-                  {liveItems.length > 0
-                    ? `Opening check · ${liveItems.length} items`
-                    : "Opening check"}
-                </summary>
-                {liveItems.length > 0 ? (
-                  <ol
-                    className="manager-sop-clauses"
-                    data-testid="live-clause-set"
+              />
+              {!sopReady ? (
+                <>
+                  <span>Missing</span>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    disabled={sopUploading}
+                    onClick={() => sopInputRef.current?.click()}
                   >
-                    {liveItems.map((item) => (
-                      <li key={item.id}>{item.label}</li>
-                    ))}
-                  </ol>
-                ) : null}
-              </details>
-              <button
-                type="button"
-                className="text-btn"
-                disabled={sopUploading}
-                onClick={() => sopInputRef.current?.click()}
-              >
-                Replace
-              </button>
-            </>
-          )}
-          {sopUploading ? (
-            <p className="manager-sop-toast" role="status">
-              Reading the SOP…
-            </p>
-          ) : sopMessage ? (
-            <p className="manager-sop-toast" role="status">
-              {sopMessage}
-            </p>
-          ) : null}
-          {sopError ? (
-            <div className="error-banner" role="alert">
-              {sopError}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {!loading && openTasks.length > 0 && !hideTodayFixes ? (
-        <section
-          className="manager-inbox"
-          aria-label="Open fixes"
-          data-testid="open-fixes"
-        >
-          <button
-            type="button"
-            className="manager-fixes-summary"
-            aria-expanded={fixesExpanded}
-            onClick={() => {
-              setFixesExpanded((v) => {
-                if (v) setFixesShowAll(false);
-                return !v;
-              });
-            }}
-          >
-            {openTasks.length === 1
-              ? "1 open fix"
-              : `${openTasks.length} open fixes`}
-            {" · "}
-            {waitingOnStaff === 1
-              ? "1 waiting on staff"
-              : `${waitingOnStaff} waiting on staff`}
-          </button>
-          {fixesExpanded ? (
-            <div className="manager-fixes-expanded">
-              <OpenFixBucket
-                label="Waiting on staff"
-                tasks={waitingTasks}
-                items={items}
-                showAll={fixesShowAll}
-              />
-              <OpenFixBucket
-                label="Re-check on file"
-                tasks={recheckTasks}
-                items={items}
-                showAll={fixesShowAll}
-              />
-              {openFixOverflow ? (
-                <button
-                  type="button"
-                  className="text-btn"
-                  aria-pressed={fixesShowAll}
-                  onClick={() => setFixesShowAll((v) => !v)}
-                >
-                  {fixesShowAll ? "Show less" : "Show all"}
-                </button>
+                    Upload
+                  </button>
+                </>
+              ) : (
+                <>
+                  <details className="manager-sop-details">
+                    <summary>
+                      {liveItems.length > 0
+                        ? `Opening check · ${liveItems.length} items`
+                        : "Opening check"}
+                    </summary>
+                    {liveItems.length > 0 ? (
+                      <ol
+                        className="manager-sop-clauses"
+                        data-testid="live-clause-set"
+                      >
+                        {liveItems.map((item) => (
+                          <li key={item.id}>{item.label}</li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </details>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    disabled={sopUploading}
+                    onClick={() => sopInputRef.current?.click()}
+                  >
+                    Replace
+                  </button>
+                </>
+              )}
+              {sopUploading ? (
+                <p className="manager-sop-toast" role="status">
+                  Reading the SOP…
+                </p>
+              ) : sopMessage ? (
+                <p className="manager-sop-toast" role="status">
+                  {sopMessage}
+                </p>
+              ) : null}
+              {sopError ? (
+                <div className="error-banner" role="alert">
+                  {sopError}
+                </div>
               ) : null}
             </div>
           ) : null}
-        </section>
+
+          {!loading && openTasks.length > 0 && !hideTodayFixes ? (
+            <section
+              className="manager-inbox manager-fixes"
+              aria-label="Open fixes"
+              data-testid="open-fixes"
+            >
+              <button
+                type="button"
+                className="manager-fixes-summary"
+                aria-expanded={fixesExpanded}
+                onClick={() => {
+                  setFixesExpanded((v) => {
+                    if (v) setFixesShowAll(false);
+                    return !v;
+                  });
+                }}
+              >
+                {openTasks.length === 1
+                  ? "1 open fix"
+                  : `${openTasks.length} open fixes`}
+                {" · "}
+                {waitingOnStaff === 1
+                  ? "1 waiting on staff"
+                  : `${waitingOnStaff} waiting on staff`}
+              </button>
+              {fixesExpanded ? (
+                <div
+                  className={`manager-fixes-expanded${fixesShowAll ? " is-show-all" : ""}`}
+                >
+                  <OpenFixBucket
+                    label="Waiting on staff"
+                    tasks={waitingTasks}
+                    items={items}
+                    showAll={fixesShowAll}
+                  />
+                  <OpenFixBucket
+                    label="Re-check on file"
+                    tasks={recheckTasks}
+                    items={items}
+                    showAll={fixesShowAll}
+                  />
+                  {openFixOverflow ? (
+                    <button
+                      type="button"
+                      className="text-btn"
+                      aria-pressed={fixesShowAll}
+                      onClick={() => setFixesShowAll((v) => !v)}
+                    >
+                      {fixesShowAll ? "Show less" : "Show all"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+        </div>
       ) : null}
 
       <section className="manager-inbox" aria-label="Inbox">
@@ -710,11 +921,18 @@ export function ManagerHome() {
                 type="button"
                 className={`manager-repeat-chip${itemFilter === r.itemId ? " is-active" : ""}`}
                 aria-pressed={itemFilter === r.itemId}
+                aria-label={`${shortItemLabel(r.itemId)}: gap in ${r.count} of last ${r.of} shifts`}
+                title={`Gap in ${r.count} of last ${r.of} shifts`}
                 onClick={() =>
                   setItemFilter(itemFilter === r.itemId ? null : r.itemId)
                 }
               >
-                {shortItemLabel(r.itemId)} {r.count}/{r.of}
+                <span className="manager-repeat-chip-label">
+                  {shortItemLabel(r.itemId)}
+                </span>{" "}
+                <span className="manager-repeat-chip-rate" aria-hidden="true">
+                  {r.count}/{r.of}
+                </span>
               </button>
             ))}
           </div>
@@ -726,10 +944,29 @@ export function ManagerHome() {
               variant="primary"
               loading={assigning}
               data-testid="assign-today-gaps"
+              title={
+                assignPreview
+                  ? `${assignPreview.summaryText} (or press 'a')`
+                  : undefined
+              }
+              aria-label={
+                assignPreview
+                  ? `Assign today’s gaps: ${assignPreview.summaryText}`
+                  : "Assign today’s gaps"
+              }
               onClick={() => void assignTodayGaps()}
             >
               Assign today’s gaps
             </Button>
+            {assignPreview ? (
+              <span
+                className="manager-assign-preview-hint"
+                role="status"
+                aria-live="polite"
+              >
+                {assignPreview.summaryText}
+              </span>
+            ) : null}
             {assignToast ? (
               <p className="manager-sop-toast" role="status">
                 {assignToast}
@@ -930,21 +1167,23 @@ function JobsBanner({
     >
       <button
         type="button"
-        className="manager-jobs-copy"
+        className="text-btn manager-jobs-copy"
         aria-label={`${jobsLine}. Show on All.`}
         onClick={onShowAll}
       >
         {jobsLine}
       </button>
       <div className="manager-jobs-actions">
-        <Button
-          variant="quiet"
-          loading={retrying}
+        <button
+          type="button"
+          className="text-btn manager-jobs-retry"
           data-testid="retry-stuck-jobs"
+          disabled={retrying}
+          aria-busy={retrying || undefined}
           onClick={onRetry}
         >
-          Retry all
-        </Button>
+          {retrying ? "Retrying…" : "Retry all"}
+        </button>
         {toast ? (
           <p className="manager-sop-toast" role="status">
             {toast}

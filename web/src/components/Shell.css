@@ -122,6 +122,19 @@
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
+  transform-origin: top right;
+  animation: menu-pop var(--dur-ui) var(--ease-out);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .shell-account-role,
@@ -184,10 +197,10 @@
 }
 
 .shell-nav-link {
-  min-height: 2.25rem;
+  min-height: 2.625rem;
   display: inline-flex;
   align-items: center;
-  padding: 0 0.7rem;
+  padding: 0 0.8rem;
   border-radius: var(--radius-pill);
   color: var(--label-secondary);
   font-size: 0.8125rem;
@@ -202,6 +215,11 @@
 
 .shell-nav-link:active {
   transform: scale(0.97);
+}
+
+.shell-nav-link:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -264,6 +282,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .shell-account-menu {
+    animation: none;
+  }
+
   .shell-nav-link {
     transition: none;
   }

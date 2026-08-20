@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "clean-data": "node scripts/clean-test-data.cjs",
+    "clean-data:dry-run": "node scripts/clean-test-data.cjs --dry-run"
+  },
   "dependencies": {
     "docx": "^9.7.1"
   }

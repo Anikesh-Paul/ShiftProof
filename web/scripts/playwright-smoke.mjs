@@ -124,6 +124,9 @@ async function login(page, email, password) {
 
   // Scoreboard — prefer golden insurance shift (stable); fall back to first inbox link
   let shiftId = "golden_gap_open";
+  const allTab = page.getByRole("tab", { name: /^all$/i });
+  if ((await allTab.count()) > 0) await allTab.click().catch(() => {});
+  await page.waitForTimeout(600);
   const goldenLink = page.locator(
     'a[href*="/manager/shifts/golden_gap_open"]',
   ).first();
@@ -134,10 +137,6 @@ async function login(page, email, password) {
     const href = await goldenLink.getAttribute("href");
     shiftId = href?.split("/").filter(Boolean).pop() || shiftId;
     await goldenLink.click();
-  } else if ((await anyLink.count()) > 0) {
-    const href = await anyLink.getAttribute("href");
-    shiftId = href?.split("/").filter(Boolean).pop() || shiftId;
-    await anyLink.click();
   } else {
     await page.goto(`${base}/manager/shifts/golden_gap_open`, {
       waitUntil: "domcontentloaded",
@@ -154,25 +153,26 @@ async function login(page, email, password) {
   }
 
   // Select finding if any
-  const showAll = page.getByRole("button", { name: /show all/i });
+  const showAll = page.getByRole("button", { name: /^show all$/i });
   if ((await showAll.count()) > 0) await showAll.click().catch(() => {});
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(600);
   const finding = page.locator(".finding-row").first();
+  await finding.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
   if ((await finding.count()) > 0) {
     await finding.click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(600);
     await shot(page, "07-manager-finding-selected");
     const sticky = page.locator(".manager-sticky");
+    await sticky.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
     if (await sticky.count()) ok("manager-sticky-actions");
     else bad("manager-sticky-actions");
 
     // Override form — wait for save to finish (saving disables sticky actions)
-    const overrideBtn = page.getByRole("button", { name: /^override$/i });
+    const overrideBtn = page.getByRole("button", { name: /^override$/i }).first();
     if (await overrideBtn.count()) {
       await overrideBtn.click();
       await page.waitForTimeout(300);
-      await page.fill(
-        'input[placeholder*="overriding"]',
+      await page.getByLabel(/reason/i).fill(
         "Playwright smoke override",
       );
       await page.getByRole("button", { name: /save override/i }).click();

@@ -24,7 +24,18 @@ import {
   type ManagerShiftSummary,
 } from "./managerDemo";
 import { resolveStaffLabel } from "./staffNames";
-import { getLatestJob, loadChecklistItems } from "./shifts";
+import {
+  getLatestJob,
+  listFindingsByShiftIds,
+  listLatestJobsByShiftIds,
+  loadChecklistItems,
+} from "./shifts";
+import {
+  INBOX_EVIDENCE_PAGES,
+  INBOX_RECENCY_LIMIT,
+  inboxRecencyTruncated,
+  mergeRecencyWithEvidence,
+} from "./inboxFetch";
 
 const T = APPWRITE_IDS.tables;
 
@@ -115,28 +126,71 @@ function countByStatus(findings: Finding[]) {
   };
 }
 
-/** API.md manager §1 — list shifts by status. */
-export async function listManagerShifts(): Promise<Shift[]> {
+async function listManagerShiftPage(opts?: {
+  offset?: number;
+}): Promise<{ rows: Shift[]; total: number }> {
+  const queries = [
+    Query.equal("status", ["submitted", "scoring", "scored"]),
+    Query.orderDesc("submittedAt"),
+    Query.limit(INBOX_RECENCY_LIMIT),
+  ];
+  if (opts?.offset) queries.push(Query.offset(opts.offset));
   const result = await tables.listRows({
     databaseId: DB,
     tableId: T.shifts,
-    queries: [
-      Query.equal("status", ["submitted", "scoring", "scored"]),
-      Query.orderDesc("submittedAt"),
-      Query.limit(50),
-    ],
+    queries,
   });
-  return result.rows as unknown as Shift[];
+  return {
+    rows: result.rows as unknown as Shift[],
+    total: result.total,
+  };
+}
+
+/** Recency page only — glance chips stay on the latest scored openings. */
+export async function listManagerShifts(): Promise<Shift[]> {
+  const page = await listManagerShiftPage();
+  return page.rows;
+}
+
+/**
+ * Recency 50 plus older photo rows that the recency page dropped.
+ * Today still day-scopes; Backlog rank can lift photo + N Gap.
+ */
+export async function listManagerInboxWindow(): Promise<{
+  shifts: Shift[];
+  truncated: boolean;
+}> {
+  const recent = await listManagerShiftPage();
+  const knownMore = inboxRecencyTruncated(recent.total, recent.rows.length);
+  const maybeMore =
+    recent.total === 0 && recent.rows.length === INBOX_RECENCY_LIMIT;
+  if (!knownMore && !maybeMore) {
+    return { shifts: recent.rows, truncated: false };
+  }
+
+  const older: Shift[] = [];
+  try {
+    for (let i = 1; i <= INBOX_EVIDENCE_PAGES; i++) {
+      const page = await listManagerShiftPage({
+        offset: INBOX_RECENCY_LIMIT * i,
+      });
+      older.push(...page.rows);
+      if (page.rows.length < INBOX_RECENCY_LIMIT) break;
+    }
+  } catch {
+    /* Recency page still paints. */
+  }
+
+  return {
+    shifts: mergeRecencyWithEvidence(recent.rows, older),
+    truncated: knownMore || older.length > 0,
+  };
 }
 
 /** API.md manager §2 / staff §6 — findings by shiftId. */
 export async function listFindings(shiftId: string): Promise<Finding[]> {
-  const result = await tables.listRows({
-    databaseId: DB,
-    tableId: T.findings,
-    queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
-  });
-  return result.rows as unknown as Finding[];
+  const map = await listFindingsByShiftIds([shiftId]);
+  return map.get(shiftId) ?? [];
 }
 
 function toSummary(
@@ -154,38 +208,63 @@ function toSummary(
   };
 }
 
+const INBOX_MEMO_MS = 8_000;
+
+type InboxLoad = {
+  items: ManagerShiftSummary[];
+  source: "live" | "demo";
+  truncated: boolean;
+};
+
+let inboxMemo: { at: number; result: InboxLoad } | null = null;
+
 /**
  * Live inbox first (API.md). Demo pack only when:
  * - network/permission failure, or
  * - zero live shifts (empty café).
  * Never hide real submitted shifts behind demo.
+ * `fresh` skips the short memo used when navigating inbox → detail.
  */
-export async function loadManagerInbox(): Promise<{
-  items: ManagerShiftSummary[];
-  source: "live" | "demo";
-}> {
+export async function loadManagerInbox(opts?: {
+  fresh?: boolean;
+}): Promise<InboxLoad> {
+  if (
+    !opts?.fresh &&
+    inboxMemo &&
+    inboxMemo.result.source === "live" &&
+    Date.now() - inboxMemo.at < INBOX_MEMO_MS
+  ) {
+    return inboxMemo.result;
+  }
   try {
     await ensureItemLabels();
-    const shifts = await listManagerShifts();
+    const { shifts, truncated } = await listManagerInboxWindow();
     if (shifts.length === 0) {
-      return { items: DEMO_MANAGER_INBOX, source: "demo" };
+      return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
     }
 
-    // Parallel findings — sequential listFindings made inbox feel stuck
-    const items = await Promise.all(
-      shifts.map(async (shift) => {
-        const needsJob =
-          shift.status === "submitted" || shift.status === "scoring";
-        const [findings, latestJob] = await Promise.all([
-          listFindings(shift.$id).catch(() => [] as Finding[]),
-          needsJob ? getLatestJob(shift.$id).catch(() => null) : Promise.resolve(null),
-        ]);
-        return toSummary(shift, findings, undefined, latestJob);
-      }),
+    const scoringIds = shifts
+      .filter((s) => s.status === "submitted" || s.status === "scoring")
+      .map((s) => s.$id);
+    const [findingsByShift, jobsByShift] = await Promise.all([
+      listFindingsByShiftIds(shifts.map((s) => s.$id)),
+      scoringIds.length
+        ? listLatestJobsByShiftIds(scoringIds)
+        : Promise.resolve(new Map<string, AgentJob>()),
+    ]);
+    const items = shifts.map((shift) =>
+      toSummary(
+        shift,
+        findingsByShift.get(shift.$id) ?? [],
+        undefined,
+        jobsByShift.get(shift.$id) ?? null,
+      ),
     );
-    return { items, source: "live" };
+    const result: InboxLoad = { items, source: "live", truncated };
+    inboxMemo = { at: Date.now(), result };
+    return result;
   } catch {
-    return { items: DEMO_MANAGER_INBOX, source: "demo" };
+    return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
   }
 }
 
@@ -730,8 +809,11 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
     if (scored.length === 0) return [];
 
     const counts = new Map<string, number>();
+    const findingsByShift = await listFindingsByShiftIds(
+      scored.map((s) => s.$id),
+    );
     for (const s of scored) {
-      const findings = await listFindings(s.$id);
+      const findings = findingsByShift.get(s.$id) ?? [];
       const bad = new Set(
         findings
           .filter((f) => f.status === "gap" || f.status === "unclear")
@@ -775,9 +857,13 @@ export function hasForcedCitation(
   );
 }
 
+/** Scoring writes many rows; collapse them into one inbox refresh. */
+export const MANAGER_REALTIME_DEBOUNCE_MS = 1_200;
+
 /**
  * API.md Realtime — subscribe to shifts, findings, agent_jobs, tasks.
  * Channel: tablesdb.{db}.tables.{table}.rows
+ * Hidden tabs do not refetch; the pending event flushes on focus.
  */
 export function subscribeManagerTables(
   onEvent: () => void,
@@ -791,10 +877,33 @@ export function subscribeManagerTables(
   ];
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const debounced = () => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => onEvent(), 400);
+  let pending = false;
+
+  const fire = () => {
+    timer = null;
+    if (typeof document !== "undefined" && document.hidden) {
+      pending = true;
+      return;
+    }
+    pending = false;
+    onEvent();
   };
+
+  const debounced = () => {
+    pending = true;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fire, MANAGER_REALTIME_DEBOUNCE_MS);
+  };
+
+  const onVisibility = () => {
+    if (typeof document === "undefined" || document.hidden || !pending) return;
+    if (timer) clearTimeout(timer);
+    fire();
+  };
+
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
 
   const sub = realtime.subscribe(channels, () => {
     debounced();
@@ -802,6 +911,10 @@ export function subscribeManagerTables(
 
   return () => {
     if (timer) clearTimeout(timer);
+    pending = false;
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
     // SDK may return Promise or unsubscribe object
     void Promise.resolve(sub).then((s) => {
       if (s && typeof (s as { close?: () => void }).close === "function") {

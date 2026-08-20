@@ -28,32 +28,65 @@ const SOP_MAX_BYTES = 10 * 1024 * 1024;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RowData = Record<string, any>;
 
+const SEED_TTL_MS = 5 * 60 * 1000;
+
+type SeedCache<T> = { at: number; value: T };
+
+let siteCache: SeedCache<Site> | null = null;
+let checklistRowCache: SeedCache<Checklist> | null = null;
+let sopCache: SeedCache<Sop> | null = null;
+let checklistItemCache: ChecklistItem[] = [];
+let checklistItemsAt = 0;
+
+export function invalidateSeedCaches(): void {
+  siteCache = null;
+  checklistRowCache = null;
+  sopCache = null;
+  checklistItemCache = [];
+  checklistItemsAt = 0;
+}
+
 export async function getSite(): Promise<Site> {
+  if (siteCache && Date.now() - siteCache.at < SEED_TTL_MS) {
+    return siteCache.value;
+  }
   const row = await tables.getRow({
     databaseId: DB,
     tableId: T.sites,
     rowId: seed.siteId,
   });
-  return row as unknown as Site;
+  const value = row as unknown as Site;
+  siteCache = { at: Date.now(), value };
+  return value;
 }
 
 export async function getChecklist(): Promise<Checklist> {
+  if (checklistRowCache && Date.now() - checklistRowCache.at < SEED_TTL_MS) {
+    return checklistRowCache.value;
+  }
   const row = await tables.getRow({
     databaseId: DB,
     tableId: T.checklists,
     rowId: seed.checklistId,
   });
-  return row as unknown as Checklist;
+  const value = row as unknown as Checklist;
+  checklistRowCache = { at: Date.now(), value };
+  return value;
 }
 
 /** API.md — Get SOP meta (`sops` / `cafe_sop_v1`). */
 export async function getSop(): Promise<Sop> {
+  if (sopCache && Date.now() - sopCache.at < SEED_TTL_MS) {
+    return sopCache.value;
+  }
   const row = await tables.getRow({
     databaseId: DB,
     tableId: T.sops,
     rowId: seed.sopId,
   });
-  return row as unknown as Sop;
+  const value = row as unknown as Sop;
+  sopCache = { at: Date.now(), value };
+  return value;
 }
 
 /** True when fileId points at a real Storage object (not seed placeholder). */
@@ -94,7 +127,9 @@ export async function uploadSopPdf(file: File): Promise<Sop> {
       fileId: created.$id,
     } as RowData,
   });
-  return row as unknown as Sop;
+  const value = row as unknown as Sop;
+  sopCache = { at: Date.now(), value };
+  return value;
 }
 
 const EXTRACT_KEEP_PREVIOUS =
@@ -133,7 +168,13 @@ export async function extractSopLiveSet(): Promise<ChecklistItem[]> {
   if (failed) {
     throw new Error(EXTRACT_KEEP_PREVIOUS);
   }
-  return Array.isArray(payload.items) ? payload.items : [];
+  invalidateSeedCaches();
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  if (items.length) {
+    checklistItemCache = items;
+    checklistItemsAt = Date.now();
+  }
+  return items;
 }
 
 /**
@@ -181,16 +222,21 @@ export function parseChecklistItems(checklist: Checklist): ChecklistItem[] {
   }
 }
 
-let checklistItemCache: ChecklistItem[] = [];
-
 export function peekChecklistItems(): ChecklistItem[] {
   return checklistItemCache;
 }
 
 export async function loadChecklistItems(): Promise<ChecklistItem[]> {
+  if (
+    checklistItemCache.length > 0 &&
+    Date.now() - checklistItemsAt < SEED_TTL_MS
+  ) {
+    return checklistItemCache;
+  }
   const checklist = await getChecklist();
   const items = parseChecklistItems(checklist);
   checklistItemCache = items;
+  checklistItemsAt = Date.now();
   return items;
 }
 
@@ -629,14 +675,86 @@ export async function retryShiftScore(
 
 /** Poll latest agent_job for a shift (API.md §7). */
 export async function getLatestJob(shiftId: string): Promise<AgentJob | null> {
-  const jobs = await listJobsForShift(shiftId);
-  if (!jobs.length) return null;
-  const sorted = [...jobs].sort((a, b) =>
-    (b.$createdAt || b.startedAt || "").localeCompare(
-      a.$createdAt || a.startedAt || "",
-    ),
-  );
-  return sorted[0] ?? null;
+  const result = await tables.listRows({
+    databaseId: DB,
+    tableId: T.agent_jobs,
+    queries: [
+      Query.equal("shiftId", shiftId),
+      Query.orderDesc("$createdAt"),
+      Query.limit(1),
+    ],
+  });
+  return (result.rows[0] as unknown as AgentJob) ?? null;
+}
+
+const EQUAL_CHUNK = 50;
+const LIST_PAGE = 100;
+
+function uniqueIds(ids: string[]): string[] {
+  return [...new Set(ids.filter((id) => id.length > 0))];
+}
+
+function chunkIds(ids: string[], size = EQUAL_CHUNK): string[][] {
+  const unique = uniqueIds(ids);
+  const out: string[][] = [];
+  for (let i = 0; i < unique.length; i += size) {
+    out.push(unique.slice(i, i + size));
+  }
+  return out;
+}
+
+/** One query per chunk instead of one query per shift. */
+export async function listFindingsByShiftIds(
+  shiftIds: string[],
+): Promise<Map<string, Finding[]>> {
+  const map = new Map<string, Finding[]>();
+  for (const id of uniqueIds(shiftIds)) map.set(id, []);
+  for (const ids of chunkIds(shiftIds)) {
+    let offset = 0;
+    for (;;) {
+      const result = await tables.listRows({
+        databaseId: DB,
+        tableId: T.findings,
+        queries: [
+          Query.equal("shiftId", ids),
+          Query.limit(LIST_PAGE),
+          ...(offset > 0 ? [Query.offset(offset)] : []),
+        ],
+      });
+      for (const row of result.rows) {
+        const finding = row as unknown as Finding;
+        const list = map.get(finding.shiftId);
+        if (list) list.push(finding);
+        else map.set(finding.shiftId, [finding]);
+      }
+      if (result.rows.length < LIST_PAGE) break;
+      offset += LIST_PAGE;
+      if (offset >= 1000) break;
+    }
+  }
+  return map;
+}
+
+export async function listLatestJobsByShiftIds(
+  shiftIds: string[],
+): Promise<Map<string, AgentJob>> {
+  const map = new Map<string, AgentJob>();
+  for (const ids of chunkIds(shiftIds)) {
+    const result = await tables.listRows({
+      databaseId: DB,
+      tableId: T.agent_jobs,
+      queries: [
+        Query.equal("shiftId", ids),
+        Query.orderDesc("$createdAt"),
+        Query.limit(LIST_PAGE),
+      ],
+    });
+    for (const row of result.rows) {
+      const job = row as unknown as AgentJob;
+      if (!map.has(job.shiftId)) map.set(job.shiftId, job);
+    }
+  }
+  return map;
 }
 
 /** Poll until job done/failed, timeout (ms), or `isCancelled` reports true. */
@@ -721,12 +839,8 @@ export async function deleteDraftShift(
 export async function listFindingsForShift(
   shiftId: string,
 ): Promise<Finding[]> {
-  const result = await tables.listRows({
-    databaseId: DB,
-    tableId: T.findings,
-    queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
-  });
-  return result.rows as unknown as Finding[];
+  const map = await listFindingsByShiftIds([shiftId]);
+  return map.get(shiftId) ?? [];
 }
 
 export const PHOTO_MIN = 3;

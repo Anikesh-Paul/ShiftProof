@@ -9,7 +9,7 @@ import {
   knownItemFromText,
   shortItemLabel,
   type ManagerShiftSummary,
-} from "./managerDemo";
+} from "./managerDemo.ts";
 
 export type OpenFixItemGroup = {
   itemId: string;

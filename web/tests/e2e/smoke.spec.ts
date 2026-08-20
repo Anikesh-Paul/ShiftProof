@@ -1507,7 +1507,7 @@ test.describe("manager assign task durability", () => {
     await expect(rowA).toHaveCount(1);
     await expect(rowB).toHaveCount(1);
 
-    // Silent reload + realtime debounce (400ms) fire after the toast.
+    // Silent reload + realtime debounce fire after the toast.
     await expect(assignBtn).toBeEnabled({ timeout: 15_000 });
     await page.waitForTimeout(2_000);
     await expect(

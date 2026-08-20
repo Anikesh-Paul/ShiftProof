@@ -49,6 +49,8 @@ test.describe("manager Scoreboard is staff, time, outcome", () => {
 
     const row = page.getByTestId("finding-row").first();
     await expect(row).toBeVisible();
+    await expect(row.getByTestId("finding-photo-empty")).toBeVisible();
+    await expect(row.locator(".finding-photo-img")).toHaveCount(0);
     await expect(row.getByRole("button", { name: /^override$/i })).toBeVisible();
     await expect(row.getByRole("button", { name: /assign fix/i })).toBeVisible();
     const actions = page.getByRole("region", { name: /finding actions/i });

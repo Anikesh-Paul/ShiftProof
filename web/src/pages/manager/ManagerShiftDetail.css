@@ -9,22 +9,32 @@
   gap: var(--space-6);
 }
 
+.manager-detail-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.manager-detail-identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.manager-findings-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
 .manager-detail-page {
   flex: 1;
   padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
 }
 
-@media (min-width: 768px) {
-  .app-page.manager-detail-page {
-    width: min(100%, var(--content-wide));
-  }
-
-  .manager-sticky-inner {
-    width: min(100%, var(--content-wide));
-  }
-}
-
 .scoreboard-overflow {
+  position: relative;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -44,15 +54,31 @@
 }
 
 .scoreboard-overflow-menu {
-  position: static;
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 30;
   width: max-content;
   min-width: 11.5rem;
-  margin-top: var(--space-1);
+  margin: 0;
   padding: var(--space-1);
   background: var(--bg-elevated);
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
+  transform-origin: top right;
+  animation: menu-pop var(--dur-ui) var(--ease-out);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .scoreboard-overflow-item {
@@ -73,6 +99,14 @@
   text-align: left;
   text-decoration: none;
   cursor: pointer;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-ui) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.scoreboard-overflow-item:not(:disabled):active {
+  transform: scale(0.98);
 }
 
 .scoreboard-overflow-item:disabled {
@@ -83,6 +117,16 @@
 @media (hover: hover) and (pointer: fine) {
   .scoreboard-overflow-item:not(:disabled):hover {
     background: var(--fill);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scoreboard-overflow-menu {
+    animation: none;
+  }
+
+  .scoreboard-overflow-item:not(:disabled):active {
+    transform: none;
   }
 }
 
@@ -99,7 +143,7 @@
 }
 
 .manager-stuck-title {
-  margin: 0 0 0.25rem;
+  margin: 0 0 var(--space-1);
   font-weight: 600;
 }
 
@@ -124,9 +168,10 @@
 .agent-trace-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-3);
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   min-height: var(--touch);
   margin: 0;
   padding: 0;
@@ -142,17 +187,16 @@
   margin: 0;
 }
 
-.finding-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
+.agent-trace-toggle .caption {
+  color: var(--label-secondary);
+  font-weight: 600;
 }
 
 .finding-photo {
   flex-shrink: 0;
-  width: 2.5rem;
-  height: 2.5rem;
+  box-sizing: border-box;
+  width: var(--finding-thumb, 4.5rem);
+  height: var(--finding-thumb, 4.5rem);
   padding: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -168,6 +212,19 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.finding-photo.is-empty {
+  display: grid;
+  place-items: center;
+  cursor: default;
+  pointer-events: none;
+  color: var(--label-tertiary);
+}
+
+.finding-photo.is-empty svg {
+  width: 32%;
+  height: 32%;
 }
 
 .manager-detail.has-sticky .manager-detail-page {
@@ -269,8 +326,8 @@
 .evidence-gallery-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
+  justify-content: flex-start;
+  gap: var(--space-3);
 }
 
 .evidence-grid {
@@ -401,9 +458,9 @@
 }
 
 .task-done-btn {
-  min-height: 44px;
+  min-height: var(--touch);
   padding-inline: var(--space-3);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   flex-shrink: 0;
 }
 
@@ -439,6 +496,24 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  animation: trace-expand var(--dur-ui) var(--ease-out);
+}
+
+@keyframes trace-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-trace-steps {
+    animation: none;
+  }
 }
 
 .citation-bar {
@@ -478,10 +553,10 @@
   cursor: pointer;
   color: var(--accent);
   font-weight: 600;
-  min-height: 44px;
+  min-height: var(--touch);
   display: inline-flex;
   align-items: center;
-  padding-inline: 0.15rem;
+  padding-inline: 0;
 }
 
 .visually-hidden {
@@ -505,33 +580,35 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-2);
-  margin: 0;
-  font-size: 0.875rem;
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-md);
   color: var(--label-secondary);
 }
 
 .manager-tally strong {
   color: var(--label);
   font-weight: 700;
+  font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
-  margin-right: 0.2rem;
+  margin-right: var(--space-1);
 }
 
 .tally-sep {
   color: var(--label-tertiary);
-  margin: 0 0.1rem;
+  margin: 0 var(--space-1);
 }
 
 .manager-filter-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
 }
 
 .manager-filter-row .text-btn {
   min-height: var(--touch);
-  padding-inline: var(--space-3);
+  padding-inline: 0;
 }
 
 .finding-list {
@@ -548,10 +625,30 @@
   margin-top: var(--space-1);
 }
 
+.finding-actions .finding-override {
+  padding-inline: 0;
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  color: var(--label-secondary);
+  font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .finding-actions .finding-override:not(:disabled):hover {
+    background: transparent;
+    color: var(--label);
+  }
+}
+
 .finding-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  --finding-thumb: 4.5rem;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: var(--finding-thumb) minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  align-items: start;
   width: 100%;
   text-align: left;
   font: inherit;
@@ -564,12 +661,64 @@
   box-shadow: none;
   transition:
     transform var(--dur-press) var(--ease-out),
-    background-color var(--dur-ui) var(--ease-out);
+    border-color var(--dur-ui) var(--ease-out);
   -webkit-tap-highlight-color: transparent;
+}
+
+@media (min-width: 768px) {
+  .finding-row {
+    --finding-thumb: 6rem;
+  }
+}
+
+.finding-row > .finding-photo {
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 0;
+}
+
+.finding-row > .finding-main {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+}
+
+.finding-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.finding-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.finding-row::before {
+  content: "";
+  position: absolute;
+  /* auto grid area — padding box is the containing block, so the
+     wash includes row padding instead of hugging the photo/title. */
+  grid-column: auto;
+  grid-row: auto;
+  inset: 0 calc(-1 * var(--space-3));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  pointer-events: none;
+  z-index: -1;
+  transition: background-color var(--dur-ui) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .finding-row:hover {
+    border-bottom-color: transparent;
+  }
+
+  .finding-row:hover::before {
     background: var(--fill);
   }
 }
@@ -579,25 +728,26 @@
 }
 
 .finding-row.is-selected {
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  padding-inline: var(--space-3);
   border-bottom-color: transparent;
   scroll-margin-top: 5rem;
   scroll-margin-bottom: calc(var(--sticky-sheet-height) + var(--space-4));
 }
 
-.finding-row-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+.finding-row.is-selected::before,
+.finding-row.is-selected:hover::before {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finding-row::before {
+    transition: none;
+  }
 }
 
 .finding-title {
   margin: 0;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: var(--text-md);
   letter-spacing: -0.02em;
 }
 
@@ -661,6 +811,11 @@
   animation: manager-sticky-in var(--dur-enter) var(--ease-drawer) both;
 }
 
+.manager-sticky[data-exit="true"] {
+  animation: manager-sticky-out var(--dur-exit) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
 @keyframes manager-sticky-in {
   from {
     opacity: 0;
@@ -672,9 +827,25 @@
   }
 }
 
+@keyframes manager-sticky-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .manager-sticky:not(.manager-sticky-hint) {
     animation: none;
+  }
+
+  .manager-sticky[data-exit="true"] {
+    animation: none;
+    opacity: 0;
   }
 }
 

@@ -62,6 +62,7 @@ import {
   retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
+import { photoIdFromNote } from "../../lib/findingPhoto";
 import {
   CLUSTER_SIBLING_CAP,
   clusterRemainderCopy,
@@ -183,39 +184,42 @@ export function ManagerShiftDetail() {
     setToastExiting(false);
   }
 
-  const loadExtras = useCallback(async (id: string, isDemo: boolean) => {
-    if (isDemo || id.startsWith("demo_shift_")) {
-      setAgentTrace(DEMO_AGENT_TRACE);
-      // Phase 3 — sample open task assigned to shift staff for re-check demo
-      setTasks([
-        {
-          $id: "local_task_demo",
-          $createdAt: new Date().toISOString(),
-          $updatedAt: new Date().toISOString(),
-          shiftId: id,
-          findingId: "fa1",
-          title: "Fix: Gloves at prep",
-          status: "open",
-          assignedTo: "demo_staff",
-          createdBy: "demo_manager",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      return;
-    }
-    try {
-      const [t, e, trace] = await Promise.all([
-        listTasks(id),
-        listEvents(id),
-        getAgentJobTrace(id).catch(() => null),
-      ]);
-      setTasks((prev) => mergeTasksById(t, prev));
-      setEvents(e);
-      setAgentTrace(trace);
-    } catch {
-      // Non-blocking for the findings table
-    }
-  }, []);
+  const loadExtras = useCallback(
+    async (id: string, isDemo: boolean, light = false) => {
+      if (isDemo || id.startsWith("demo_shift_")) {
+        setAgentTrace(DEMO_AGENT_TRACE);
+        // Phase 3 — sample open task assigned to shift staff for re-check demo
+        setTasks([
+          {
+            $id: "local_task_demo",
+            $createdAt: new Date().toISOString(),
+            $updatedAt: new Date().toISOString(),
+            shiftId: id,
+            findingId: "fa1",
+            title: "Fix: Gloves at prep",
+            status: "open",
+            assignedTo: "demo_staff",
+            createdBy: "demo_manager",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+      try {
+        const [t, e, trace] = await Promise.all([
+          listTasks(id),
+          light ? Promise.resolve(null) : listEvents(id),
+          getAgentJobTrace(id).catch(() => null),
+        ]);
+        setTasks((prev) => mergeTasksById(t, prev));
+        if (e) setEvents(e);
+        setAgentTrace(trace);
+      } catch {
+        // Non-blocking for the findings table
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -310,7 +314,7 @@ export function ManagerShiftDetail() {
           if (cancelled || !result) return;
           setItem(result.item);
           setSource(result.source);
-          void loadExtras(result.item.shift.$id, result.source === "demo");
+          void loadExtras(result.item.shift.$id, result.source === "demo", true);
         } catch {
           /* keep the painted summary */
         }
@@ -328,6 +332,36 @@ export function ManagerShiftDetail() {
   );
   const formOpen = Boolean(selected) && mode !== "idle";
 
+  const [sheetFinding, setSheetFinding] = useState<Finding | null>(null);
+  const [sheetMode, setSheetMode] = useState<StickyMode>("idle");
+  const [sheetExiting, setSheetExiting] = useState(false);
+
+  useEffect(() => {
+    if (formOpen && selected) {
+      setSheetFinding(selected);
+      setSheetMode(mode);
+      setSheetExiting(false);
+      return;
+    }
+    if (sheetFinding && !sheetExiting) {
+      if (prefersReducedMotion()) {
+        setSheetFinding(null);
+        setSheetMode("idle");
+        setSheetExiting(false);
+      } else {
+        setSheetExiting(true);
+      }
+    }
+  }, [formOpen, selected, mode, sheetFinding, sheetExiting]);
+
+  function onStickyAnimationEnd(e: AnimationEvent<HTMLDivElement>) {
+    if (!sheetExiting) return;
+    if (e.animationName && e.animationName !== "manager-sticky-out") return;
+    setSheetFinding(null);
+    setSheetMode("idle");
+    setSheetExiting(false);
+  }
+
   useEffect(() => {
     setChromeInert(formOpen);
     return () => setChromeInert(false);
@@ -335,7 +369,7 @@ export function ManagerShiftDetail() {
 
   useLayoutEffect(() => {
     const root = detailRef.current;
-    if (!formOpen) {
+    if (!formOpen && !sheetExiting) {
       root?.style.removeProperty("--sticky-sheet-height");
       return;
     }
@@ -348,7 +382,7 @@ export function ManagerShiftDetail() {
     const ro = new ResizeObserver(apply);
     ro.observe(sheet);
     return () => ro.disconnect();
-  }, [formOpen, mode]);
+  }, [formOpen, sheetExiting, mode]);
 
   useEffect(() => {
     if (!formOpen) return;
@@ -998,12 +1032,13 @@ export function ManagerShiftDetail() {
   return (
     <div
       ref={detailRef}
-      className={`manager-detail ${formOpen ? "has-sticky" : ""}`}
+      className={`manager-detail ${formOpen || sheetExiting ? "has-sticky" : ""}`}
     >
       <div
         className="app-page stack manager-detail-page"
         inert={formOpen ? true : undefined}
       >
+        <div className="manager-detail-top">
         <div className="manager-detail-nav">
           <Link to="/manager" className="back-link">
             ← Inbox
@@ -1052,7 +1087,7 @@ export function ManagerShiftDetail() {
         </div>
 
         <header
-          className="stack-sm"
+          className="manager-detail-identity"
           data-cluster-ready={clusterReady ? "true" : "false"}
         >
           <h1>{scoreboardHeading(item)}</h1>
@@ -1066,6 +1101,20 @@ export function ManagerShiftDetail() {
               data-status={shiftStatusCode(item)}
             >
               {shiftStatusSentence(item)}
+            </p>
+          ) : null}
+          {hasFindings && tallyParts.length > 0 ? (
+            <p className="manager-tally" aria-label="Finding counts">
+              {tallyParts.map((part, i) => (
+                <span key={part.label}>
+                  {i > 0 ? (
+                    <span className="tally-sep" aria-hidden>
+                      ·
+                    </span>
+                  ) : null}
+                  <strong>{part.n}</strong> {part.label}
+                </span>
+              ))}
             </p>
           ) : null}
           {remainder ? (
@@ -1122,6 +1171,7 @@ export function ManagerShiftDetail() {
             </div>
           ) : null}
         </header>
+        </div>
 
         {stuck ? (
           <div
@@ -1149,21 +1199,7 @@ export function ManagerShiftDetail() {
           </div>
         ) : null}
 
-        {hasFindings && tallyParts.length > 0 ? (
-        <p className="manager-tally" aria-label="Finding counts">
-          {tallyParts.map((part, i) => (
-            <span key={part.label}>
-              {i > 0 ? (
-                <span className="tally-sep" aria-hidden>
-                  ·
-                </span>
-              ) : null}
-              <strong>{part.n}</strong> {part.label}
-            </span>
-          ))}
-        </p>
-        ) : null}
-
+        <div className="manager-findings-block">
         {agentTrace && hasFindings ? (
           <section
             className="agent-trace"
@@ -1303,11 +1339,12 @@ export function ManagerShiftDetail() {
           >
             {visibleFindings.map((f) => {
               const isSelected = f.$id === selectedId && mode !== "idle";
-              const photoId = photoForItem(
-                f.itemId,
-                item.shift.photoFileIds,
-                checklistItems,
-              );
+              const photoId =
+                photoForItem(
+                  f.itemId,
+                  item.shift.photoFileIds,
+                  checklistItems,
+                ) ?? photoIdFromNote(f.evidenceNote, evidenceIds);
               const photoIndex = photoId
                 ? evidenceIds.indexOf(photoId)
                 : -1;
@@ -1319,100 +1356,119 @@ export function ManagerShiftDetail() {
                     data-finding-id={f.$id}
                     data-source={f.source}
                     data-testid="finding-row"
-                    className={`finding-row ${isSelected ? "is-selected" : ""}`}
+                    className={`finding-row${isSelected ? " is-selected" : ""}${photoId ? " has-photo" : ""}`}
                   >
-                    <div className="finding-row-top">
-                      <FindingChip status={f.status} />
-                    </div>
-                    <div className="finding-title-row">
-                      <p className="finding-title">{glanceLabel(f.itemId)}</p>
-                      {photoId ? (
-                        <button
-                          type="button"
-                          className="finding-photo"
-                          disabled={missingPhotos.has(photoId)}
-                          onClick={() => openEvidence(photoId, photoIndex)}
-                          aria-label={
-                            missingPhotos.has(photoId)
-                              ? "Photo unavailable"
-                              : "View evidence photo"
-                          }
+                    {photoId ? (
+                      <button
+                        type="button"
+                        className="finding-photo"
+                        disabled={missingPhotos.has(photoId)}
+                        onClick={() => openEvidence(photoId, photoIndex)}
+                        aria-label={
+                          missingPhotos.has(photoId)
+                            ? "Photo unavailable"
+                            : "View evidence photo"
+                        }
+                      >
+                        <EvidenceImg
+                          fileId={photoId}
+                          alt=""
+                          className="finding-photo-img"
+                          compact
+                          onMissingChange={onPhotoMissing}
+                        />
+                      </button>
+                    ) : (
+                      <div
+                        className="finding-photo is-empty"
+                        data-testid="finding-photo-empty"
+                        aria-hidden="true"
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
                         >
-                          <EvidenceImg
-                            fileId={photoId}
-                            alt=""
-                            className="finding-photo-img"
-                            compact
-                            onMissingChange={onPhotoMissing}
-                          />
-                        </button>
-                      ) : null}
-                    </div>
-                    <p
-                      className="citation-bar caption"
-                      data-testid="citation"
-                      data-citation={cite.gap ? "missing" : "ok"}
-                    >
-                      {cite.gap
-                        ? "No clause cited"
-                        : cite.clauseId}{" "}
-                      · {confidenceBand(f.confidence)}
-                    </p>
-                    {cite.quote ? (
-                    <p className="finding-quote muted">“{cite.quote}”</p>
-                    ) : null}
-                    {note ? (
-                      <p className="finding-note caption">{note}</p>
-                    ) : null}
-                    {f.overrideReason ? (
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                          <circle cx="12" cy="13" r="4" />
+                        </svg>
+                      </div>
+                    )}
+                    <div className="finding-main">
+                      <div className="finding-heading">
+                        <FindingChip status={f.status} />
+                        <p className="finding-title">{glanceLabel(f.itemId)}</p>
+                      </div>
                       <p
-                        className="override-reason caption"
-                        data-testid="override-reason"
+                        className="citation-bar caption"
+                        data-testid="citation"
+                        data-citation={cite.gap ? "missing" : "ok"}
                       >
-                        Override: {f.overrideReason}
+                        {cite.gap
+                          ? "No clause cited"
+                          : cite.clauseId}{" "}
+                        · {confidenceBand(f.confidence)}
                       </p>
-                    ) : null}
-                    {f.source && f.source !== "ai" ? (
-                      <p
-                        className="finding-conf caption"
-                        data-testid="finding-source"
-                        data-source={f.source}
-                      >
-                        {formatFindingSource(f.source)}
-                      </p>
-                    ) : null}
-                    <div className="finding-actions">
-                      {openTasks.some((t) => t.findingId === f.$id) ? (
-                        <Button
-                          variant="secondary"
-                          disabled={saving}
-                          onClick={() => focusTask(f.$id)}
-                        >
-                          View open fix
-                        </Button>
-                      ) : f.status === "gap" ||
-                        (f.status === "unclear" && hasShiftPhotos) ? (
-                        <Button
-                          variant={
-                            f.status === "gap" && !hasShiftPhotos
-                              ? "secondary"
-                              : "primary"
-                          }
-                          disabled={saving}
-                          onClick={() => startAssign(f)}
-                        >
-                          {f.status === "unclear"
-                            ? "Request photo"
-                            : "Assign fix"}
-                        </Button>
+                      {cite.quote ? (
+                      <p className="finding-quote muted">“{cite.quote}”</p>
                       ) : null}
-                      <Button
-                        variant="quiet"
-                        disabled={saving}
-                        onClick={() => startOverride(f)}
-                      >
-                        Override
-                      </Button>
+                      {note ? (
+                        <p className="finding-note caption">{note}</p>
+                      ) : null}
+                      {f.overrideReason ? (
+                        <p
+                          className="override-reason caption"
+                          data-testid="override-reason"
+                        >
+                          Override: {f.overrideReason}
+                        </p>
+                      ) : null}
+                      {f.source && f.source !== "ai" ? (
+                        <p
+                          className="finding-conf caption"
+                          data-testid="finding-source"
+                          data-source={f.source}
+                        >
+                          {formatFindingSource(f.source)}
+                        </p>
+                      ) : null}
+                      <div className="finding-actions">
+                        {openTasks.some((t) => t.findingId === f.$id) ? (
+                          <Button
+                            variant="secondary"
+                            disabled={saving}
+                            onClick={() => focusTask(f.$id)}
+                          >
+                            View open fix
+                          </Button>
+                        ) : f.status === "gap" ||
+                          (f.status === "unclear" && hasShiftPhotos) ? (
+                          <Button
+                            variant={
+                              f.status === "gap" && !hasShiftPhotos
+                                ? "secondary"
+                                : "primary"
+                            }
+                            disabled={saving}
+                            onClick={() => startAssign(f)}
+                          >
+                            {f.status === "unclear"
+                              ? "Request photo"
+                              : "Assign fix"}
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="quiet"
+                          className="finding-override"
+                          disabled={saving}
+                          onClick={() => startOverride(f)}
+                        >
+                          Override
+                        </Button>
+                      </div>
                     </div>
                   </article>
                 </li>
@@ -1420,6 +1476,7 @@ export function ManagerShiftDetail() {
             })}
           </ul>
         )}
+        </div>
 
         {evidenceIds.length > 0 ? (
           <section
@@ -1580,22 +1637,24 @@ export function ManagerShiftDetail() {
         ) : null}
       </div>
 
-      {formOpen && selected ? (
+      {sheetFinding && sheetMode !== "idle" ? (
         <div
           ref={stickyRef}
           className="manager-sticky"
+          data-exit={sheetExiting ? "true" : undefined}
           role="region"
           aria-modal="true"
           aria-label="Finding actions"
           tabIndex={-1}
+          onAnimationEnd={onStickyAnimationEnd}
         >
           <div className="manager-sticky-inner">
             <p className="manager-sticky-label caption">
-              {mode === "override"
-                ? `Override ${glanceLabel(selected.itemId)}`
-                : mode === "retake"
-                  ? `Request photo · ${glanceLabel(selected.itemId)}`
-                  : `Assign ${glanceLabel(selected.itemId)}`}
+              {sheetMode === "override"
+                ? `Override ${glanceLabel(sheetFinding.itemId)}`
+                : sheetMode === "retake"
+                  ? `Request photo · ${glanceLabel(sheetFinding.itemId)}`
+                  : `Assign ${glanceLabel(sheetFinding.itemId)}`}
             </p>
             {errorShown ? (
               <div className="error-banner" role="alert">
@@ -1603,7 +1662,7 @@ export function ManagerShiftDetail() {
               </div>
             ) : null}
 
-            {mode === "override" ? (
+            {sheetMode === "override" ? (
               <div className="manager-sticky-form stack-sm">
                 <label className="field">
                   <span>Set status</span>
@@ -1657,10 +1716,10 @@ export function ManagerShiftDetail() {
                     loading={saving}
                     data-testid="create-task-btn"
                     onClick={() =>
-                      void runAssign(mode === "retake" ? "retake" : "fix")
+                      void runAssign(sheetMode === "retake" ? "retake" : "fix")
                     }
                   >
-                    {mode === "retake" ? "Request photo" : "Assign to staff"}
+                    {sheetMode === "retake" ? "Request photo" : "Assign to staff"}
                   </Button>
                 </div>
               </div>

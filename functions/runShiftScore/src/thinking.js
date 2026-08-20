@@ -37,12 +37,45 @@ function extractCallPolicy() {
   };
 }
 
-/** Primary first, then lighter Flash models when the primary 503s. */
+/** Extract stays on 3.x so HIGH thinking never becomes thinking-off. */
 const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"];
+/**
+ * Scoring extras after the primary. Lite first — 3.7 often 503s and 3.6
+ * often hangs; lite has been the model that actually returns today.
+ * Do not add 2.x: new AI Studio keys get 404 ("no longer available").
+ */
+const SCORING_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"];
 
-function fallbackModels(primary) {
+function fallbackModels(primary, extras) {
   const p = String(primary || "gemini-flash-latest");
-  return [p, ...FALLBACK_MODELS.filter((m) => m !== p)];
+  const list = extras || FALLBACK_MODELS;
+  return [p, ...list.filter((m) => m !== p)];
 }
 
-module.exports = { thinkingConfigFor, fallbackModels, extractCallPolicy };
+function scoringModels(primary) {
+  return fallbackModels(primary, SCORING_FALLBACK_MODELS);
+}
+
+/**
+ * After a retryable miss, switch model instead of waiting on the same one.
+ * Scoring (MEDIUM): switch on 503 or timeout. Extract (HIGH): any retryable.
+ */
+function shouldSwitchGeminiModel({
+  thinkingLevel,
+  status,
+  timedOut,
+  hasNext,
+  noAnswer,
+}) {
+  if (!hasNext) return false;
+  if (thinkingLevel === "HIGH") return true;
+  return status === 503 || Boolean(timedOut) || Boolean(noAnswer);
+}
+
+module.exports = {
+  thinkingConfigFor,
+  fallbackModels,
+  scoringModels,
+  shouldSwitchGeminiModel,
+  extractCallPolicy,
+};
