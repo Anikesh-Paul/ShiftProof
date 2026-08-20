@@ -247,8 +247,10 @@
   text-align: center;
 }
 
-/* Screen: labeled stack — not a 12px 7-column micro-table. Print restores the table. */
-@media screen {
+/* Labeled stack on screen and print — not a 7-column micro-table.
+   Print must not restore table display: Chrome print width is often < 768px,
+   so the desktop grid is applied to print explicitly below. */
+@media screen, print {
   .export-table thead {
     display: none;
   }
@@ -322,7 +324,7 @@
   }
 }
 
-@media screen and (min-width: 768px) {
+@media screen and (min-width: 768px), print {
   .export-table tr.export-row {
     grid-template-columns: auto minmax(0, 1.25fr) minmax(14rem, 1fr);
     column-gap: var(--space-4);
@@ -369,7 +371,7 @@
 }
 
 @media print {
-  /* Flatten app chrome so the pack is the only printed surface, centered */
+  /* Flatten app chrome so the pack is the only printed surface */
   html,
   body,
   #root,
@@ -406,56 +408,69 @@
   }
 
   .export-page {
+    --bg: oklch(1 0 0);
+    --bg-elevated: oklch(1 0 0);
+    --bg-sunken: oklch(0.955 0.005 85);
+    --label: oklch(0.2 0.02 40);
+    --label-secondary: oklch(0.42 0.016 40);
+    --label-tertiary: oklch(0.55 0.012 40);
+    --separator: oklch(0.2 0.02 40 / 0.09);
+    --fill: oklch(0.2 0.01 40 / 0.045);
+    --success: oklch(0.48 0.1 155);
+    --success-soft: oklch(0.48 0.1 155 / 0.12);
+    --danger: oklch(0.48 0.175 26);
+    --danger-soft: oklch(0.48 0.175 26 / 0.1);
+    --warning: oklch(0.7 0.12 75);
+    --warning-ink: oklch(0.4 0.09 60);
+    --warning-soft: oklch(0.7 0.12 75 / 0.14);
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
-    /* Equal inset so print isn’t flush-left / right-heavy */
     padding: 0 !important;
     border: none !important;
     box-shadow: none !important;
     border-radius: 0 !important;
     background: #fff !important;
     box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    color: var(--label);
   }
 
-  .export-table thead {
-    display: table-header-group !important;
+  /* Fraunces opsz at print scale otherwise tracks like a 9pt caption. */
+  .export-brand,
+  .export-page h1 {
+    font-optical-sizing: none;
+    font-variation-settings: "opsz" 48, "wght" 600;
   }
 
-  .export-table {
-    display: table !important;
-    width: 100% !important;
-    table-layout: fixed;
+  /* Print width often misses the 640px screen breakpoint. */
+  .export-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .export-table tbody {
-    display: table-row-group !important;
-  }
-
-  .export-table tr.export-row {
-    display: table-row !important;
-    padding: 0 !important;
-  }
-
-  .export-table td {
-    display: table-cell !important;
-    padding: 0.4rem 0.35rem !important;
-    border-bottom: 1px solid var(--separator) !important;
-  }
-
-  .export-table td[data-label]::before {
-    content: none !important;
-    display: none !important;
-  }
-
-  .export-table th,
-  .export-table td {
-    overflow-wrap: break-word;
+  .export-summary p {
     word-break: normal;
+    overflow-wrap: break-word;
   }
 
-  .export-note {
-    max-width: none;
+  .export-photo-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .export-header,
+  .export-summary,
+  .export-tally,
+  .export-row,
+  .export-photo-tile,
+  .export-footer {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .export-section h2 {
+    break-after: avoid;
+    page-break-after: avoid;
   }
 
   .export-header,
@@ -468,7 +483,6 @@
 
   @page {
     size: A4;
-    /* Symmetric page margins — avoid asymmetric browser default + zero body pad */
     margin: 14mm;
   }
 }
