@@ -62,6 +62,7 @@ import {
   retryShiftScore,
   uploadEvidence,
 } from "../../lib/shifts";
+import { photoIdFromNote } from "../../lib/findingPhoto";
 import {
   CLUSTER_SIBLING_CAP,
   clusterRemainderCopy,
@@ -1338,11 +1339,12 @@ export function ManagerShiftDetail() {
           >
             {visibleFindings.map((f) => {
               const isSelected = f.$id === selectedId && mode !== "idle";
-              const photoId = photoForItem(
-                f.itemId,
-                item.shift.photoFileIds,
-                checklistItems,
-              );
+              const photoId =
+                photoForItem(
+                  f.itemId,
+                  item.shift.photoFileIds,
+                  checklistItems,
+                ) ?? photoIdFromNote(f.evidenceNote, evidenceIds);
               const photoIndex = photoId
                 ? evidenceIds.indexOf(photoId)
                 : -1;
