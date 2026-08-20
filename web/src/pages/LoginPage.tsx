@@ -134,6 +134,9 @@ export function LoginPage() {
         <div className="login-panel-inner">
           <header className="login-header">
             <h2 className="login-heading">Sign in</h2>
+            <p className="login-lede muted">
+              Staff and managers for your café.
+            </p>
           </header>
 
           {errorShown ? (
@@ -164,6 +167,7 @@ export function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={submitting}
+                placeholder="you@cafe.com"
               />
             </div>
             <div className="field">
@@ -214,6 +218,7 @@ export function LoginPage() {
                     title={account.email}
                   >
                     <span className="login-demo-role">{account.role}</span>
+                    <span className="login-demo-email">{account.email}</span>
                   </button>
                 );
               })}
