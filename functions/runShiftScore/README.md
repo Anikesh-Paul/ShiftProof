@@ -26,7 +26,7 @@ Re-check loads `task.recheckFileId` + the linked Finding’s live Clause only. `
 
 Extract uses `thinkingLevel: HIGH` on 3.x only: `gemini-3.7-flash`, then `gemini-3.6-flash`, then `gemini-3.5-flash-lite`. No 2.x fallback, no MEDIUM retry. Success rewrites `opening_fs.itemsJson` (3–8 items). Failure writes nothing to the Checklist.
 
-Scoring (`MEDIUM`) tries `GEMINI_MODEL` (default `gemini-flash-latest` → 3.7), then `gemini-3.5-flash-lite`, then `gemini-3.6-flash`. A 503, timeout, or empty answer switches model immediately — it does not retry the same hanging model. 2.x models 404 on new AI Studio keys.
+Scoring (`MEDIUM`) tries `gemini-3.5-flash-lite`, then `gemini-3.6-flash`, then `gemini-3.7-flash`. `GEMINI_MODEL` does not reorder this list. A 503, timeout, or empty answer switches model immediately — it does not retry the same hanging model. 2.x models 404 on new AI Studio keys.
 
 ## Default path (Gemini Flash)
 
@@ -46,7 +46,7 @@ Scoring (`MEDIUM`) tries `GEMINI_MODEL` (default `gemini-flash-latest` → 3.7),
 | `APPWRITE_FUNCTION_API_ENDPOINT` / `APPWRITE_ENDPOINT` | yes | Regional, e.g. `https://sgp.cloud.appwrite.io/v1` |
 | `APPWRITE_FUNCTION_PROJECT_ID` / `APPWRITE_PROJECT_ID` | yes | Jammu project id |
 | `GOOGLE_AI_API_KEY` | yes (default path) | Google AI Studio key — never put in frontend |
-| `GEMINI_MODEL` | no | Default `gemini-flash-latest` (override if free-tier 429s) |
+| `GEMINI_MODEL` | no | Ignored for scoring order (ladder is lite → 3.6 → 3.7) |
 | `ALLOW_DEMO_STUB_SCORES` | no | Set to `1` only for explicit emergency stub after Gemini failure |
 
 ## Deploy

@@ -40,11 +40,15 @@ function extractCallPolicy() {
 /** Extract stays on 3.x so HIGH thinking never becomes thinking-off. */
 const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"];
 /**
- * Scoring extras after the primary. Lite first — 3.7 often 503s and 3.6
- * often hangs; lite has been the model that actually returns today.
+ * Scoring ladder is fixed (not GEMINI_MODEL):
+ * lite answers; 3.6 is next; 3.7 is last because it 503s on scoring load.
  * Do not add 2.x: new AI Studio keys get 404 ("no longer available").
  */
-const SCORING_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"];
+const SCORING_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+];
 
 function fallbackModels(primary, extras) {
   const p = String(primary || "gemini-flash-latest");
@@ -52,8 +56,8 @@ function fallbackModels(primary, extras) {
   return [p, ...list.filter((m) => m !== p)];
 }
 
-function scoringModels(primary) {
-  return fallbackModels(primary, SCORING_FALLBACK_MODELS);
+function scoringModels(_primary) {
+  return SCORING_MODELS.slice();
 }
 
 /**

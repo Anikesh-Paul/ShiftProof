@@ -11,7 +11,7 @@
  *   APPWRITE_FUNCTION_PROJECT_ID / APPWRITE_PROJECT_ID
  *   APPWRITE_API_KEY          (server key: TablesDB + Storage)
  *   GOOGLE_AI_API_KEY         (Google AI Studio — required for default path)
- *   GEMINI_MODEL              (optional, default gemini-flash-latest)
+ *   GEMINI_MODEL              (optional, ignored for scoring; ladder is lite → 3.6 → 3.7)
  *   SCORING_DEADLINE_MS       (optional, default 110000; use 170000 if Function timeout is 180s)
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
@@ -498,8 +498,7 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
       "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
     );
   }
-  // gemini-2.0-flash free-tier often 429 for new AI Studio keys; flash-latest works.
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const model = scoringModels()[0];
   const imageParts = await loadPhotoParts(storage, photoFileIds, log);
   if (imageParts.length < 1 && photoFileIds.length > 0) {
     log("warning: no photos downloaded; scoring with text-only context");
@@ -728,7 +727,7 @@ module.exports = async ({ req, res, log, error }) => {
 
     let scored;
     let mode = "gemini";
-    let model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+    let model = scoringModels()[0];
     let photoCountUsed = 0;
 
     try {

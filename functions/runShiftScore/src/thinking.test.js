@@ -32,14 +32,18 @@ test("3.7 keeps primary first and has a lighter 503 fallback", () => {
   assert.ok(models.includes("gemini-3.6-flash"));
 });
 
-test("scoring tries lite before the hanging 3.6", () => {
-  const models = scoringModels("gemini-3.7-flash");
-  assert.deepEqual(models, [
-    "gemini-3.7-flash",
+test("scoring tries lite, then 3.6, then 3.7 (GEMINI_MODEL cannot reorder)", () => {
+  assert.deepEqual(scoringModels("gemini-3.7-flash"), [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
+    "gemini-3.7-flash",
   ]);
-  assert.ok(!models.some((m) => /2\.[05]/.test(m)));
+  assert.deepEqual(scoringModels(), [
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+  ]);
+  assert.ok(!scoringModels().some((m) => /2\.[05]/.test(m)));
 });
 
 test("scoring timeout must switch model (not retry the same one)", () => {
