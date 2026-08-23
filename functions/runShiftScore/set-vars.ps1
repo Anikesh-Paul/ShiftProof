@@ -13,6 +13,15 @@ $Key = Read-EnvValue "APPWRITE_API_KEY"
 if (-not $Key) { $Key = $env:APPWRITE_API_KEY }
 $GoogleKey = Read-EnvValue "GOOGLE_AI_API_KEY"
 if (-not $GoogleKey) { $GoogleKey = $env:GOOGLE_AI_API_KEY }
+$Provider = Read-EnvValue "GEMINI_PROVIDER"
+if (-not $Provider) { $Provider = $env:GEMINI_PROVIDER }
+$VertexKey = Read-EnvValue "VERTEX_API_KEY"
+if (-not $VertexKey) { $VertexKey = $env:VERTEX_API_KEY }
+$VertexProject = Read-EnvValue "VERTEX_PROJECT_ID"
+if (-not $VertexProject) { $VertexProject = $env:VERTEX_PROJECT_ID }
+$VertexLocation = Read-EnvValue "VERTEX_LOCATION"
+if (-not $VertexLocation) { $VertexLocation = $env:VERTEX_LOCATION }
+if (-not $VertexLocation) { $VertexLocation = "global" }
 
 $Endpoint = "https://sgp.cloud.appwrite.io/v1"
 $ProjectId = "6a5b0ce3002605c7a776"
@@ -31,10 +40,16 @@ $pairs = @(
   @{ id = "fnProject"; key = "APPWRITE_FUNCTION_PROJECT_ID"; value = $ProjectId }
 )
 
+if ($VertexKey) {
+  $pairs += @{ id = "vertexApiKey"; key = "VERTEX_API_KEY"; value = $VertexKey }
+  $pairs += @{ id = "vertexProject"; key = "VERTEX_PROJECT_ID"; value = $VertexProject }
+  $pairs += @{ id = "vertexLocation"; key = "VERTEX_LOCATION"; value = $VertexLocation }
+  $pairs += @{ id = "geminiProvider"; key = "GEMINI_PROVIDER"; value = $(if ($Provider) { $Provider } else { "vertex" }) }
+} else {
+  Write-Host "WARN: VERTEX_API_KEY not in .env — Function will stay on AI Studio until set"
+}
 if ($GoogleKey) {
   $pairs += @{ id = "googleAiKey"; key = "GOOGLE_AI_API_KEY"; value = $GoogleKey }
-} else {
-  Write-Host "WARN: GOOGLE_AI_API_KEY not in .env or env - Gemini default path will fail until set"
 }
 
 foreach ($p in $pairs) {

@@ -123,6 +123,6 @@ node scripts/playwright-smoke.mjs http://localhost:5173
 1. Submit triggers cloud Function `runShiftScore` (`functions.createExecution`).
 2. Function loads evidence photos + checklist → **Gemini Flash** → findings (`docs/FINDINGS_SCHEMA.json`).
 3. Default: Gemini failure → job `failed` (no silent stub). Optional Function env `ALLOW_DEMO_STUB_SCORES=1` for explicit emergency only.
-4. Source: `../functions/runShiftScore/`. Requires Function env `GOOGLE_AI_API_KEY` (never in Vite).
+4. Source: `../functions/runShiftScore/`. Requires Function env `VERTEX_API_KEY` (never in Vite).
 
 Playwright C3 loop: `node scripts/playwright-c3-loop.mjs http://localhost:5173`

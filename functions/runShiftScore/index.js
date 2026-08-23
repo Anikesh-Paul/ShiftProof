@@ -3,15 +3,19 @@
  * Contract: docs/API.md — input { shiftId, jobId }, { action: "extract" },
  * or { action: "recheck", taskId }
  *
- * Default: Gemini Flash (Google AI Studio) scores Storage photos + checklist
- * → FINDINGS_SCHEMA → findings / job / events.
+ * Default: Gemini Flash via Vertex when VERTEX_API_KEY is set (score, extract,
+ * re-check). AI Studio only if GEMINI_PROVIDER=studio or no Vertex key.
  *
  * Env (Function settings only — never in frontend):
  *   APPWRITE_FUNCTION_API_ENDPOINT / APPWRITE_ENDPOINT
  *   APPWRITE_FUNCTION_PROJECT_ID / APPWRITE_PROJECT_ID
  *   APPWRITE_API_KEY          (server key: TablesDB + Storage)
- *   GOOGLE_AI_API_KEY         (Google AI Studio — required for default path)
- *   GEMINI_MODEL              (optional, ignored for scoring; ladder is lite → 3.6 → 3.7)
+ *   VERTEX_API_KEY            (Agent Platform / Vertex — required for Vertex path)
+ *   VERTEX_PROJECT_ID         (GCP project id, e.g. jammu-hackathon)
+ *   VERTEX_LOCATION           (optional, default global)
+ *   GEMINI_PROVIDER           (optional vertex|studio; auto vertex when VERTEX_API_KEY is set)
+ *   GOOGLE_AI_API_KEY         (AI Studio — only if GEMINI_PROVIDER=studio)
+ *   GEMINI_MODEL              (optional, ignored for scoring order)
  *   SCORING_DEADLINE_MS       (optional, default 110000; use 170000 if Function timeout is 180s)
  *   ALLOW_DEMO_STUB_SCORES=1  (optional explicit emergency stub only)
  */
@@ -37,6 +41,15 @@ const {
   normalizeFindings,
 } = require(__dirname.endsWith("src") ? "./findings" : "./src/findings");
 const { runRecheck } = require(__dirname.endsWith("src") ? "./recheck" : "./src/recheck");
+const {
+  geminiRequestTarget,
+  resolveGeminiAuth,
+  geminiProvider,
+} = require(__dirname.endsWith("src") ? "./geminiClient" : "./src/geminiClient");
+
+function isLocalDryRun() {
+  return String(process.env.SHIFTPROOF_LOCAL_DRY_RUN || "").trim() === "1";
+}
 
 const DB = "shiftproof";
 const EVIDENCE_BUCKET = "evidence";
@@ -311,16 +324,13 @@ function retryDelayMs(status, attempt) {
 }
 
 async function callGeminiFlashOnce({
-  apiKey,
   model,
   prompt,
   imageParts,
   log,
   thinkingConfig,
 }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    model,
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const target = geminiRequestTarget({ model });
 
   const parts = [{ text: prompt }, ...imageParts];
   const generationConfig = {
@@ -343,11 +353,11 @@ async function callGeminiFlashOnce({
   };
 
   log(
-    `Gemini request model=${model} images=${imageParts.length} think=${JSON.stringify(thinkingConfig || null)}`,
+    `Gemini request provider=${target.provider} model=${model} images=${imageParts.length} think=${JSON.stringify(thinkingConfig || null)}`,
   );
-  const resp = await fetch(url, {
+  const resp = await fetch(target.url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: target.headers,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(GEMINI_ATTEMPT_MS),
   });
@@ -400,7 +410,6 @@ async function callGeminiFlashOnce({
  * exhausted (no silent stub unless ALLOW_DEMO_STUB_SCORES).
  */
 async function callGeminiFlash({
-  apiKey,
   model,
   prompt,
   imageParts,
@@ -424,7 +433,6 @@ async function callGeminiFlash({
     }
     try {
       const textOut = await callGeminiFlashOnce({
-        apiKey,
         model: currentModel,
         prompt,
         imageParts,
@@ -492,12 +500,8 @@ async function callGeminiFlash({
 }
 
 async function scoreWithGemini({ storage, items, photoFileIds, log }) {
-  const apiKey = process.env.GOOGLE_AI_API_KEY || "";
-  if (!apiKey) {
-    throw new Error(
-      "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
-    );
-  }
+  const { provider } = resolveGeminiAuth();
+  log(`Gemini provider=${provider}`);
   const model = scoringModels()[0];
   const imageParts = await loadPhotoParts(storage, photoFileIds, log);
   if (imageParts.length < 1 && photoFileIds.length > 0) {
@@ -505,7 +509,6 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
   }
   const prompt = buildScoringPrompt(items);
   const { textOut, model: usedModel } = await callGeminiFlash({
-    apiKey,
     model,
     prompt,
     imageParts,
@@ -524,12 +527,8 @@ async function scoreWithGemini({ storage, items, photoFileIds, log }) {
 }
 
 async function extractWithGemini({ storage, fileId, log }) {
-  const apiKey = process.env.GOOGLE_AI_API_KEY || "";
-  if (!apiKey) {
-    throw new Error(
-      "GOOGLE_AI_API_KEY not set on Function (Google AI Studio key required)",
-    );
-  }
+  const { provider } = resolveGeminiAuth();
+  log(`Gemini provider=${provider}`);
   const policy = extractCallPolicy();
   const buf = await storage.getFileDownload({
     bucketId: SOP_BUCKET,
@@ -540,7 +539,6 @@ async function extractWithGemini({ storage, fileId, log }) {
     throw new Error("SOP file is empty");
   }
   const { textOut } = await callGeminiFlash({
-    apiKey,
     model: policy.model,
     prompt: buildExtractPrompt(),
     imageParts: [
@@ -573,6 +571,15 @@ async function handleExtract({ tables, storage, res, log, error }) {
     log(`extract response chars=${textOut.length}`);
     const extracted = parseExtractPayload(extractJsonAny(textOut));
     const items = toChecklistItems(extracted);
+    if (isLocalDryRun()) {
+      log("dry-run: skip checklist/SOP write");
+      return res.json({
+        ok: true,
+        dryRun: true,
+        provider: geminiProvider(),
+        items,
+      });
+    }
     await tables.updateRow({
       databaseId: DB,
       tableId: T.checklists,
@@ -677,30 +684,33 @@ module.exports = async ({ req, res, log, error }) => {
 
   const shiftId = body.shiftId;
   const jobId = body.jobId;
-  if (!shiftId || !jobId) {
+  const dryRun = isLocalDryRun();
+  if (!shiftId || (!jobId && !dryRun)) {
     error("Missing shiftId or jobId");
     return res.json({ ok: false, error: "shiftId and jobId required" }, 400);
   }
 
-  log(`runShiftScore shiftId=${shiftId} jobId=${jobId}`);
+  log(`runShiftScore shiftId=${shiftId} jobId=${jobId || "dry-run"}`);
 
   try {
-    await tables.updateRow({
-      databaseId: DB,
-      tableId: T.agent_jobs,
-      rowId: jobId,
-      data: {
-        status: "running",
-        startedAt: new Date().toISOString(),
-      },
-    });
+    if (!dryRun) {
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.agent_jobs,
+        rowId: jobId,
+        data: {
+          status: "running",
+          startedAt: new Date().toISOString(),
+        },
+      });
 
-    await tables.updateRow({
-      databaseId: DB,
-      tableId: T.shifts,
-      rowId: shiftId,
-      data: { status: "scoring" },
-    });
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.shifts,
+        rowId: shiftId,
+        data: { status: "scoring" },
+      });
+    }
 
     const shift = await tables.getRow({
       databaseId: DB,
@@ -756,6 +766,26 @@ module.exports = async ({ req, res, log, error }) => {
       );
       mode = "stub-explicit";
       photoCountUsed = 0;
+    }
+
+    if (dryRun) {
+      log("dry-run: skip findings/job/shift writes");
+      return res.json({
+        ok: true,
+        dryRun: true,
+        provider: geminiProvider(),
+        findingCount: scored.length,
+        mode,
+        model: mode === "gemini" ? model : null,
+        photoCount,
+        photoCountUsed,
+        findings: scored.map((f) => ({
+          id: f.id,
+          status: f.status,
+          confidence: f.confidence,
+          clause_id: f.clause_id,
+        })),
+      });
     }
 
     // Clear prior AI findings for this shift (re-run safe)
@@ -855,6 +885,9 @@ module.exports = async ({ req, res, log, error }) => {
     });
   } catch (e) {
     error(String(e.message || e));
+    if (dryRun) {
+      return res.json({ ok: false, dryRun: true, error: String(e.message || e) }, 500);
+    }
     try {
       await tables.updateRow({
         databaseId: DB,

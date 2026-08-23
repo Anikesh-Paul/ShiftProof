@@ -32,18 +32,45 @@ test("3.7 keeps primary first and has a lighter 503 fallback", () => {
   assert.ok(models.includes("gemini-3.6-flash"));
 });
 
-test("scoring tries lite, then 3.6, then 3.7 (GEMINI_MODEL cannot reorder)", () => {
-  assert.deepEqual(scoringModels("gemini-3.7-flash"), [
+test("studio scoring tries lite, then 3.6, then 3.7 (GEMINI_MODEL cannot reorder)", () => {
+  const studio = { GEMINI_PROVIDER: "studio" };
+  assert.deepEqual(scoringModels("gemini-3.7-flash", studio), [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
   ]);
-  assert.deepEqual(scoringModels(), [
+  assert.deepEqual(scoringModels(undefined, studio), [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
   ]);
-  assert.ok(!scoringModels().some((m) => /2\.[05]/.test(m)));
+  assert.ok(!scoringModels(undefined, studio).some((m) => /2\.[05]/.test(m)));
+});
+
+test("vertex scoring tries 3.7, then 3.6, then lite", () => {
+  assert.deepEqual(
+    scoringModels(undefined, {
+      GEMINI_PROVIDER: "vertex",
+      VERTEX_API_KEY: "vertex-secret",
+    }),
+    ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"],
+  );
+});
+
+test("forced 3.7 scoring is ignored unless local dry-run is on", () => {
+  assert.deepEqual(
+    scoringModels("gemini-3.7-flash", {
+      GEMINI_FORCE_SCORING_MODEL: "gemini-3.7-flash",
+    }),
+    ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash"],
+  );
+  assert.deepEqual(
+    scoringModels("gemini-3.7-flash", {
+      SHIFTPROOF_LOCAL_DRY_RUN: "1",
+      GEMINI_FORCE_SCORING_MODEL: "gemini-3.7-flash",
+    }),
+    ["gemini-3.7-flash"],
+  );
 });
 
 test("scoring timeout must switch model (not retry the same one)", () => {

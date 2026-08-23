@@ -194,8 +194,12 @@ Configure these variables securely in the Appwrite Console:
 | `APPWRITE_API_KEY` | Server API key with permissions for TablesDB, Storage, and Functions |
 | `APPWRITE_ENDPOINT` | Regional endpoint (e.g., `https://sgp.cloud.appwrite.io/v1`) |
 | `APPWRITE_PROJECT_ID` | Appwrite project identifier |
-| `GOOGLE_AI_API_KEY` | Google AI Studio API key for Gemini Flash models |
-| `GEMINI_MODEL` | *(Optional)* Model identifier (default: `gemini-flash-latest`) |
+| `VERTEX_API_KEY` | Vertex / Agent Platform API key for Gemini Flash (score, extract, re-check) |
+| `VERTEX_PROJECT_ID` | GCP project id (e.g. `jammu-hackathon`) |
+| `VERTEX_LOCATION` | *(Optional)* Vertex location (default `global`) |
+| `GEMINI_PROVIDER` | *(Optional)* `vertex` or `studio`. Auto `vertex` when `VERTEX_API_KEY` is set |
+| `GOOGLE_AI_API_KEY` | Google AI Studio key — only if `GEMINI_PROVIDER=studio` |
+| `GEMINI_MODEL` | *(Optional)* Ignored for scoring order |
 
 ### Deployment Commands
 ```powershell
