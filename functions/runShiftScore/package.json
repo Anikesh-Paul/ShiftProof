@@ -4,6 +4,10 @@
   "description": "ShiftProof C3 — score shift evidence into findings (Appwrite Function)",
   "main": "src/main.js",
   "type": "commonjs",
+  "scripts": {
+    "test": "node --test src/*.test.js",
+    "smoke:vertex": "node smoke-vertex.cjs"
+  },
   "dependencies": {
     "node-appwrite": "^27.0.0"
   }

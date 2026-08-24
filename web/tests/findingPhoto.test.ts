@@ -67,3 +67,18 @@ test("plural Photos N still maps to that index", () => {
     1,
   );
 });
+
+test("supports colon prefix, Image, and hash variations", () => {
+  assert.equal(
+    photoIndexFromNote("Photo 1: Bare hands visible at prep."),
+    1,
+  );
+  assert.equal(
+    photoIndexFromNote("Image 2 shows wet floor near the counter."),
+    2,
+  );
+  assert.equal(
+    photoIndexFromNote("Photo #3 shows open food containers."),
+    3,
+  );
+});

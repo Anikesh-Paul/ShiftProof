@@ -7,7 +7,8 @@
 /** 1-based Photo N cite, or null when the note does not name a photo. */
 export function photoIndexFromNote(note: string | undefined): number | null {
   if (!note) return null;
-  const match = /\bphotos?\s+(\d+)\b/i.exec(note);
+  const match =
+    /\b(?:photos?|images?|imgs?|pics?|pictures?)\s*#?\s*(\d+)\b/i.exec(note);
   if (!match) return null;
   const n = Number(match[1]);
   if (!Number.isInteger(n) || n < 1) return null;

@@ -4,6 +4,7 @@
     "clean-data:dry-run": "node scripts/clean-test-data.cjs --dry-run"
   },
   "dependencies": {
-    "docx": "^9.7.1"
+    "docx": "^9.7.1",
+    "pptxgenjs": "^4.0.1"
   }
 }

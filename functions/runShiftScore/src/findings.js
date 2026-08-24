@@ -121,6 +121,21 @@ function normalizeFindings(payload, items, photoCount = 0) {
           ? "Insufficient visual evidence to score this item."
           : `Scored from evidence photos for ${item ? item.label : id}.`;
     }
+    const validPhotoIndex = photoIndexesFrom(row).find((idx) => {
+      const n = typeof idx === "number" ? idx : Number(idx);
+      return (
+        Number.isInteger(n) && n >= 1 && (photoCount === 0 || n <= photoCount)
+      );
+    });
+    if (
+      photoCount > 1 &&
+      validPhotoIndex != null &&
+      !/\b(?:photos?|images?|imgs?|pics?|pictures?)\s*#?\s*\d+\b/i.test(
+        evidence_note,
+      )
+    ) {
+      evidence_note = `Photo ${validPhotoIndex}: ${evidence_note}`;
+    }
     quote = quote.slice(0, 1000);
     evidence_note = evidence_note.slice(0, 1000);
     byId.set(id, {

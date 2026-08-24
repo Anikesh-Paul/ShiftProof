@@ -3,6 +3,8 @@
  * 2.x: thinkingBudget 0. 3.x: MEDIUM (3.7 rejects MINIMAL with HTTP 400).
  * Extract passes "HIGH" and must not become thinking-off on 2.x.
  */
+const { geminiProvider } = require("./geminiClient");
+
 function isGemini2x(model) {
   const m = String(model || "").toLowerCase();
   return m.includes("2.5") || m.includes("2.0");
@@ -40,11 +42,20 @@ function extractCallPolicy() {
 /** Extract stays on 3.x so HIGH thinking never becomes thinking-off. */
 const FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"];
 /**
- * Scoring extras after the primary. Lite first — 3.7 often 503s and 3.6
- * often hangs; lite has been the model that actually returns today.
+ * Studio scoring: lite first because 3.7 503s on that pool.
+ * Vertex scoring: 3.7 first (validated locally); 3.6 then lite if 503/timeout.
  * Do not add 2.x: new AI Studio keys get 404 ("no longer available").
  */
-const SCORING_FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash"];
+const SCORING_MODELS_STUDIO = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+];
+const SCORING_MODELS_VERTEX = [
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite",
+];
 
 function fallbackModels(primary, extras) {
   const p = String(primary || "gemini-flash-latest");
@@ -52,8 +63,14 @@ function fallbackModels(primary, extras) {
   return [p, ...list.filter((m) => m !== p)];
 }
 
-function scoringModels(primary) {
-  return fallbackModels(primary, SCORING_FALLBACK_MODELS);
+function scoringModels(_primary, env) {
+  const e = env || process.env;
+  const dryRun = String(e.SHIFTPROOF_LOCAL_DRY_RUN || "").trim() === "1";
+  const forced = String(e.GEMINI_FORCE_SCORING_MODEL || "").trim();
+  // Local dry-run only — deployed Function has neither of these vars.
+  if (dryRun && forced) return [forced];
+  if (geminiProvider(e) === "vertex") return SCORING_MODELS_VERTEX.slice();
+  return SCORING_MODELS_STUDIO.slice();
 }
 
 /**
