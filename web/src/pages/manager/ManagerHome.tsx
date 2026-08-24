@@ -50,6 +50,7 @@ import {
   retryShiftScore,
   uploadSopPdf,
 } from "../../lib/shifts";
+import { photoIdFromNote } from "../../lib/findingPhoto";
 import {
   asInboxClusters,
   clusterInboxRows,
@@ -1305,14 +1306,17 @@ function inboxRowPhoto(
   row: ManagerShiftSummary,
   items: ChecklistItem[],
 ): string | null {
+  const photoIds = parsePhotoFileIds(row.shift.photoFileIds);
   const open = row.findings.filter(
     (f) => f.status === "gap" || f.status === "unclear",
   );
   for (const finding of open) {
-    const id = photoForItem(finding.itemId, row.shift.photoFileIds, items);
+    const id =
+      photoIdFromNote(finding.evidenceNote, photoIds) ??
+      photoForItem(finding.itemId, row.shift.photoFileIds, items);
     if (id) return id;
   }
-  return parsePhotoFileIds(row.shift.photoFileIds)[0] || null;
+  return photoIds[0] || null;
 }
 
 function scoringWaitLabel(row: ManagerShiftSummary): string {

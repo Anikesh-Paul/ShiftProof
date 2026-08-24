@@ -255,7 +255,7 @@ export function parsePhotoFileIds(photoFileIds?: string): string[] {
   }
 }
 
-/** File id for a checklist item when photos are slotted or 1:1 with items. */
+/** File id for a checklist item when photos are slotted. */
 export function photoForItem(
   itemId: string,
   photoFileIds: string | undefined,
@@ -263,21 +263,7 @@ export function photoForItem(
 ): string | null {
   if (!photoFileIds || items.length === 0) return null;
   const slotted = parsePhotoSlots(photoFileIds, items);
-  if (slotted.slots[itemId]) return slotted.slots[itemId];
-  try {
-    const parsed = JSON.parse(photoFileIds) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    const filled = parsed.filter(
-      (id): id is string => typeof id === "string" && id.length > 0,
-    );
-    const idx = items.findIndex((item) => item.id === itemId);
-    if (idx >= 0 && filled.length === items.length && filled[idx]) {
-      return filled[idx];
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  return slotted.slots[itemId] ?? null;
 }
 
 /** Slotted layout: empty strings mark unused checklist rows. Compact arrays are extras. */

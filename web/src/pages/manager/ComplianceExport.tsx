@@ -273,11 +273,12 @@ export function ComplianceExport() {
                     const note = displayEvidenceNote(f.evidenceNote);
                     const cite = citationForFinding(f, checklistItems);
                     const photoId =
+                      photoIdFromNote(f.evidenceNote, photoIds) ??
                       photoForItem(
                         f.itemId,
                         shift.photoFileIds,
                         checklistItems,
-                      ) ?? photoIdFromNote(f.evidenceNote, photoIds);
+                      );
                     return (
                       <tr key={f.$id} className="export-row">
                         <td className="export-cell-status">

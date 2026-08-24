@@ -1340,11 +1340,12 @@ export function ManagerShiftDetail() {
             {visibleFindings.map((f) => {
               const isSelected = f.$id === selectedId && mode !== "idle";
               const photoId =
+                photoIdFromNote(f.evidenceNote, evidenceIds) ??
                 photoForItem(
                   f.itemId,
                   item.shift.photoFileIds,
                   checklistItems,
-                ) ?? photoIdFromNote(f.evidenceNote, evidenceIds);
+                );
               const photoIndex = photoId
                 ? evidenceIds.indexOf(photoId)
                 : -1;
