@@ -444,9 +444,16 @@
     font-variation-settings: "opsz" 48, "wght" 600;
   }
 
+  .export-header {
+    margin-bottom: var(--space-3) !important;
+    padding-bottom: var(--space-3) !important;
+  }
+
   /* Print width often misses the 640px screen breakpoint. */
   .export-summary {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    margin-bottom: var(--space-3) !important;
+    gap: var(--space-2) !important;
   }
 
   .export-summary p {
@@ -454,8 +461,93 @@
     overflow-wrap: break-word;
   }
 
+  .export-photos {
+    margin-bottom: var(--space-3) !important;
+  }
+
   .export-photo-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .export-photo-tile {
+    aspect-ratio: 1 !important;
+  }
+
+  .export-tally {
+    margin-bottom: var(--space-3) !important;
+    padding: var(--space-2) 0 !important;
+  }
+
+  .export-section {
+    margin-bottom: var(--space-3) !important;
+  }
+
+  .export-section h2 {
+    margin-bottom: var(--space-2) !important;
+  }
+
+  .export-table tr.export-row {
+    grid-template-columns: auto minmax(0, 1.15fr) minmax(0, 1.45fr) !important;
+    column-gap: var(--space-3) !important;
+    row-gap: 0.2rem !important;
+    padding: 0.35rem 0 !important;
+    align-items: start !important;
+  }
+
+  .export-cell-status {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+  }
+
+  .export-cell-item {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+  }
+
+  .export-cell-quote {
+    grid-column: 1 / 3 !important;
+    grid-row: 2 !important;
+    line-height: 1.35 !important;
+  }
+
+  .export-cell-clause,
+  .export-cell-conf,
+  .export-cell-evidence,
+  .export-cell-source {
+    grid-column: 3 !important;
+  }
+
+  .export-cell-clause {
+    grid-row: 1 !important;
+  }
+
+  .export-cell-conf {
+    grid-row: 2 !important;
+  }
+
+  .export-cell-evidence {
+    grid-row: 3 !important;
+  }
+
+  .export-cell-source {
+    grid-row: 4 !important;
+  }
+
+  .export-table td[data-label] {
+    display: grid !important;
+    grid-template-columns: 5.5rem minmax(0, 1fr) !important;
+    column-gap: var(--space-2) !important;
+    align-items: start !important;
+  }
+
+  .export-cell-thumb {
+    width: 2.5rem !important;
+    height: 2.5rem !important;
+  }
+
+  .export-cell-evidence .evidence-img-missing {
+    width: 2.5rem !important;
+    height: 2.5rem !important;
   }
 
   .export-header,
@@ -463,6 +555,7 @@
   .export-tally,
   .export-row,
   .export-photo-tile,
+  .export-task-row,
   .export-footer {
     break-inside: avoid;
     page-break-inside: avoid;
@@ -483,6 +576,6 @@
 
   @page {
     size: A4;
-    margin: 14mm;
+    margin: 10mm 12mm;
   }
 }
