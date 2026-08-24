@@ -82,6 +82,7 @@ skills-lock.json
 /explanation.md
 /explanation.pdf
 /proposal_verification_report.md
+/finale/
 
 .vercel
 .env*
