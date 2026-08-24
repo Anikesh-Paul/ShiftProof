@@ -201,14 +201,14 @@ Return ONLY valid JSON (no markdown fences) matching this shape:
       "subject": 0.8,
       "visibility": 0.8,
       "photo_indexes": [1],
-      "evidence_note": "what is visible, then the judgment"
+      "evidence_note": "Photo 1 shows what is visible, then the judgment"
     }
   ]
 }
 
 Rules:
 1. Include exactly one object per checklist item; use the exact "id" values given.
-2. evidence_note describes what is visible in the photos first, then judges the item. Vary notes per item.
+2. evidence_note describes what is visible in the photos first (cite photo number, e.g. 'Photo 1 shows...'), then judges the item. Vary notes per item.
 3. pass — only if the live quote's claim for that item is visible. Do not pass on a related object that is not the in-use check. Derive that near-miss from this item's label and quote; do not use a fixed object list.
 4. gap — photos clearly show the quote's claim is not met.
 5. unclear — evidence missing, ambiguous, dark, cropped, glare, wrong subject, or tiny/placeholder images; also when the photos cannot support a judgment.

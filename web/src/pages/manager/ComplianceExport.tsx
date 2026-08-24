@@ -31,6 +31,7 @@ import {
   parsePhotoFileIds,
   photoForItem,
 } from "../../lib/shifts";
+import { photoIdFromNote } from "../../lib/findingPhoto";
 import type {
   AuditEvent,
   ChecklistItem,
@@ -271,11 +272,12 @@ export function ComplianceExport() {
                   .map((f) => {
                     const note = displayEvidenceNote(f.evidenceNote);
                     const cite = citationForFinding(f, checklistItems);
-                    const photoId = photoForItem(
-                      f.itemId,
-                      shift.photoFileIds,
-                      checklistItems,
-                    );
+                    const photoId =
+                      photoForItem(
+                        f.itemId,
+                        shift.photoFileIds,
+                        checklistItems,
+                      ) ?? photoIdFromNote(f.evidenceNote, photoIds);
                     return (
                       <tr key={f.$id} className="export-row">
                         <td className="export-cell-status">
