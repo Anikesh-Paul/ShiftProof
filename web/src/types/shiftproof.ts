@@ -81,6 +81,12 @@ export interface Shift extends AppwriteRowMeta {
   startedAt: string;
   submittedAt?: string;
   scoredAt?: string;
+  /** Denormalized scoreboard — inbox must not list findings when set. */
+  gapCount?: number;
+  unclearCount?: number;
+  passCount?: number;
+  /** Compact JSON of open (gap/unclear) finding seeds. */
+  openFindingsJson?: string;
 }
 
 export interface Finding extends AppwriteRowMeta {

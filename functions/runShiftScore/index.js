@@ -40,6 +40,13 @@ const {
   photoIdsForScore,
   normalizeFindings,
 } = require(__dirname.endsWith("src") ? "./findings" : "./src/findings");
+const {
+  persistScoredFindings,
+} = require(__dirname.endsWith("src") ? "./persistFindings" : "./src/persistFindings");
+const {
+  scoreboardFromFindings,
+  scoreboardWritePayload,
+} = require(__dirname.endsWith("src") ? "./shiftScoreboard" : "./src/shiftScoreboard");
 const { runRecheck } = require(__dirname.endsWith("src") ? "./recheck" : "./src/recheck");
 const {
   geminiRequestTarget,
@@ -788,42 +795,41 @@ module.exports = async ({ req, res, log, error }) => {
       });
     }
 
-    // Clear prior AI findings for this shift (re-run safe)
+    let existingRows = [];
     try {
       const existing = await tables.listRows({
         databaseId: DB,
         tableId: T.findings,
         queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
       });
-      for (const row of existing.rows || []) {
-        if (row.source === "ai") {
-          await tables.deleteRow({
-            databaseId: DB,
-            tableId: T.findings,
-            rowId: row.$id,
-          });
-        }
-      }
+      existingRows = existing.rows || [];
     } catch (e) {
-      log(`skip clear findings: ${e.message}`);
+      log(`skip list findings: ${e.message}`);
     }
 
-    for (const f of scored) {
-      await tables.createRow({
+    await persistScoredFindings({
+      tables,
+      databaseId: DB,
+      tableId: T.findings,
+      ID,
+      shiftId,
+      scored,
+      existing: existingRows,
+      log,
+    });
+
+    let scoreboard = scoreboardWritePayload(scoreboardFromFindings([]));
+    try {
+      const after = await tables.listRows({
         databaseId: DB,
         tableId: T.findings,
-        rowId: ID.unique(),
-        data: {
-          shiftId,
-          itemId: f.id,
-          status: f.status,
-          clauseId: f.clause_id,
-          quote: f.quote,
-          confidence: f.confidence,
-          evidenceNote: f.evidence_note,
-          source: "ai",
-        },
+        queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
       });
+      scoreboard = scoreboardWritePayload(
+        scoreboardFromFindings(after.rows || []),
+      );
+    } catch (e) {
+      log(`scoreboard list failed: ${e.message}`);
     }
 
     const trace = {
@@ -848,15 +854,26 @@ module.exports = async ({ req, res, log, error }) => {
       },
     });
 
-    await tables.updateRow({
-      databaseId: DB,
-      tableId: T.shifts,
-      rowId: shiftId,
-      data: {
-        status: "scored",
-        scoredAt: new Date().toISOString(),
-      },
-    });
+    const scoredShift = {
+      status: "scored",
+      scoredAt: new Date().toISOString(),
+    };
+    try {
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.shifts,
+        rowId: shiftId,
+        data: { ...scoredShift, ...scoreboard },
+      });
+    } catch (e) {
+      log(`scoreboard write skipped: ${e.message}`);
+      await tables.updateRow({
+        databaseId: DB,
+        tableId: T.shifts,
+        rowId: shiftId,
+        data: scoredShift,
+      });
+    }
 
     await tables.createRow({
       databaseId: DB,

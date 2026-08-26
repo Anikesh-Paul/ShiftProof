@@ -3,7 +3,12 @@
  * Does not flip Shift status, create an Agent job, or delete other Findings.
  * Ignores ALLOW_DEMO_STUB_SCORES — a scoring throw writes nothing.
  */
+const { Query } = require("node-appwrite");
 const { normalizeFindings } = require("./findings");
+const {
+  scoreboardFromFindings,
+  scoreboardWritePayload,
+} = require("./shiftScoreboard");
 
 const DB = "shiftproof";
 
@@ -109,6 +114,24 @@ async function runRecheck({
       createdAt,
     },
   });
+
+  try {
+    const listed = await tables.listRows({
+      databaseId: DB,
+      tableId: "findings",
+      queries: [Query.equal("shiftId", task.shiftId), Query.limit(100)],
+    });
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: "shifts",
+      rowId: task.shiftId,
+      data: scoreboardWritePayload(
+        scoreboardFromFindings(listed.rows || []),
+      ),
+    });
+  } catch (err) {
+    log(`scoreboard write skipped: ${err.message || err}`);
+  }
 
   return {
     ok: true,

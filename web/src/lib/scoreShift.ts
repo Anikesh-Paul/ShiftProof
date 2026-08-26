@@ -4,7 +4,8 @@
  * Field names frozen per docs/APPWRITE.md + FINDINGS_SCHEMA.
  */
 import { tables, DB, ID } from "./appwrite";
-import { APPWRITE_IDS } from "../types/shiftproof";
+import { APPWRITE_IDS, type Finding } from "../types/shiftproof";
+import { upsertCachedFinding } from "./rowCache";
 
 const T = APPWRITE_IDS.tables;
 
@@ -31,7 +32,7 @@ export async function rescoreFindingAfterRecheck(opts: {
   const attestedAt = new Date().toISOString();
   const evidenceNote = `Staff attested after fix. Re-check photo ${opts.recheckFileId} is the basis.`;
 
-  await tables.updateRow({
+  const row = await tables.updateRow({
     databaseId: DB,
     tableId: T.findings,
     rowId: opts.findingId,
@@ -41,6 +42,9 @@ export async function rescoreFindingAfterRecheck(opts: {
       source: "staff_recheck",
     } as RowData,
   });
+  upsertCachedFinding(row as unknown as Finding);
+  const { syncShiftScoreboard } = await import("./shifts");
+  await syncShiftScoreboard(opts.shiftId);
 
   await tables.createRow({
     databaseId: DB,

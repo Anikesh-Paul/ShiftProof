@@ -19,6 +19,15 @@ import {
   type AuditEvent,
   type Finding,
 } from "../types/shiftproof";
+import {
+  peekFindings,
+  rememberFindingsIfPresent,
+} from "./rowCache";
+import { nextPollDelay, POLL_INITIAL_MS, POLL_MAX_MS } from "./pollBackoff";
+import {
+  scoreboardFromFindings,
+  scoreboardWritePayload,
+} from "./shiftScoreboard";
 
 const T = APPWRITE_IDS.tables;
 const seed = APPWRITE_IDS.seed;
@@ -689,13 +698,22 @@ function chunkIds(ids: string[], size = EQUAL_CHUNK): string[][] {
   return out;
 }
 
-/** One query per chunk instead of one query per shift. */
+/** One query per missing chunk. Cached shifts are not listed again. */
 export async function listFindingsByShiftIds(
   shiftIds: string[],
+  opts?: { fresh?: boolean },
 ): Promise<Map<string, Finding[]>> {
   const map = new Map<string, Finding[]>();
-  for (const id of uniqueIds(shiftIds)) map.set(id, []);
-  for (const ids of chunkIds(shiftIds)) {
+  const missing: string[] = [];
+  for (const id of uniqueIds(shiftIds)) {
+    const cached = opts?.fresh ? undefined : peekFindings(id);
+    if (cached) map.set(id, cached);
+    else {
+      map.set(id, []);
+      missing.push(id);
+    }
+  }
+  for (const ids of chunkIds(missing)) {
     let offset = 0;
     for (;;) {
       const result = await tables.listRows({
@@ -718,7 +736,26 @@ export async function listFindingsByShiftIds(
       if (offset >= 1000) break;
     }
   }
+  for (const id of missing) {
+    rememberFindingsIfPresent(id, map.get(id) ?? []);
+  }
   return map;
+}
+
+/** Rewrite denormalized counts + open ids on the Shift (one shift, ~8 rows). */
+export async function syncShiftScoreboard(shiftId: string): Promise<void> {
+  try {
+    const map = await listFindingsByShiftIds([shiftId], { fresh: true });
+    const board = scoreboardFromFindings(map.get(shiftId) ?? []);
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: T.shifts,
+      rowId: shiftId,
+      data: scoreboardWritePayload(board) as RowData,
+    });
+  } catch {
+    /* Column missing or no permission — inbox falls back to a findings list. */
+  }
 }
 
 export async function listLatestJobsByShiftIds(
@@ -749,14 +786,17 @@ export async function pollJobUntilSettled(
   opts?: {
     timeoutMs?: number;
     intervalMs?: number;
+    maxIntervalMs?: number;
     isCancelled?: () => boolean;
   },
 ): Promise<AgentJob | null> {
   const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const intervalMs = opts?.intervalMs ?? 2_000;
+  const intervalMs = opts?.intervalMs ?? POLL_INITIAL_MS;
+  const maxIntervalMs = opts?.maxIntervalMs ?? POLL_MAX_MS;
   const isCancelled = opts?.isCancelled ?? (() => false);
   const start = Date.now();
   let last: AgentJob | null = null;
+  let wait: number | null = null;
   while (Date.now() - start < timeoutMs) {
     if (isCancelled()) return last;
     last = await getLatestJob(shiftId);
@@ -764,7 +804,12 @@ export async function pollJobUntilSettled(
     if (last && (last.status === "done" || last.status === "failed")) {
       return last;
     }
-    await new Promise((r) => setTimeout(r, intervalMs));
+    const delay = nextPollDelay(wait, {
+      initialMs: intervalMs,
+      maxMs: maxIntervalMs,
+    });
+    wait = delay;
+    await new Promise((r) => setTimeout(r, delay));
   }
   return last;
 }

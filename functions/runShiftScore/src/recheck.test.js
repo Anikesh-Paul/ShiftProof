@@ -177,9 +177,11 @@ test("recheck does not flip Shift status or delete other Findings", async () => 
   assert.equal(data.findings.finding_floor.source, "ai");
   assert.deepEqual(data._deletes, []);
   assert.equal(
-    data._updates.some((u) => u.tableId === "shifts"),
+    data._updates.some((u) => u.tableId === "shifts" && u.data.status),
     false,
   );
+  assert.equal(data.shifts.shift_1.gapCount, 1);
+  assert.equal(data.shifts.shift_1.passCount, 1);
   assert.equal(
     data._creates.some((c) => c.tableId === "agent_jobs"),
     false,

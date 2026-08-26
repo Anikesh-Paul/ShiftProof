@@ -1,7 +1,8 @@
 {
   "scripts": {
     "clean-data": "node scripts/clean-test-data.cjs",
-    "clean-data:dry-run": "node scripts/clean-test-data.cjs --dry-run"
+    "clean-data:dry-run": "node scripts/clean-test-data.cjs --dry-run",
+    "ensure-scoreboard": "node scripts/ensure-shift-scoreboard.cjs"
   },
   "dependencies": {
     "docx": "^9.7.1",

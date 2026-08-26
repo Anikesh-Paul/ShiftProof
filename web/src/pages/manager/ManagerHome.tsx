@@ -29,8 +29,11 @@ import {
   itemLabel,
   listOpenTasks,
   loadManagerInbox,
-  loadRepeatOffenders,
+  applyInboxLiveEvents,
+  applyTaskLiveEvents,
   mergeTasksById,
+  rememberInboxItems,
+  repeatOffendersFromInbox,
   openFixTitle,
   shortItemLabel,
   subscribeManagerTables,
@@ -140,6 +143,7 @@ export function ManagerHome() {
 
   const inflightReload = useRef<Promise<void> | null>(null);
   const queuedSilent = useRef(false);
+  const itemsRef = useRef<ManagerShiftSummary[]>([]);
 
   const reload = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -157,20 +161,30 @@ export function ManagerHome() {
         try {
           if (passSilent) {
             const inbox = await loadManagerInbox({ fresh: true });
+            itemsRef.current = inbox.items;
             setItems(inbox.items);
             setSource(inbox.source);
             setListTruncated(inbox.source === "live" && inbox.truncated);
+            setRepeatOffenders(
+              repeatOffendersFromInbox(inbox.items, 5).map((row) => ({
+                ...row,
+                label: itemLabel(row.itemId),
+              })),
+            );
             setError(null);
           } else {
-            const [inbox, site, offenders, tasks] = await Promise.all([
+            const [inbox, site, tasks] = await Promise.all([
               loadManagerInbox({ fresh: true }),
               getSite().catch(() => null),
-              loadRepeatOffenders(5).catch(() => DEMO_REPEAT_OFFENDERS),
               listOpenTasks().catch(() => [] as Task[]),
             ]);
             if (user && inbox.source === "live") {
               await sweepStaleJobs(inbox.items, user.$id);
             }
+            const offenders = repeatOffendersFromInbox(inbox.items, 5).map(
+              (row) => ({ ...row, label: itemLabel(row.itemId) }),
+            );
+            itemsRef.current = inbox.items;
             setItems(inbox.items);
             setSource(inbox.source);
             setListTruncated(inbox.source === "live" && inbox.truncated);
@@ -276,11 +290,25 @@ export function ManagerHome() {
 
   useEffect(() => {
     if (source === "demo") return;
-    const unsub = subscribeManagerTables(() => {
-      setLiveHint("Updating…");
-      void reload({ silent: true }).finally(() => {
-        setLiveHint(null);
-      });
+    const unsub = subscribeManagerTables((events) => {
+      const next = applyInboxLiveEvents(itemsRef.current, events);
+      setOpenTasks((prev) => applyTaskLiveEvents(prev, events));
+      if (next.needsReload) {
+        setLiveHint("Updating…");
+        void reload({ silent: true }).finally(() => {
+          setLiveHint(null);
+        });
+        return;
+      }
+      itemsRef.current = next.items;
+      rememberInboxItems(next.items);
+      setItems(next.items);
+      setRepeatOffenders(
+        repeatOffendersFromInbox(next.items, 5).map((row) => ({
+          ...row,
+          label: itemLabel(row.itemId),
+        })),
+      );
     });
     return unsub;
   }, [source, reload]);

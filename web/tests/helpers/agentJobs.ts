@@ -371,6 +371,7 @@ export async function applyAiRecheck(
     },
     permissions: ['read("users")'],
   });
+  await writeShiftScoreboard(task.shiftId);
 }
 
 /** Write the Function’s successful one-item Pass as the execution stub. */
@@ -462,16 +463,60 @@ export async function setTaskRecheckFileId(
   });
 }
 
-export async function markShiftScored(shiftId: string): Promise<void> {
+async function writeShiftScoreboard(
+  shiftId: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   const { tables } = sdk();
-  await tables.updateRow({
+  const { Query } = require(NODE_APPWRITE);
+  const listed = await tables.listRows({
     databaseId: DB,
-    tableId: "shifts",
-    rowId: shiftId,
-    data: {
-      status: "scored",
-      scoredAt: new Date().toISOString(),
-    },
+    tableId: "findings",
+    queries: [Query.equal("shiftId", shiftId), Query.limit(100)],
+  });
+  const rows = (listed.rows ?? []) as Array<{
+    $id: string;
+    itemId: string;
+    status: string;
+  }>;
+  const open = rows.filter(
+    (row) => row.status === "gap" || row.status === "unclear",
+  );
+  const payload: Record<string, unknown> = {
+    ...extra,
+    gapCount: rows.filter((row) => row.status === "gap").length,
+    unclearCount: rows.filter((row) => row.status === "unclear").length,
+    passCount: rows.filter((row) => row.status === "pass").length,
+    openFindingsJson: JSON.stringify(
+      open.map((row) => [
+        row.$id,
+        row.itemId,
+        row.status === "gap" ? 0 : 1,
+      ]),
+    ),
+  };
+  try {
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: "shifts",
+      rowId: shiftId,
+      data: payload,
+    });
+  } catch {
+    if (Object.keys(extra).length === 0) return;
+    await tables.updateRow({
+      databaseId: DB,
+      tableId: "shifts",
+      rowId: shiftId,
+      data: extra,
+    });
+  }
+}
+
+export async function markShiftScored(shiftId: string): Promise<void> {
+  await writeShiftScoreboard(shiftId, {
+    status: "scored",
+    scoredAt: new Date().toISOString(),
   });
 }
 

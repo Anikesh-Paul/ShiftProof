@@ -29,6 +29,7 @@ import {
   listFindingsByShiftIds,
   listLatestJobsByShiftIds,
   loadChecklistItems,
+  syncShiftScoreboard,
 } from "./shifts";
 import {
   INBOX_EVIDENCE_PAGES,
@@ -36,6 +37,28 @@ import {
   inboxRecencyTruncated,
   mergeRecencyWithEvidence,
 } from "./inboxFetch";
+import {
+  applyLiveEventsToInbox,
+  applyLiveToSummary as patchSummary,
+  applyLiveToTasks,
+  countByStatus,
+  parseManagerLiveEvent,
+  repeatOffendersFromInbox,
+  MANAGER_LIVE_BATCH_MS,
+  type LiveEventLike,
+} from "./managerLive";
+import {
+  peekLatestJob,
+  rememberLatestJob,
+  rememberSummaryRows,
+  upsertCachedFinding,
+} from "./rowCache";
+import {
+  applyScoreboardToSummary,
+  inboxFindingsFromShift,
+  scoreboardFromShift,
+  shiftHasScoreboard,
+} from "./shiftScoreboard";
 
 const T = APPWRITE_IDS.tables;
 
@@ -59,6 +82,11 @@ export {
 } from "./managerDemo";
 export type { FindingCitation, InboxCopyInput, InboxCopyView } from "./managerDemo";
 export { DEMO_MANAGER_INBOX } from "./managerDemo";
+export {
+  parseManagerLiveEvent,
+  repeatOffendersFromInbox,
+  shiftIdOf,
+} from "./managerLive";
 
 const STUCK_MS = 10 * 60 * 1000;
 const DEFAULT_TZ = "Asia/Kolkata";
@@ -118,13 +146,7 @@ async function ensureItemLabels(): Promise<void> {
   }
 }
 
-function countByStatus(findings: Finding[]) {
-  return {
-    gapCount: findings.filter((f) => f.status === "gap").length,
-    unclearCount: findings.filter((f) => f.status === "unclear").length,
-    passCount: findings.filter((f) => f.status === "pass").length,
-  };
-}
+
 
 async function listManagerShiftPage(opts?: {
   offset?: number;
@@ -208,7 +230,7 @@ function toSummary(
   };
 }
 
-const INBOX_MEMO_MS = 8_000;
+const INBOX_MEMO_MS = 60_000;
 
 type InboxLoad = {
   items: ManagerShiftSummary[];
@@ -217,13 +239,80 @@ type InboxLoad = {
 };
 
 let inboxMemo: { at: number; result: InboxLoad } | null = null;
+let inboxInflight: Promise<InboxLoad> | null = null;
+
+export function peekManagerInbox(): InboxLoad | null {
+  return inboxMemo?.result ?? null;
+}
+
+export function rememberInboxItems(items: ManagerShiftSummary[]): void {
+  if (!inboxMemo || inboxMemo.result.source !== "live") return;
+  inboxMemo = {
+    at: Date.now(),
+    result: { ...inboxMemo.result, items },
+  };
+}
+
+async function loadManagerInboxNow(): Promise<InboxLoad> {
+  try {
+    await ensureItemLabels();
+    const { shifts, truncated } = await listManagerInboxWindow();
+    if (shifts.length === 0) {
+      return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
+    }
+
+    const scoringIds = shifts
+      .filter((s) => s.status === "submitted" || s.status === "scoring")
+      .map((s) => s.$id);
+    const missingScoreboard = shifts
+      .filter((s) => !shiftHasScoreboard(s))
+      .map((s) => s.$id);
+    const [findingsByShift, jobsByShift] = await Promise.all([
+      missingScoreboard.length
+        ? listFindingsByShiftIds(missingScoreboard)
+        : Promise.resolve(new Map<string, Finding[]>()),
+      scoringIds.length
+        ? listLatestJobsByShiftIds(scoringIds)
+        : Promise.resolve(new Map<string, AgentJob>()),
+    ]);
+    for (const [id, job] of jobsByShift) rememberLatestJob(id, job);
+    const items = shifts.map((shift) => {
+      const latestJob =
+        jobsByShift.get(shift.$id) ?? peekLatestJob(shift.$id) ?? null;
+      if (shiftHasScoreboard(shift)) {
+        const board = scoreboardFromShift(shift);
+        return {
+          shift,
+          staffLabel: resolveStaffLabel(shift.createdBy),
+          findings: inboxFindingsFromShift(shift),
+          latestJob,
+          gapCount: board.gapCount,
+          unclearCount: board.unclearCount,
+          passCount: board.passCount,
+        };
+      }
+      return toSummary(
+        shift,
+        findingsByShift.get(shift.$id) ?? [],
+        undefined,
+        latestJob,
+      );
+    });
+    const result: InboxLoad = { items, source: "live", truncated };
+    inboxMemo = { at: Date.now(), result };
+    return result;
+  } catch {
+    return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
+  }
+}
 
 /**
  * Live inbox first (API.md). Demo pack only when:
  * - network/permission failure, or
  * - zero live shifts (empty café).
  * Never hide real submitted shifts behind demo.
- * `fresh` skips the short memo used when navigating inbox → detail.
+ * `fresh` skips the memo used when navigating inbox → detail.
+ * Concurrent callers share one in-flight list (Strict Mode, home+detail).
  */
 export async function loadManagerInbox(opts?: {
   fresh?: boolean;
@@ -236,36 +325,11 @@ export async function loadManagerInbox(opts?: {
   ) {
     return inboxMemo.result;
   }
-  try {
-    await ensureItemLabels();
-    const { shifts, truncated } = await listManagerInboxWindow();
-    if (shifts.length === 0) {
-      return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
-    }
-
-    const scoringIds = shifts
-      .filter((s) => s.status === "submitted" || s.status === "scoring")
-      .map((s) => s.$id);
-    const [findingsByShift, jobsByShift] = await Promise.all([
-      listFindingsByShiftIds(shifts.map((s) => s.$id)),
-      scoringIds.length
-        ? listLatestJobsByShiftIds(scoringIds)
-        : Promise.resolve(new Map<string, AgentJob>()),
-    ]);
-    const items = shifts.map((shift) =>
-      toSummary(
-        shift,
-        findingsByShift.get(shift.$id) ?? [],
-        undefined,
-        jobsByShift.get(shift.$id) ?? null,
-      ),
-    );
-    const result: InboxLoad = { items, source: "live", truncated };
-    inboxMemo = { at: Date.now(), result };
-    return result;
-  } catch {
-    return { items: DEMO_MANAGER_INBOX, source: "demo", truncated: false };
-  }
+  if (inboxInflight) return inboxInflight;
+  inboxInflight = loadManagerInboxNow().finally(() => {
+    inboxInflight = null;
+  });
+  return inboxInflight;
 }
 
 export async function loadManagerShift(shiftId: string): Promise<{
@@ -349,7 +413,10 @@ export async function overrideFinding(opts: {
     } as RowData,
   });
 
-  return row as unknown as Finding;
+  const finding = row as unknown as Finding;
+  upsertCachedFinding(finding);
+  await syncShiftScoreboard(opts.shiftId);
+  return finding;
 }
 
 /** API.md manager §4 — create task + event task.created (assignedTo = staff). */
@@ -519,7 +586,11 @@ export async function listOpenFixTasksForStaff(
     const open = await tables.listRows({
       databaseId: DB,
       tableId: T.tasks,
-      queries: [Query.equal("status", "open"), Query.limit(100)],
+      queries: [
+        Query.equal("shiftId", [...mine]),
+        Query.equal("status", "open"),
+        Query.limit(100),
+      ],
     });
     for (const row of open.rows) {
       const t = row as unknown as Task;
@@ -660,11 +731,16 @@ export async function failStaleJob(
   return row as unknown as AgentJob;
 }
 
-/** Once per inbox/scoreboard load — fail waiting/running jobs older than 10 minutes. */
+const SWEEP_EVERY_MS = 10 * 60 * 1000;
+let lastSweepAt = 0;
+
+/** At most once per 10 minutes — fail waiting/running jobs older than 10 minutes. */
 export async function sweepStaleJobs(
   items: ManagerShiftSummary[],
   userId: string,
 ): Promise<void> {
+  if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return;
+  lastSweepAt = Date.now();
   await Promise.all(
     items.map(async (item) => {
       const job = item.latestJob;
@@ -756,13 +832,16 @@ export async function listEvents(shiftId: string): Promise<AuditEvent[]> {
 }
 
 /** Boost #1 — load agent_jobs.traceJson for a shift. */
-export async function getAgentJobTrace(shiftId: string): Promise<{
+export async function getAgentJobTrace(
+  shiftId: string,
+  knownJob?: AgentJob | null,
+): Promise<{
   jobId: string;
   status: string;
   steps: string[];
   raw: Record<string, unknown> | null;
 } | null> {
-  const job = await getLatestJob(shiftId);
+  const job = knownJob ?? (await getLatestJob(shiftId));
   if (!job) return null;
 
   let raw: Record<string, unknown> | null = null;
@@ -802,38 +881,12 @@ export async function loadRepeatOffenders(limitShifts = 5): Promise<
   { itemId: string; label: string; count: number; of: number }[]
 > {
   try {
-    const shifts = await listManagerShifts();
-    const scored = shifts
-      .filter((s) => s.status === "scored" || s.status === "closed")
-      .slice(0, limitShifts);
-    if (scored.length === 0) return [];
-
-    const counts = new Map<string, number>();
-    const findingsByShift = await listFindingsByShiftIds(
-      scored.map((s) => s.$id),
+    const inbox = await loadManagerInbox();
+    const rows = repeatOffendersFromInbox(inbox.items, limitShifts).map(
+      (row) => ({ ...row, label: itemLabel(row.itemId) }),
     );
-    for (const s of scored) {
-      const findings = findingsByShift.get(s.$id) ?? [];
-      const bad = new Set(
-        findings
-          .filter((f) => f.status === "gap" || f.status === "unclear")
-          .map((f) => f.itemId),
-      );
-      for (const id of bad) {
-        counts.set(id, (counts.get(id) || 0) + 1);
-      }
-    }
-
-    return [...counts.entries()]
-      .map(([itemId, count]) => ({
-        itemId,
-        label: itemLabel(itemId),
-        count,
-        of: scored.length,
-      }))
-      .filter((r) => r.count >= 2)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 4);
+    if (rows.length) return rows;
+    return inbox.source === "demo" ? DEMO_REPEAT_OFFENDERS : [];
   } catch {
     return DEMO_REPEAT_OFFENDERS;
   }
@@ -857,16 +910,17 @@ export function hasForcedCitation(
   );
 }
 
-/** Scoring writes many rows; collapse them into one inbox refresh. */
-export const MANAGER_REALTIME_DEBOUNCE_MS = 1_200;
+/** Scoring writes many rows; collapse them into one local apply. */
+export const MANAGER_REALTIME_DEBOUNCE_MS = MANAGER_LIVE_BATCH_MS;
 
 /**
  * API.md Realtime — subscribe to shifts, findings, agent_jobs, tasks.
  * Channel: tablesdb.{db}.tables.{table}.rows
- * Hidden tabs do not refetch; the pending event flushes on focus.
+ * Hidden tabs do not flush; the pending batch applies on focus.
+ * Callers must apply payloads locally — do not listRows the inbox per event.
  */
 export function subscribeManagerTables(
-  onEvent: () => void,
+  onEvents: (events: LiveEventLike[]) => void,
 ): () => void {
   const db = Channel.tablesdb(DB);
   const channels = [
@@ -878,6 +932,7 @@ export function subscribeManagerTables(
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let pending = false;
+  let batch: LiveEventLike[] = [];
 
   const fire = () => {
     timer = null;
@@ -885,14 +940,17 @@ export function subscribeManagerTables(
       pending = true;
       return;
     }
+    const events = batch;
+    batch = [];
     pending = false;
-    onEvent();
+    if (events.length) onEvents(events);
   };
 
-  const debounced = () => {
+  const queued = (event: LiveEventLike) => {
+    batch.push(event);
     pending = true;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(fire, MANAGER_REALTIME_DEBOUNCE_MS);
+    if (timer) return;
+    timer = setTimeout(fire, MANAGER_LIVE_BATCH_MS);
   };
 
   const onVisibility = () => {
@@ -905,23 +963,55 @@ export function subscribeManagerTables(
     document.addEventListener("visibilitychange", onVisibility);
   }
 
-  const sub = realtime.subscribe(channels, () => {
-    debounced();
+  const sub = realtime.subscribe(channels, (event) => {
+    queued(event);
   });
 
   return () => {
     if (timer) clearTimeout(timer);
     pending = false;
+    batch = [];
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", onVisibility);
     }
-    // SDK may return Promise or unsubscribe object
     void Promise.resolve(sub).then((s) => {
-      if (s && typeof (s as { close?: () => void }).close === "function") {
-        (s as { close: () => void }).close();
-      }
+      const handle = s as {
+        close?: () => void;
+        unsubscribe?: () => void;
+      };
+      if (typeof handle.unsubscribe === "function") handle.unsubscribe();
+      else if (typeof handle.close === "function") handle.close();
     });
   };
+}
+
+export function applyLiveToSummary(
+  item: ManagerShiftSummary,
+  event: Parameters<typeof patchSummary>[1],
+): ManagerShiftSummary {
+  const next = applyScoreboardToSummary(patchSummary(item, event));
+  rememberSummaryRows(next);
+  return next;
+}
+
+export function applyInboxLiveEvents(
+  items: ManagerShiftSummary[],
+  events: LiveEventLike[],
+) {
+  const parsed = events
+    .map(parseManagerLiveEvent)
+    .filter((event): event is NonNullable<typeof event> => event != null);
+  const result = applyLiveEventsToInbox(items, parsed);
+  result.items = result.items.map(applyScoreboardToSummary);
+  for (const item of result.items) rememberSummaryRows(item);
+  return result;
+}
+
+export function applyTaskLiveEvents(tasks: Task[], events: LiveEventLike[]) {
+  const parsed = events
+    .map(parseManagerLiveEvent)
+    .filter((event): event is NonNullable<typeof event> => event != null);
+  return parsed.reduce(applyLiveToTasks, tasks);
 }
 
 export function applyLocalOverride(

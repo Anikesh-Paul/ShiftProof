@@ -39,10 +39,15 @@ import {
   itemLabel,
   listEvents,
   listTasks,
+  applyLiveToSummary,
+  applyTaskLiveEvents,
   loadManagerInbox,
   loadManagerShift,
   markTaskDone,
   mergeTasksById,
+  parseManagerLiveEvent,
+  peekManagerInbox,
+  shiftIdOf,
   overrideFinding,
   isHarnessName,
   openFixTitle,
@@ -71,6 +76,7 @@ import {
 } from "../../lib/inboxCluster";
 import { displayStaffName, resolveStaffLabel } from "../../lib/staffNames";
 import type {
+  AgentJob,
   AuditEvent,
   ChecklistItem,
   Finding,
@@ -185,7 +191,12 @@ export function ManagerShiftDetail() {
   }
 
   const loadExtras = useCallback(
-    async (id: string, isDemo: boolean, light = false) => {
+    async (
+      id: string,
+      isDemo: boolean,
+      light = false,
+      knownJob?: AgentJob | null,
+    ) => {
       if (isDemo || id.startsWith("demo_shift_")) {
         setAgentTrace(DEMO_AGENT_TRACE);
         // Phase 3 — sample open task assigned to shift staff for re-check demo
@@ -209,11 +220,13 @@ export function ManagerShiftDetail() {
         const [t, e, trace] = await Promise.all([
           listTasks(id),
           light ? Promise.resolve(null) : listEvents(id),
-          getAgentJobTrace(id).catch(() => null),
+          light
+            ? Promise.resolve(null)
+            : getAgentJobTrace(id, knownJob).catch(() => null),
         ]);
         setTasks((prev) => mergeTasksById(t, prev));
         if (e) setEvents(e);
-        setAgentTrace(trace);
+        if (trace) setAgentTrace(trace);
       } catch {
         // Non-blocking for the findings table
       }
@@ -265,7 +278,12 @@ export function ManagerShiftDetail() {
           setShowAll(false);
         }
         setLoading(false);
-        void loadExtras(result.item.shift.$id, result.source === "demo");
+        void loadExtras(
+          result.item.shift.$id,
+          result.source === "demo",
+          false,
+          result.item.latestJob,
+        );
       } catch (err) {
         if (!cancelled) {
           setError(getErrorMessage(err, "Could not load this opening"));
@@ -284,8 +302,9 @@ export function ManagerShiftDetail() {
     if (!shiftId) return;
     void (async () => {
       try {
+        const cached = peekManagerInbox();
         const [inbox, site] = await Promise.all([
-          loadManagerInbox(),
+          cached ? Promise.resolve(cached) : loadManagerInbox(),
           getSite().catch(() => null),
         ]);
         if (cancelled) return;
@@ -307,18 +326,22 @@ export function ManagerShiftDetail() {
   useEffect(() => {
     if (source !== "live" || !shiftId) return;
     let cancelled = false;
-    const unsub = subscribeManagerTables(() => {
-      void (async () => {
-        try {
-          const result = await loadManagerShift(shiftId);
-          if (cancelled || !result) return;
-          setItem(result.item);
-          setSource(result.source);
-          void loadExtras(result.item.shift.$id, result.source === "demo", true);
-        } catch {
-          /* keep the painted summary */
-        }
-      })();
+    const unsub = subscribeManagerTables((events) => {
+      if (cancelled) return;
+      const parsed = events
+        .map(parseManagerLiveEvent)
+        .filter((event): event is NonNullable<typeof event> => event != null);
+      const forShift = parsed.filter((event) => shiftIdOf(event) === shiftId);
+      if (forShift.length) {
+        setItem((prev) => {
+          if (!prev) return prev;
+          return forShift.reduce(
+            (current, event) => applyLiveToSummary(current, event),
+            prev,
+          );
+        });
+      }
+      setTasks((prev) => applyTaskLiveEvents(prev, events));
     });
     return () => {
       cancelled = true;
